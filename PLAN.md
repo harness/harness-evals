@@ -568,10 +568,10 @@ The pattern is self-documenting. Each subsequent metric is a single-file PR.
 | Phase | Content | Duration | Cumulative Metrics |
 |-------|---------|----------|-------------------|
 | **1** | Core framework + deterministic + structural + operational + reliability | 2 weeks | ~14 |
-| **2** | Datasets + LLM abstraction + GEval + RAG + predictability | 2 weeks | ~22 |
-| **3** | Safety + agent + robustness + JUnit sink + baseline comparison | 2 weeks | ~30 |
+| **2** | Datasets + LLM abstraction + GEval + RAG + predictability + deterministic perturbation generators | 2 weeks | ~22 + data tooling |
+| **3** | Safety + agent + robustness metrics + LLM perturbation (PromptRephrase) + JUnit sink + baseline | 2 weeks | ~30 |
 | **4** | Conversation + MCP + trajectory consistency + fault robustness | 2-3 weeks | ~36 |
-| **5** | Synthesizer + perturbation generators | 3-4 weeks | ~36 + tooling |
+| **5** | Synthesizer (dataset generation from documents) | 2-3 weeks | ~36 + tooling |
 | **6** | Harness AI Evals integration | 2-3 weeks | Product bridge |
 
 Each phase below is a self-contained deliverable. Execute in order or cherry-pick -- the specs are complete enough to implement independently.
@@ -584,7 +584,7 @@ Everything in the "Core Abstractions", "Phase 1 Metrics", "Directory Structure",
 
 ---
 
-### Phase 2: Datasets + LLM Abstraction + LLM-Judged Metrics + Predictability
+### Phase 2: Datasets + LLM Abstraction + LLM-Judged Metrics + Predictability + Deterministic Perturbations
 
 #### Datasets
 
@@ -688,6 +688,30 @@ scores = evaluate(test_case, metrics=[
 ])
 ```
 
+#### Deterministic Perturbation Generators
+
+Perturbation generators produce input variants for robustness testing. The deterministic ones (no LLM needed) ship here alongside datasets as "data tooling." LLM-based perturbation (`PromptRephrase`) ships in Phase 3 alongside the robustness metrics that consume it.
+
+```python
+class BasePerturbation(ABC):
+    @abstractmethod
+    async def perturb(self, input: str, n: int = 5) -> list[str]:
+        """Generate n perturbations of the input."""
+
+class JsonFieldReorder(BasePerturbation):
+    """Deterministic JSON field reordering. Tests order sensitivity."""
+
+class SchemaVariation(BasePerturbation):
+    """Add/remove optional fields, change casing, use equivalent types."""
+
+class TypoInjection(BasePerturbation):
+    """Inject realistic typos at configurable rate."""
+```
+
+These are zero-dependency, deterministic, and immediately useful for manual robustness testing even before robustness metrics land in Phase 3.
+
+**Files**: `src/harness_evals/perturbations/base.py`, `perturbations/json_reorder.py`, `perturbations/schema_variation.py`, `perturbations/typo.py`
+
 ---
 
 ### Phase 3: Safety + Agent + Robustness + JUnit + Baseline Comparison
@@ -718,6 +742,30 @@ Safety metrics are **reported separately, never averaged** into an overall score
 | 30 | **EnvironmentRobustnessMetric** | Run with JSON field reordering, schema variations. Score = accuracy(perturbed) / accuracy(nominal). | No (uses perturbation set) |
 
 Robustness metrics require a **perturbation set** alongside the golden dataset. The test case includes `metadata["perturbations"]` -- a list of alternative inputs for the same expected output.
+
+#### LLM-Based Perturbation Generator (+1, completes perturbation tooling)
+
+```python
+class PromptRephrase(BasePerturbation):
+    """LLM-based semantic rephrasing. Same meaning, different wording."""
+    def __init__(self, llm: BaseLLM): ...
+```
+
+With `BaseLLM` from Phase 2, `PromptRephrase` can now ship alongside the robustness metrics it serves. Combined with the deterministic perturbation generators from Phase 2, this gives robustness metrics full input generation support.
+
+**Integration with robustness metrics**:
+
+```python
+from harness_evals.perturbations import PromptRephrase
+from harness_evals.metrics.reliability import PromptRobustnessMetric
+
+perturbator = PromptRephrase(llm=llm)
+perturbed_inputs = await perturbator.perturb("Create a canary deployment", n=5)
+
+metric = PromptRobustnessMetric(threshold=0.8, perturbation_fn=perturbator)
+```
+
+**Files**: `src/harness_evals/perturbations/rephrase.py`
 
 #### JUnit Sink
 
@@ -898,11 +946,9 @@ class Fault:
 
 ---
 
-### Phase 5: Synthesizer + Perturbation Generators
+### Phase 5: Synthesizer (Dataset Generation)
 
-#### Synthesizer
-
-Generates test cases from source documents. Uses an LLM to produce (input, expected_output) pairs from domain content.
+Generates test cases from source documents. Uses an LLM to produce (input, expected_output) pairs from domain content. This is a standalone data generation tool — not a prerequisite for any metric. Perturbation generators shipped in Phases 2 (deterministic) and 3 (LLM-based).
 
 ```python
 class Synthesizer:
@@ -955,45 +1001,6 @@ scores = evaluate_dataset(dataset, metrics=[...])
 ```
 
 **Files**: `src/harness_evals/synthesizer/base.py`, `synthesizer/qa.py`, `synthesizer/structured.py`
-
-#### Perturbation Generators
-
-Produce semantically equivalent variants of inputs for robustness testing.
-
-```python
-class BasePerturbation(ABC):
-    @abstractmethod
-    async def perturb(self, input: str, n: int = 5) -> list[str]:
-        """Generate n perturbations of the input."""
-
-class PromptRephrase(BasePerturbation):
-    """LLM-based semantic rephrasing. Same meaning, different wording."""
-    def __init__(self, llm: BaseLLM): ...
-
-class JsonFieldReorder(BasePerturbation):
-    """Deterministic JSON field reordering. Tests order sensitivity."""
-
-class SchemaVariation(BasePerturbation):
-    """Add/remove optional fields, change casing, use equivalent types."""
-
-class TypoInjection(BasePerturbation):
-    """Inject realistic typos at configurable rate."""
-```
-
-**Integration with robustness metrics**:
-
-```python
-from harness_evals.perturbations import PromptRephrase
-from harness_evals.metrics.reliability import PromptRobustnessMetric
-
-perturbator = PromptRephrase(llm=llm)
-perturbed_inputs = await perturbator.perturb("Create a canary deployment", n=5)
-
-# PromptRobustnessMetric uses these automatically when provided
-metric = PromptRobustnessMetric(threshold=0.8, perturbation_fn=perturbator)
-```
-
-**Files**: `src/harness_evals/perturbations/base.py`, `perturbations/rephrase.py`, `perturbations/json_reorder.py`, `perturbations/schema_variation.py`, `perturbations/typo.py`
 
 ---
 
@@ -1075,13 +1082,13 @@ harness-evals/
 │   │   ├── qa.py                    # QA task generation
 │   │   └── structured.py            # Structured output generation
 │   │
-│   └── perturbations/               # [Phase 5]
+│   └── perturbations/               # [Phase 2-3]
 │       ├── __init__.py
-│       ├── base.py                  # BasePerturbation ABC
-│       ├── rephrase.py              # PromptRephrase (LLM-based)
-│       ├── json_reorder.py          # JsonFieldReorder (deterministic)
-│       ├── schema_variation.py      # SchemaVariation
-│       └── typo.py                  # TypoInjection
+│       ├── base.py                  # [Phase 2] BasePerturbation ABC
+│       ├── json_reorder.py          # [Phase 2] JsonFieldReorder (deterministic)
+│       ├── schema_variation.py      # [Phase 2] SchemaVariation (deterministic)
+│       ├── typo.py                  # [Phase 2] TypoInjection (deterministic)
+│       └── rephrase.py              # [Phase 3] PromptRephrase (LLM-based)
 │
 ├── tests/                           # Mirror src structure
 │   ├── conftest.py
@@ -1101,8 +1108,8 @@ harness-evals/
     ├── rag_agent_eval.py            # RAG with faithfulness + latency
     ├── reliability_eval.py          # Multi-run consistency
     ├── ci_baseline_regression.py    # [Phase 3] CI + baseline comparison
-    ├── synthesize_dataset.py        # [Phase 5] Generate dataset from docs
-    └── robustness_eval.py           # [Phase 5] Perturbation-based robustness
+    ├── robustness_eval.py           # [Phase 3] Perturbation-based robustness
+    └── synthesize_dataset.py        # [Phase 5] Generate dataset from docs
 ```
 
 ---

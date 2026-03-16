@@ -6,6 +6,8 @@
 
 **Core principle**: An eval always produces a `Score`. Every metric is a single class with a `measure()` method.
 
+**Data flow**: `Golden` (authored) + agent output -> `EvalCase` (evaluated) -> `Score` (result)
+
 **Language**: Python 3.10+
 **License**: Apache 2.0
 **Package name**: `harness-evals`
@@ -60,10 +62,10 @@ Ruff handles both formatting and linting (replaces black + flake8 + isort).
 
 - Use type hints on all function signatures
 - Follow existing patterns — look at any metric file as a template
-- Use `@dataclass` for structured data (TestCase, Score)
+- Use `@dataclass` for structured data (Golden, EvalCase, Score)
 - Keep metrics as single-file, single-class modules
 - Write a test file for every new metric
-- Use async/await for I/O (LLM calls, HTTP)
+- Use async/await for I/O (LLM calls, HTTP) — override `a_measure()` for async metrics
 - Run `ruff check` and `pytest` before committing
 
 ## DON'Ts
@@ -71,7 +73,7 @@ Ruff handles both formatting and linting (replaces black + flake8 + isort).
 - Never force push to main
 - Never commit secrets or `.env` files
 - Never add heavy dependencies (torch, transformers) to core — use optional extras
-- Never modify `TestCase` or `Score` fields without updating PLAN.md
+- Never modify `Golden`, `EvalCase`, or `Score` fields without updating PLAN.md
 - Never average safety scores into an overall score — report them separately
 - Don't use `print()` — use the sink system for output
 
@@ -89,16 +91,17 @@ harness-evals/
 ├── .github/workflows/ci.yml
 │
 ├── src/harness_evals/
-│   ├── __init__.py                  # Public API: TestCase, Score, evaluate, assert_test
+│   ├── __init__.py                  # Public API: Golden, EvalCase, Score, evaluate, assert_test, etc.
 │   ├── py.typed                     # PEP 561 marker
 │   │
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── test_case.py             # TestCase dataclass
-│   │   ├── score.py                 # Score dataclass
+│   │   ├── golden.py                # Golden dataclass (authored data)
+│   │   ├── eval_case.py             # EvalCase dataclass (what metrics receive)
+│   │   ├── score.py                 # Score dataclass (passed auto-computed)
 │   │   ├── metric.py                # BaseMetric, ReliabilityMetric ABCs
 │   │   ├── sink.py                  # BaseSink ABC
-│   │   └── runner.py                # evaluate(), evaluate_dataset(), assert_test()
+│   │   └── runner.py                # evaluate(), assert_test(), evaluate_cases(), evaluate_dataset()
 │   │
 │   ├── metrics/
 │   │   ├── __init__.py              # Re-exports all metrics
@@ -114,8 +117,8 @@ harness-evals/
 │
 ├── tests/
 │   ├── conftest.py                  # Shared fixtures
-│   ├── test_core.py                 # TestCase, Score, evaluate, assert_test
-│   └── metrics/                     # One test file per metric
+│   ├── test_core.py                 # Golden, EvalCase, Score, evaluate, assert_test, etc.
+│   └── metrics/                     # One test file per metric category
 │
 └── examples/
     └── basic_eval.py                # Minimal working example
@@ -132,21 +135,19 @@ This is the most common task an AI agent will do. Follow these steps:
 ```python
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
+from harness_evals.core.eval_case import EvalCase
 
 
 class MyMetric(BaseMetric):
     def __init__(self, threshold: float = 1.0, **kwargs):
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
 
-    def measure(self, test_case: TestCase) -> Score:
-        # Compute value between 0.0 and 1.0
-        value = ...
+    def measure(self, eval_case: EvalCase) -> Score:
+        value = ...  # compute 0.0–1.0
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
         )
 ```
 
@@ -155,41 +156,58 @@ class MyMetric(BaseMetric):
 
 ```python
 import pytest
-from harness_evals.core.test_case import TestCase
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.metrics.<category>.<metric_name> import MyMetric
 
 
 @pytest.mark.unit
 def test_my_metric_perfect():
-    tc = TestCase(input="x", actual_output="y", expected_output="y")
-    score = MyMetric(threshold=0.8).measure(tc)
-    assert score.success
+    ec = EvalCase(input="x", output="y", expected="y")
+    score = MyMetric(threshold=0.8).measure(ec)
+    assert score.passed
     assert score.value == 1.0
 
 
 @pytest.mark.unit
 def test_my_metric_failure():
-    tc = TestCase(input="x", actual_output="wrong", expected_output="y")
-    score = MyMetric(threshold=0.8).measure(tc)
-    assert not score.success
+    ec = EvalCase(input="x", output="wrong", expected="y")
+    score = MyMetric(threshold=0.8).measure(ec)
+    assert not score.passed
 ```
 
 6. **Run tests** — `pytest tests/ -v`
 
 ## Core Types Reference
 
-### TestCase
+### Golden (authored data)
 
 ```python
 @dataclass
-class TestCase:
-    input: str
-    actual_output: str | dict | list
-    expected_output: str | dict | list | None = None
+class Golden:
+    input: str | dict | list
+    expected: str | dict | list | None = None
     context: list[str] | None = None
-    metadata: dict[str, Any] | None = None  # latency_ms, token_usage, cost_usd, confidence
-    tags: dict[str, str] | None = None      # env, model, version
-    runs: list["TestCase"] | None = None    # K runs for reliability metrics
+    metadata: dict[str, Any] | None = None
+    tags: dict[str, str] | None = None
+```
+
+### EvalCase (what metrics receive)
+
+```python
+@dataclass
+class EvalCase:
+    input: str | dict | list
+    output: str | dict | list
+    expected: str | dict | list | None = None
+    context: list[str] | None = None
+    latency_ms: float | None = None         # typed operational fields
+    token_count: int | None = None
+    cost_usd: float | None = None
+    retry_count: int | None = None
+    confidence: float | None = None
+    tags: dict[str, str] | None = None
+    metadata: dict[str, Any] | None = None  # extensible for custom keys
+    runs: list["EvalCase"] | None = None    # K runs for reliability metrics
 ```
 
 ### Score
@@ -200,9 +218,10 @@ class Score:
     name: str
     value: float           # 0.0 to 1.0
     threshold: float       # pass/fail threshold
-    success: bool          # value >= threshold
+    passed: bool           # auto-computed: value >= threshold (not in constructor)
     reason: str | None = None
     metadata: dict[str, Any] | None = None
+    created_at: datetime   # auto-set to UTC now
 ```
 
 ### BaseMetric
@@ -213,7 +232,11 @@ class BaseMetric(ABC):
     threshold: float
 
     @abstractmethod
-    def measure(self, test_case: TestCase) -> Score: ...
+    def measure(self, eval_case: EvalCase) -> Score: ...
+
+    async def a_measure(self, eval_case: EvalCase) -> Score:
+        """Async variant. Override for I/O-bound metrics. Default calls measure()."""
+        return self.measure(eval_case)
 ```
 
 ### ReliabilityMetric (for multi-run)
@@ -223,22 +246,22 @@ class ReliabilityMetric(BaseMetric):
     k: int  # number of runs expected
 
     @abstractmethod
-    def measure_runs(self, test_case: TestCase) -> Score:
-        """Evaluate across test_case.runs. Called by measure()."""
+    def measure_runs(self, eval_case: EvalCase) -> Score:
+        """Evaluate across eval_case.runs. Called by measure()."""
 
-    def measure(self, test_case: TestCase) -> Score:
-        if test_case.runs:
-            return self.measure_runs(test_case)
+    def measure(self, eval_case: EvalCase) -> Score:
+        if eval_case.runs:
+            return self.measure_runs(eval_case)
         return Score(name=self.name, value=0.0, threshold=self.threshold,
-                     success=False, reason="No runs provided")
+                     reason="No runs provided")
 ```
 
 ## Phased Implementation
 
-See `PLAN.md` for the full vision with 6 phases and ~37 metrics. Phase 1 (this skeleton) covers core framework + 14 metrics. Each subsequent phase adds metrics, capabilities, and directory structure as described in `PLAN.md`.
+See `PLAN.md` for the full vision with 6 phases and ~37 metrics. Phase 1 (this skeleton) covers core framework + 12 metrics. Each subsequent phase adds metrics, capabilities, and directory structure as described in `PLAN.md`.
 
 ## Dependencies
 
 **Core (Phase 1)**: `deepdiff>=7.0`, `jsonschema>=4.0` — two dependencies total.
 **LLM (Phase 2+)**: `openai>=1.0`, `anthropic>=0.30` — optional.
-**Dev**: `pytest>=8.0`, `ruff>=0.4`, `pytest-cov`, `pre-commit`.
+**Dev**: `pytest>=8.0`, `ruff>=0.4`, `pytest-cov`, `pytest-asyncio`, `pre-commit`.

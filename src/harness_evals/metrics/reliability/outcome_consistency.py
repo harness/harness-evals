@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import ReliabilityMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class OutcomeConsistencyMetric(ReliabilityMetric):
@@ -16,18 +16,17 @@ class OutcomeConsistencyMetric(ReliabilityMetric):
     def __init__(self, threshold: float = 0.8, k: int = 5, **kwargs: object) -> None:
         super().__init__(name="outcome_consistency", threshold=threshold, k=k, **kwargs)
 
-    def measure_runs(self, test_case: TestCase) -> Score:
-        runs = test_case.runs or []
+    def measure_runs(self, eval_case: EvalCase) -> Score:
+        runs = eval_case.runs or []
         if len(runs) < 2:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"Need at least 2 runs, got {len(runs)}",
             )
 
-        outputs = [str(run.actual_output) for run in runs]
+        outputs = [str(run.output) for run in runs]
         most_common_count = max(outputs.count(o) for o in set(outputs))
         value = most_common_count / len(outputs)
 
@@ -35,6 +34,5 @@ class OutcomeConsistencyMetric(ReliabilityMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
             metadata={"k": len(runs), "unique_outputs": len(set(outputs))},
         )

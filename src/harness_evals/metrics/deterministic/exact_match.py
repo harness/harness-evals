@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class ExactMatchMetric(BaseMetric):
-    """Score 1.0 if actual_output == expected_output, else 0.0.
+    """Score 1.0 if output == expected, else 0.0.
 
     Compares string representations. Case-insensitive mode available.
     """
@@ -15,9 +15,9 @@ class ExactMatchMetric(BaseMetric):
         super().__init__(name="exact_match", threshold=threshold, **kwargs)
         self.case_sensitive = case_sensitive
 
-    def measure(self, test_case: TestCase) -> Score:
-        actual = str(test_case.actual_output)
-        expected = str(test_case.expected_output)
+    def measure(self, eval_case: EvalCase) -> Score:
+        actual = str(eval_case.output)
+        expected = str(eval_case.expected)
 
         if not self.case_sensitive:
             actual = actual.lower()
@@ -28,5 +28,4 @@ class ExactMatchMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
         )

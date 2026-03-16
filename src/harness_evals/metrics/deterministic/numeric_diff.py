@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class NumericDiffMetric(BaseMetric):
@@ -16,16 +16,15 @@ class NumericDiffMetric(BaseMetric):
         super().__init__(name="numeric_diff", threshold=threshold, **kwargs)
         self.epsilon = epsilon
 
-    def measure(self, test_case: TestCase) -> Score:
+    def measure(self, eval_case: EvalCase) -> Score:
         try:
-            actual = float(test_case.actual_output)  # type: ignore[arg-type]
-            expected = float(test_case.expected_output)  # type: ignore[arg-type]
+            actual = float(eval_case.output)  # type: ignore[arg-type]
+            expected = float(eval_case.expected)  # type: ignore[arg-type]
         except (TypeError, ValueError) as e:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"Cannot parse as numbers: {e}",
             )
 
@@ -37,5 +36,4 @@ class NumericDiffMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
         )

@@ -9,7 +9,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"
 pre-commit install
 ruff check src/ tests/   # lint
-pytest tests/ -v         # 42 tests should pass
+pytest tests/ -v         # 61 tests should pass
 ```
 
 ## Development Workflow
@@ -37,7 +37,7 @@ This is the most common contribution. See [docs/metrics-guide.md](metrics-guide.
 1. Decide the category: `deterministic`, `structural`, `operational`, `reliability`, `llm_judge`, `rag`, `safety`, `agent`, `conversation`, `mcp`
 2. Create `src/harness_evals/metrics/<category>/<metric_name>.py`
 3. Extend `BaseMetric` (or `ReliabilityMetric` for multi-run metrics)
-4. Implement `measure(self, test_case: TestCase) -> Score`
+4. Implement `measure(self, eval_case: EvalCase) -> Score`
 5. Export from `<category>/__init__.py` and `metrics/__init__.py`
 6. Create `tests/metrics/test_<metric_name>.py`
 7. Run `ruff check src/ tests/` and `pytest tests/ -v`
@@ -47,7 +47,7 @@ A single metric is a single-file PR. Look at `exact_match.py` as a template.
 ## Adding a New Sink
 
 1. Create `src/harness_evals/sinks/<sink_name>.py`
-2. Extend `BaseSink` and implement `write(self, scores, test_case)`
+2. Extend `BaseSink` and implement `write(self, scores, eval_case)`
 3. Export from `sinks/__init__.py`
 4. Add tests
 
@@ -69,13 +69,13 @@ pytest tests/metrics/test_exact_match.py -v   # Specific file
 
 - Mark tests with `@pytest.mark.unit` or `@pytest.mark.integration`
 - Test data goes in `tests/data/`
-- Use fixtures from `tests/conftest.py` for common TestCase patterns
+- Use fixtures from `tests/conftest.py` for common EvalCase patterns
 - Every metric needs at least: one pass test, one fail test, one edge case test
 
 ## What NOT to Do
 
 - Don't add heavy ML dependencies (torch, transformers) to core
-- Don't modify `TestCase` or `Score` fields without updating PLAN.md
+- Don't modify `Golden`, `EvalCase`, or `Score` fields without updating PLAN.md
 - Don't average safety scores into overall scores
 - Don't use `print()` for output — use the sink system
 - Don't skip pre-commit hooks

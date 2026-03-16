@@ -7,22 +7,23 @@ Every metric is a single class in a single file. It extends `BaseMetric`, implem
 ```python
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
+from harness_evals.core.eval_case import EvalCase
 
 
 class MyMetric(BaseMetric):
     def __init__(self, threshold: float = 1.0, **kwargs) -> None:
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
 
-    def measure(self, test_case: TestCase) -> Score:
+    def measure(self, eval_case: EvalCase) -> Score:
         value = ...  # compute 0.0–1.0
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
         )
 ```
+
+`Score.passed` is auto-computed from `value >= threshold` — never set it manually.
 
 ## Step by Step
 
@@ -51,16 +52,16 @@ src/harness_evals/metrics/<category>/<metric_name>.py
 
 #### Deterministic Metric Template
 
-For metrics that compare actual vs expected output:
+For metrics that compare output vs expected:
 
 ```python
 class MyDeterministicMetric(BaseMetric):
     def __init__(self, threshold: float = 1.0, **kwargs) -> None:
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
 
-    def measure(self, test_case: TestCase) -> Score:
-        actual = str(test_case.actual_output)
-        expected = str(test_case.expected_output)
+    def measure(self, eval_case: EvalCase) -> Score:
+        actual = str(eval_case.output)
+        expected = str(eval_case.expected)
 
         value = 1.0 if actual == expected else 0.0
 
@@ -68,13 +69,12 @@ class MyDeterministicMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
         )
 ```
 
 #### Operational Metric Template
 
-For metrics that read from `metadata`:
+For metrics that read typed fields from `EvalCase`:
 
 ```python
 class MyOperationalMetric(BaseMetric):
@@ -82,26 +82,22 @@ class MyOperationalMetric(BaseMetric):
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
         self.max_value = max_value
 
-    def measure(self, test_case: TestCase) -> Score:
-        raw = (test_case.metadata or {}).get("my_field")
-        if raw is None:
+    def measure(self, eval_case: EvalCase) -> Score:
+        if eval_case.latency_ms is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
-                reason="metadata['my_field'] not provided",
+                reason="latency_ms not provided",
             )
 
-        raw = float(raw)
-        value = max(0.0, 1.0 - raw / self.max_value)
+        value = max(0.0, 1.0 - eval_case.latency_ms / self.max_value)
 
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
-            metadata={"my_field": raw, "max_value": self.max_value},
+            metadata={"latency_ms": eval_case.latency_ms, "max_value": self.max_value},
         )
 ```
 
@@ -116,32 +112,29 @@ class MyReliabilityMetric(ReliabilityMetric):
     def __init__(self, threshold: float = 0.8, k: int = 5, **kwargs) -> None:
         super().__init__(name="my_metric", threshold=threshold, k=k, **kwargs)
 
-    def measure_runs(self, test_case: TestCase) -> Score:
-        runs = test_case.runs or []
+    def measure_runs(self, eval_case: EvalCase) -> Score:
+        runs = eval_case.runs or []
         if len(runs) < 2:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"Need at least 2 runs, got {len(runs)}",
             )
 
-        # Compute consistency/variance across runs
-        value = ...
+        value = ...  # compute consistency/variance across runs
 
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
             metadata={"k": len(runs)},
         )
 ```
 
 #### LLM-Judged Metric Template (Phase 2+)
 
-For metrics that use an LLM as a judge:
+For metrics that use an LLM as a judge — override `a_measure()`:
 
 ```python
 from harness_evals.llm.base import BaseLLM
@@ -151,22 +144,21 @@ class MyLLMMetric(BaseMetric):
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
         self.llm = llm
 
-    async def _judge(self, test_case: TestCase) -> float:
-        prompt = f"Rate the following response...\nInput: {test_case.input}\nOutput: {test_case.actual_output}"
-        result = await self.llm.generate_json(prompt, schema={"score": "number"})
-        return result["score"] / 10.0  # normalize to 0–1
-
-    def measure(self, test_case: TestCase) -> Score:
-        import asyncio
+    def measure(self, eval_case: EvalCase) -> Score:
         if self.llm is None:
             return Score(name=self.name, value=0.0, threshold=self.threshold,
-                         success=False, reason="No LLM provider configured")
-        value = asyncio.run(self._judge(test_case))
+                         reason="No LLM provider configured")
+        import asyncio
+        return asyncio.run(self.a_measure(eval_case))
+
+    async def a_measure(self, eval_case: EvalCase) -> Score:
+        prompt = f"Rate the following response...\nInput: {eval_case.input}\nOutput: {eval_case.output}"
+        result = await self.llm.generate_json(prompt, schema={"score": "number"})
+        value = result["score"] / 10.0
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
         )
 ```
 
@@ -190,28 +182,27 @@ Create `tests/metrics/test_<metric_name>.py`:
 
 ```python
 import pytest
-from harness_evals.core.test_case import TestCase
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.metrics.<category> import MyMetric
 
 
 @pytest.mark.unit
 class TestMyMetric:
     def test_perfect_score(self):
-        tc = TestCase(input="q", actual_output="expected", expected_output="expected")
-        score = MyMetric(threshold=0.8).measure(tc)
-        assert score.success
+        ec = EvalCase(input="q", output="expected", expected="expected")
+        score = MyMetric(threshold=0.8).measure(ec)
+        assert score.passed
         assert score.value == 1.0
 
     def test_failure(self):
-        tc = TestCase(input="q", actual_output="wrong", expected_output="expected")
-        score = MyMetric(threshold=0.8).measure(tc)
-        assert not score.success
+        ec = EvalCase(input="q", output="wrong", expected="expected")
+        score = MyMetric(threshold=0.8).measure(ec)
+        assert not score.passed
         assert score.value < 0.8
 
     def test_edge_case(self):
-        # Empty input, None expected, missing metadata, etc.
-        tc = TestCase(input="", actual_output="")
-        score = MyMetric().measure(tc)
+        ec = EvalCase(input="", output="")
+        score = MyMetric().measure(ec)
         assert isinstance(score.value, float)
 ```
 
@@ -227,7 +218,8 @@ pytest tests/ -v         # test
 1. **One metric per file** — keeps PRs small and reviewable.
 2. **Score is always [0.0, 1.0]** — normalize whatever you compute. Put raw values in `Score.metadata`.
 3. **Never raise from `measure()`** — return a failing Score with a `reason` instead. If you do raise, `evaluate()` catches it, but explicit is better.
-4. **Handle missing metadata gracefully** — operational metrics should check if the key exists and return a failing Score with a clear reason if not.
-5. **No global state** — all configuration goes in `__init__()`. Metrics are reusable across test cases.
+4. **Handle missing data gracefully** — operational metrics should check typed fields and return a failing Score with a clear reason if None.
+5. **No global state** — all configuration goes in `__init__()`. Metrics are reusable across eval cases.
 6. **No cross-metric imports** — metrics should not import from other metrics.
 7. **Safety metrics are hard constraints** — see [ADR-003](adr/003-safety-never-averaged.md).
+8. **Don't set `passed` manually** — `Score` auto-computes `passed = value >= threshold` in `__post_init__`.

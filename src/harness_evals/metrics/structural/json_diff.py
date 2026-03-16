@@ -5,9 +5,9 @@ from typing import Any
 
 from deepdiff import DeepDiff
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class JsonDiffMetric(BaseMetric):
@@ -17,7 +17,7 @@ class JsonDiffMetric(BaseMetric):
     - 0.0 distance = perfect match -> value = 1.0
     - 1.0 distance = completely different -> value = 0.0
 
-    Both actual_output and expected_output can be dict, list, or JSON strings.
+    Both output and expected can be dict, list, or JSON strings.
     """
 
     def __init__(
@@ -36,16 +36,15 @@ class JsonDiffMetric(BaseMetric):
             return json.loads(value)
         return value
 
-    def measure(self, test_case: TestCase) -> Score:
+    def measure(self, eval_case: EvalCase) -> Score:
         try:
-            actual = self._parse(test_case.actual_output)
-            expected = self._parse(test_case.expected_output)
+            actual = self._parse(eval_case.output)
+            expected = self._parse(eval_case.expected)
         except (json.JSONDecodeError, TypeError) as e:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"JSON parse error: {e}",
             )
 
@@ -70,6 +69,5 @@ class JsonDiffMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            success=value >= self.threshold,
             reason=reason,
         )

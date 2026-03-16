@@ -84,3 +84,6 @@ markers = [
     "integration: Integration tests (may require LLM keys)",
 ]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+]

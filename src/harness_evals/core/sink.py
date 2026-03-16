@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class BaseSink(ABC):
@@ -14,6 +14,6 @@ class BaseSink(ABC):
     """
 
     @abstractmethod
-    def write(self, scores: list[Score], test_case: TestCase) -> None:
-        """Emit scores for a single test case to the output destination."""
+    def write(self, scores: list[Score], eval_case: EvalCase) -> None:
+        """Emit scores for a single eval case to the output destination."""
         ...

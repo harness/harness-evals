@@ -5,18 +5,18 @@
 The simplest integration. Use `assert_test()` in any test file:
 
 ```python
-from harness_evals import TestCase, assert_test
+from harness_evals import EvalCase, assert_test
 from harness_evals.metrics import ExactMatchMetric, JsonDiffMetric, LatencyMetric
 
 
 def test_agent_response():
-    tc = TestCase(
+    ec = EvalCase(
         input="Create a K8s deployment for nginx",
-        actual_output=agent.run("Create a K8s deployment for nginx"),
-        expected_output={"apiVersion": "apps/v1", "kind": "Deployment"},
-        metadata={"latency_ms": measure_latency()},
+        output=agent.run("Create a K8s deployment for nginx"),
+        expected={"apiVersion": "apps/v1", "kind": "Deployment"},
+        latency_ms=measure_latency(),
     )
-    assert_test(tc, metrics=[
+    assert_test(ec, metrics=[
         JsonDiffMetric(threshold=0.9),
         LatencyMetric(max_ms=5000, threshold=0.5),
     ])
@@ -36,7 +36,7 @@ Since `assert_test()` raises standard `AssertionError`, pytest's built-in `--jun
 from harness_evals import evaluate
 from harness_evals.sinks import JUnitSink
 
-scores = evaluate(tc, metrics=[...], sinks=[JUnitSink("eval-results.xml")])
+scores = evaluate(ec, metrics=[...], sinks=[JUnitSink("eval-results.xml")])
 ```
 
 ### Parametrized Tests
@@ -51,10 +51,10 @@ def load_cases():
     with open("datasets/regression.jsonl") as f:
         return [json.loads(line) for line in f]
 
-@pytest.mark.parametrize("case", load_cases(), ids=lambda c: c["input"][:50])
+@pytest.mark.parametrize("case", load_cases(), ids=lambda c: str(c["input"])[:50])
 def test_regression(case):
-    tc = TestCase(**case)
-    assert_test(tc, metrics=[ExactMatchMetric(), LatencyMetric(max_ms=3000)])
+    ec = EvalCase.from_dict(case)
+    assert_test(ec, metrics=[ExactMatchMetric(), LatencyMetric(max_ms=3000)])
 ```
 
 ## GitHub Actions
@@ -121,26 +121,22 @@ Where `scripts/eval_gate.py`:
 
 ```python
 import sys
-from harness_evals import evaluate_dataset, load_dataset
+from harness_evals import evaluate_cases
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.metrics import JsonDiffMetric, LatencyMetric
 from harness_evals.sinks import JUnitSink
-from harness_evals.baseline import JsonBaselineStore, compare_to_baseline
 
-dataset = load_dataset("datasets/regression.jsonl")
-scores = evaluate_dataset(dataset, metrics=[
+# Load pre-captured eval cases
+cases = [EvalCase.from_dict(line) for line in load_jsonl("datasets/regression.jsonl")]
+scores = evaluate_cases(cases, metrics=[
     JsonDiffMetric(threshold=0.85),
     LatencyMetric(max_ms=5000, threshold=0.5),
 ], sinks=[JUnitSink("eval-results.xml")])
 
-store = JsonBaselineStore()
-result = compare_to_baseline(scores, store.load())
-
-if result.regressions:
-    for r in result.regressions:
-        print(f"REGRESSION: {r.metric_name} {r.baseline_score:.2f} -> {r.current_score:.2f}")
+failed = sum(1 for case_scores in scores for s in case_scores if not s.passed)
+if failed:
+    print(f"{failed} metric(s) failed across {len(cases)} cases")
     sys.exit(1)
-
-store.save(run_id=os.environ.get("HARNESS_BUILD_ID", "local"), scores=scores)
 ```
 
 ## GitLab CI
@@ -161,18 +157,17 @@ eval:
 If you're not using pytest, use `evaluate()` directly:
 
 ```python
-from harness_evals import TestCase, evaluate
+from harness_evals import EvalCase, evaluate
 from harness_evals.metrics import ExactMatchMetric
 from harness_evals.sinks import StdoutSink, JsonSink
 
-tc = TestCase(input="What is 2+2?", actual_output="4", expected_output="4")
-scores = evaluate(tc, metrics=[ExactMatchMetric()], sinks=[
+ec = EvalCase(input="What is 2+2?", output="4", expected="4")
+scores = evaluate(ec, metrics=[ExactMatchMetric()], sinks=[
     StdoutSink(),
     JsonSink("results/scores.jsonl"),
 ])
 
-# Check programmatically
-if not all(s.success for s in scores):
+if not all(s.passed for s in scores):
     print("Some metrics failed!")
 ```
 
@@ -185,21 +180,9 @@ import os
 
 threshold = float(os.environ.get("EVAL_THRESHOLD", "0.85"))
 
-scores = evaluate(tc, metrics=[
+scores = evaluate(ec, metrics=[
     JsonDiffMetric(threshold=threshold),
 ])
-```
-
-Or load from a YAML config:
-
-```yaml
-# eval-config.yaml
-metrics:
-  json_diff:
-    threshold: 0.85
-  latency:
-    max_ms: 5000
-    threshold: 0.5
 ```
 
 ## Output Sinks

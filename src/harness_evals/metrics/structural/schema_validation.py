@@ -1,57 +1,51 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import jsonschema
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class SchemaValidationMetric(BaseMetric):
-    """Score 1.0 if actual_output conforms to the JSON schema in expected_output.
+    """Score 1.0 if output conforms to a JSON Schema.
 
-    expected_output must be a JSON Schema (dict or JSON string).
-    actual_output is the data to validate (dict, list, or JSON string).
+    The schema is passed via the constructor, keeping ``expected`` free
+    for its standard meaning (ground truth answer).
+    ``output`` is the data to validate (dict, list, or JSON string).
     """
 
-    def __init__(self, threshold: float = 1.0, **kwargs: object) -> None:
+    def __init__(self, schema: dict | str, threshold: float = 1.0, **kwargs: object) -> None:
         super().__init__(name="schema_validation", threshold=threshold, **kwargs)
+        if isinstance(schema, str):
+            schema = json.loads(schema)
+        self.schema = schema
 
-    def _parse(self, value: Any) -> Any:
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
-
-    def measure(self, test_case: TestCase) -> Score:
+    def measure(self, eval_case: EvalCase) -> Score:
         try:
-            data = self._parse(test_case.actual_output)
-            schema = self._parse(test_case.expected_output)
+            data = json.loads(eval_case.output) if isinstance(eval_case.output, str) else eval_case.output
         except (json.JSONDecodeError, TypeError) as e:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"JSON parse error: {e}",
             )
 
         try:
-            jsonschema.validate(instance=data, schema=schema)
+            jsonschema.validate(instance=data, schema=self.schema)
             return Score(
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                success=True,
             )
         except jsonschema.ValidationError as e:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"Validation failed: {e.message}",
             )
         except jsonschema.SchemaError as e:
@@ -59,6 +53,5 @@ class SchemaValidationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"Invalid schema: {e.message}",
             )

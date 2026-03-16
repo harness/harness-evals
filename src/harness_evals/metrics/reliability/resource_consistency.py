@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import statistics
 
+from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import ReliabilityMetric
 from harness_evals.core.score import Score
-from harness_evals.core.test_case import TestCase
 
 
 class ResourceConsistencyMetric(ReliabilityMetric):
@@ -12,43 +12,52 @@ class ResourceConsistencyMetric(ReliabilityMetric):
 
     Maps to C_res from Rabanser et al. Uses coefficient of variation (CV):
     value = max(0, 1 - CV). A CV of 0 means perfectly consistent resource usage.
-    Reads metadata["token_usage"] or a configurable metadata key from each run.
+
+    Reads a typed field (e.g. ``token_count``) first, then falls back to
+    ``metadata[resource_key]`` for custom keys like ``gpu_memory``.
     """
 
     def __init__(
         self,
         threshold: float = 0.7,
         k: int = 5,
-        resource_key: str = "token_usage",
+        resource_key: str = "token_count",
         **kwargs: object,
     ) -> None:
         super().__init__(name="resource_consistency", threshold=threshold, k=k, **kwargs)
         self.resource_key = resource_key
 
-    def measure_runs(self, test_case: TestCase) -> Score:
-        runs = test_case.runs or []
+    def _get_resource_value(self, run: EvalCase) -> float | None:
+        """Try typed field first, then fall back to metadata."""
+        value = getattr(run, self.resource_key, None)
+        if value is None:
+            value = (run.metadata or {}).get(self.resource_key)
+        if value is not None:
+            return float(value)
+        return None
+
+    def measure_runs(self, eval_case: EvalCase) -> Score:
+        runs = eval_case.runs or []
         if len(runs) < 2:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
                 reason=f"Need at least 2 runs, got {len(runs)}",
             )
 
         values: list[float] = []
         for run in runs:
-            v = (run.metadata or {}).get(self.resource_key)
+            v = self._get_resource_value(run)
             if v is not None:
-                values.append(float(v))
+                values.append(v)
 
         if len(values) < 2:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                success=False,
-                reason=f"metadata['{self.resource_key}'] found in {len(values)} of {len(runs)} runs",
+                reason=f"'{self.resource_key}' found in {len(values)} of {len(runs)} runs",
             )
 
         mean = statistics.mean(values)
@@ -64,7 +73,6 @@ class ResourceConsistencyMetric(ReliabilityMetric):
             name=self.name,
             value=score_value,
             threshold=self.threshold,
-            success=score_value >= self.threshold,
             metadata={
                 "k": len(runs),
                 "resource_key": self.resource_key,

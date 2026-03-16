@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and pipelines. It provides a `pip install`-able scoring engine with ~37 metrics across deterministic, structural, operational, reliability, RAG, safety, agent, and conversational categories.
+**harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and structured outputs. It provides a `pip install`-able scoring engine with ~37 metrics across deterministic, structural, operational, reliability, RAG, safety, agent, and conversational categories.
 
 **Core principle**: An eval always produces a `Score`. Every metric is a single class with a `measure()` method.
 

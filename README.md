@@ -1,6 +1,6 @@
 # harness-evals
 
-Open-source AI evaluation framework for LLM agents, prompts, and pipelines.
+Open-source AI evaluation framework for LLM agents, prompts, and structured outputs.
 
 **Core principle**: Every metric produces a normalized `Score` (0.0–1.0). Pass/fail is determined by a configurable threshold. No magic, no hidden state.
 

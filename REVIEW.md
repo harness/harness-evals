@@ -1,184 +1,166 @@
-# PLAN.md Review
+# Review: harness-evals
 
-## Overall Assessment
-
-**The plan is strong and ready to execute.** The strategy-to-plan translation is faithful, the abstractions are clean, and the phased approach is pragmatic. The reliability framework from Rabanser et al. is integrated substantively — not decoratively — and represents genuine differentiation against every framework in the space.
-
-Below I evaluate the plan against established industry patterns from DeepEval, RAGAS, and promptfoo.
+Final review of the repo after the Phase 1 core redesign. Covers abstractions, code quality, phasing, and strategic positioning.
 
 ---
 
-## What's Good
+## Current State
 
-### 1. Research grounding is genuine differentiation
-
-The Rabanser et al. integration isn't superficial. You've mapped 12 metrics to specific phases, designed `ReliabilityMetric` as a proper base class, and made multi-run evaluation native via `TestCase.runs`. No existing framework (DeepEval, RAGAS, promptfoo, OpenAI Evals, autoevals) has first-class reliability measurement. DeepEval's `GEval` supports `n_eval` for judge consistency, but that's measuring the *evaluator's* variance, not the *agent's*.
-
-### 2. "One metric = one file" is the right constraint
-
-This is what makes the repo AI-agent-friendly. An agent reads AGENTS.md, looks at `exact_match.py`, and creates a new metric. Self-documenting pattern.
-
-Industry comparison: DeepEval uses one *directory* per metric (with `template.py`, `schema.py` alongside the metric). That's heavier. promptfoo uses assertion *types* as strings in YAML — not extensible without modifying core. The harness-evals approach (one file per metric, flat within category subdirectories) is the cleanest for contribution.
-
-### 3. Phase 1 is LLM-free
-
-Smart. Removes the biggest friction from first use. DeepEval requires an LLM key for most useful metrics (only `ExactMatchMetric` and `JsonSchemaMetric` are deterministic). RAGAS requires an LLM for everything. promptfoo's deterministic assertions (`equals`, `contains`, `regex`) work without keys but the framework is config-driven, not programmatic.
-
-harness-evals Phase 1 gives you structural JSON diff, schema validation, latency thresholds, and reliability metrics — all without an API key. That's a meaningfully better first-run experience than any competitor.
-
-### 4. Clean OSS/commercial boundary
-
-Scoring in OSS, workflow/governance in the paid product. This mirrors DeepEval's model (OSS library + Confident AI platform) but with a clearer separation — DeepEval has telemetry and cloud hooks baked into the OSS `__init__.py`. harness-evals should keep the OSS layer completely standalone.
-
-### 5. Core abstractions are minimal and correct
-
-`TestCase`, `BaseMetric`, `Score`, `assert_test` — this matches the established pattern from DeepEval (`LLMTestCase`, `BaseMetric`, `assert_test`) while being cleaner. The right surface area for Phase 1.
+- **61 tests, all passing, 0.09s, lint clean, zero warnings**
+- **12 metrics** across 4 categories (deterministic, structural, operational, reliability)
+- **2 dependencies** (`deepdiff`, `jsonschema`) — no LLM key needed
+- **Clean data model**: `Golden` (authored) -> `EvalCase` (evaluated) -> `Score` (result)
+- PEP 561 compliant (`py.typed`), CI on Python 3.10/3.11/3.12
 
 ---
 
-## Issues and Recommendations
+## Abstractions Assessment
 
-### 1. Add `evaluate()` — the non-assertion variant
+### Golden -> EvalCase -> Score: correct decomposition
 
-**Priority: High. This is table stakes.**
+Most eval frameworks (DeepEval, RAGAS) use a single type that mixes authored data with runtime data. This creates an awkward gap — you can't represent "I have 100 test cases but haven't run the agent yet." You end up with `actual_output=None` placeholders.
 
-The plan only mentions `assert_test`. Both DeepEval and RAGAS provide a non-failing `evaluate()` function, and it's the more commonly used entry point:
+The Golden/EvalCase split maps to how evals actually work:
 
-- **DeepEval**: `evaluate(test_cases=[...], metrics=[...])` returns `TestResult` objects without raising
-- **RAGAS**: `evaluate(dataset, metrics, llm)` returns `EvaluationResult` with `.to_pandas()`
-- **promptfoo**: `eval` command defaults to reporting, `--ci` flag enables failure exit codes
+1. **Author time** — `Golden` lives in a YAML/JSONL file, checked into the repo
+2. **Run time** — Agent produces output, `EvalCase.from_golden()` combines them
+3. **Score time** — Metrics receive a complete `EvalCase`, return a `Score`
 
-Developers explore with `evaluate()`, then gate with `assert_test()`. Both are needed from day one.
+This enables `evaluate_dataset(goldens, agent_fn, metrics)` — the most natural API for batch evaluation. No other framework in the space has this flow this clean.
 
-```python
-# Exploration mode — returns scores, doesn't fail
-scores = evaluate(test_case, metrics=[...])
+### BaseMetric with sync measure() + async a_measure(): correct for Phase 1
 
-# Gate mode — raises AssertionError on failure
-assert_test(test_case, metrics=[...])
-```
+The dual API avoids forcing async on deterministic metrics while providing the extension point for Phase 2 LLM metrics. The abstraction boundary is at the metric level, not the runner level. `evaluate()` stays sync; individual metrics opt into async when they need it.
 
-The `runner.py` file is already in the plan. Make `evaluate()` explicit in the core abstractions section.
+### Typed operational fields: correct tradeoff
 
-### 2. `TestCase.runs` — the recursive type needs a guard, not a new class
+`eval_case.latency_ms` is better than `(metadata or {}).get("latency_ms")`. Type-safe, IDE-discoverable, no string key typos. The `metadata` dict remains for extensibility. `ResourceConsistencyMetric._get_resource_value()` bridges both — typed field first, metadata fallback for custom keys like `gpu_memory`.
 
-The plan defines:
+### Score.passed auto-computed: eliminates a bug class
 
-```python
-runs: list["TestCase"] | None = None
-```
+Removing `success` from the constructor and computing `passed = value >= threshold` in `__post_init__` means no metric can accidentally pass `success=True` when `value < threshold`. Every metric's Score construction is now simpler.
 
-Each run is a `TestCase` that could have its own `runs`, creating unbounded recursion. However, introducing a separate `MultiRunTestCase` class (as I initially considered) would break the single-type interface that makes `BaseMetric.measure(test_case)` clean.
+### BaseSink: minimal and correct
 
-**Recommendation**: Keep `runs` on `TestCase` but document and enforce that nested runs are ignored. This is simpler than a type split:
-
-```python
-@dataclass
-class TestCase:
-    # ... fields ...
-    runs: list["TestCase"] | None = None  # Nested runs on sub-cases are ignored
-```
-
-`ReliabilityMetric.measure()` already handles this correctly — it reads `test_case.runs` and passes individual `TestCase` objects to `measure_runs()`, never recursing into their `.runs`.
-
-### 3. `confidence` should stay in `metadata`, not be a top-level field
-
-The plan puts `confidence` as both a top-level `TestCase` field AND a standard metadata key. Pick one.
-
-**Recommendation**: Keep it in `metadata`. Reasons:
-- It's only used by Phase 2 predictability metrics — no need to pollute the Phase 1 dataclass
-- DeepEval doesn't have `confidence` at all; RAGAS doesn't either. This is novel territory — keep it in the flexible `metadata` dict until the pattern stabilizes
-- Standard metadata keys convention already handles this cleanly
-
-### 4. Sinks need a minimal interface specification
-
-The directory structure shows `sinks/stdout.py` and `sinks/json_sink.py`, but the plan doesn't describe how sinks connect to `assert_test` or `evaluate`. This matters for the commercial product integration — Harness AI Evals will need to send scores to its own backend.
-
-Industry patterns:
-- **DeepEval**: No pluggable sinks in OSS. Console output + hardcoded Confident AI API. Custom output = process the return value yourself.
-- **RAGAS**: Returns `EvaluationResult` with `.to_pandas()`. No sink abstraction.
-- **promptfoo**: Output format determined by `-o` file extension (`.json`, `.xml`, `.csv`, `.html`).
-
-**Recommendation**: Keep it simple. Sinks are an optional parameter on `evaluate()`:
-
-```python
-scores = evaluate(test_case, metrics=[...], sinks=[StdoutSink(), JsonSink("results.json")])
-```
-
-Minimal interface:
-
-```python
-class BaseSink(ABC):
-    @abstractmethod
-    def write(self, scores: list[Score], test_case: TestCase) -> None: ...
-```
-
-This is cleaner than DeepEval's approach (no sink abstraction at all) and gives the commercial product a clean extension point without forking.
-
-### 5. Align Phase 1 metric count with the strategy doc
-
-The strategy doc promises ~14 metrics for Phase 1:
-- 4 deterministic: ExactMatch, Contains, Regex, NumericDiff
-- 3 structural: JsonDiff (3 tiers count as 1), SchemaValidation
-- 4 operational: Latency, TokenCost, CostEfficiency, RetryCount
-- 2 reliability: OutcomeConsistency, ResourceConsistency
-
-The PLAN.md details only 6 reference metrics and the directory structure only shows files for those 6. The missing ones (Contains, Regex, NumericDiff, TokenCost, CostEfficiency, RetryCount) are trivial — each is 20-40 lines.
-
-**Recommendation**: Add them to the directory structure. They're easy wins that fill out the metric inventory and give more examples for contributors. Each is a single file.
-
-### 6. Add `py.typed` and note type annotation strategy
-
-For a library meant to be `pip install`ed and adopted into a product, PEP 561 compliance matters. Add `py.typed` marker to `src/harness_evals/` and note that all public APIs use type annotations. This is free and makes IDE integration significantly better.
-
-DeepEval uses Pydantic models (typed by default). RAGAS uses dataclasses with annotations. harness-evals should match this standard.
-
-### 7. Move the citation/reference section out of PLAN.md
-
-Lines 376-431 are documentation guidance — useful content, but not implementation plan. Move to `docs/references.md` or `CITATIONS.md` to keep PLAN.md focused on what to build.
-
-### 8. Consider `__all__` exports
-
-The plan says `__init__.py` exports `TestCase, assert_test, Score`. Make this explicit with `__all__`. DeepEval does this — small public API surface at the top level, metrics imported from `deepeval.metrics`. harness-evals should follow the same pattern:
-
-```python
-# harness_evals/__init__.py
-from harness_evals.core.test_case import TestCase
-from harness_evals.core.score import Score
-from harness_evals.core.runner import assert_test, evaluate
-
-__all__ = ["TestCase", "Score", "assert_test", "evaluate"]
-```
-
-Metrics imported separately: `from harness_evals.metrics import ExactMatch, JsonDiff`
+One method, no lifecycle. Phase 3 adds `open()/close()` when JUnit and OTLP sinks need it. Not before.
 
 ---
 
-## Industry Pattern Comparison
+## Industry Comparison (final state)
 
-| Aspect | DeepEval | RAGAS | promptfoo | harness-evals (plan) | Assessment |
-|--------|----------|-------|-----------|---------------------|------------|
-| **Test case** | `LLMTestCase` (Pydantic) | `SingleTurnSample` (dataclass) | YAML `vars` + `assert` | `TestCase` (dataclass) | Good — dataclass is simpler than Pydantic, more Pythonic than YAML |
-| **Metric interface** | `measure(test_case) -> float` | `_single_turn_ascore(sample) -> float` | Assertion type string | `measure(test_case) -> float` | Good — matches DeepEval's proven pattern |
-| **Non-assertion eval** | `evaluate()` returns results | `evaluate()` returns results | Default mode is reporting | Not in plan | **Gap — add `evaluate()`** |
-| **Multi-run** | Not native (loop yourself) | Not native | `--repeat` flag | Native `runs` field + `ReliabilityMetric` | **Differentiator** |
-| **Output sinks** | Console + hardcoded cloud API | `.to_pandas()` return value | CLI `-o` flag (JSON/XML/CSV/HTML) | `sinks/` directory | Good direction — needs interface spec |
-| **Metric organization** | One directory per metric (heavy) | Flat in `metrics/` | Assertion types (not extensible) | One file per metric in category subdirs | **Best of both** — categorized but not heavy |
-| **LLM-free metrics** | ~2 (ExactMatch, JsonSchema) | 0 | ~8 deterministic assertions | ~13 in Phase 1 | **Differentiator** |
-| **CI/CD native** | Not really (pytest only) | Not really (call in pytest) | Yes (`--ci`, JUnit, exit codes) | Yes (pytest + JUnit + baseline) | Matches promptfoo, better than DeepEval/RAGAS |
+| Aspect | DeepEval | RAGAS | promptfoo | harness-evals | Assessment |
+|--------|----------|-------|-----------|---------------|------------|
+| **Data model** | `LLMTestCase` (single type) | `SingleTurnSample` (single type) | YAML `vars` + `assert` | `Golden` + `EvalCase` (split) | **Better** — clean authored/runtime separation |
+| **Metric interface** | `measure()` + `a_measure()` | `_single_turn_ascore()` | Assertion type string | `measure()` + `a_measure()` | Matches DeepEval's proven pattern |
+| **Non-assertion eval** | `evaluate()` | `evaluate()` | Default mode | `evaluate()` | Table stakes, covered |
+| **Batch eval** | `evaluate(test_cases=[...])` | `evaluate(dataset)` | Matrix (prompts x providers x tests) | `evaluate_cases()` + `evaluate_dataset(goldens, agent_fn)` | **Better** — `evaluate_dataset` with agent_fn is unique |
+| **Multi-run** | Not native | Not native | `--repeat` flag | Native `runs` field + `ReliabilityMetric` | **Differentiator** |
+| **Output sinks** | Console + hardcoded cloud API | `.to_pandas()` | CLI `-o` (JSON/XML/CSV/HTML) | `BaseSink` ABC, pluggable | Cleaner extension point than all three |
+| **Metric organization** | One directory per metric (heavy) | Flat in `metrics/` | Assertion types (not extensible) | One file per metric in category subdirs | Best of both |
+| **LLM-free metrics** | ~2 | 0 | ~8 deterministic assertions | 12 in Phase 1 | **Differentiator** |
+| **CI/CD native** | Not really | Not really | Yes (`--ci`, JUnit, exit codes) | Yes (pytest + JUnit + baseline) | Matches promptfoo, better than DeepEval/RAGAS |
 | **Reliability metrics** | None | None | None | 12 metrics across 4 dimensions | **Unique in the space** |
+| **Typed operational fields** | No (metadata dict) | No (metadata dict) | No (config-driven) | Yes (`latency_ms`, `token_count`, etc.) | **Better** DX |
+| **Score auto-compute** | Manual `success` | No pass/fail concept | Per-assertion pass/fail | Auto-computed `passed` | Eliminates bugs |
+
+---
+
+## Phasing Critique
+
+### Current phasing (from PLAN.md)
+
+| Phase | Content | Duration |
+|-------|---------|----------|
+| 1 | Core + deterministic + structural + operational + reliability foundation | 2 weeks |
+| 2 | Datasets + LLM abstraction + GEval + RAG + predictability | 2 weeks |
+| 3 | Safety + agent + robustness metrics + JUnit + baseline | 2 weeks |
+| 4 | Conversation + MCP + trajectory + fault robustness | 2-3 weeks |
+| 5 | Synthesizer + perturbation generators | 3-4 weeks |
+| 6 | Harness AI Evals integration | 2-3 weeks |
+
+### Problem: perturbation generators are in Phase 5 but robustness metrics are in Phase 3
+
+Phase 3 ships `PromptRobustnessMetric` and `EnvironmentRobustnessMetric`. These metrics need perturbation sets — alternative inputs for the same expected output. But the tools to generate those perturbations (`BasePerturbation`, `JsonFieldReorder`, `PromptRephrase`, `SchemaVariation`) are deferred to Phase 5.
+
+This means Phase 3 ships metrics that require users to hand-craft perturbation sets. That's like shipping `JsonDiffMetric` without `deepdiff` — the metric exists but the input is unreasonably hard to produce.
+
+**Dependency chain:**
+
+```
+Phase 2: BaseLLM (OpenAI, Anthropic)
+    |
+Phase 3: Robustness metrics (need perturbations)
+    |         \
+    |    Phase 5: Perturbation generators  <-- this is too late
+    |
+Phase 3 should include: deterministic perturbation generators
+```
+
+### Recommended fix: split perturbations from synthesizer
+
+**Move to Phase 3** (alongside robustness metrics they serve):
+- `BasePerturbation` ABC
+- `JsonFieldReorder` — deterministic, zero deps
+- `SchemaVariation` — deterministic, zero deps
+- `TypoInjection` — deterministic, zero deps
+- `PromptRephrase` — needs `BaseLLM` from Phase 2, available by Phase 3
+
+**Keep in Phase 5** (standalone tool, not a metric prerequisite):
+- `Synthesizer` — generates entire datasets from documents, genuinely different scope
+
+This way robustness metrics ship with the tools to actually use them. Phase 5 becomes "Synthesizer" only, which simplifies it.
+
+### Revised phasing
+
+| Phase | Content | Change |
+|-------|---------|--------|
+| 1 | Core + deterministic + structural + operational + reliability | No change |
+| 2 | Datasets + LLM abstraction + GEval + RAG + predictability | No change |
+| 3 | Safety + agent + robustness + **perturbation generators** + JUnit + baseline | **Perturbation generators moved here** |
+| 4 | Conversation + MCP + trajectory + fault robustness | No change |
+| 5 | Synthesizer | **Simplified — perturbations removed** |
+| 6 | Harness AI Evals integration | No change |
+
+---
+
+## Code Quality
+
+### What's done right
+
+- **Every metric follows the same pattern** — imports, class, `__init__` with `super().__init__`, `measure()` returns `Score`. A contributor reads any metric and knows exactly what to do.
+- **`evaluate()` catches exceptions gracefully** — a broken metric returns a failing Score, doesn't crash the run (ADR-004).
+- **`from_dict()` backward compat** — `actual_output`->`output`, `expected_output`->`expected`, `token_usage`->`token_count`. Unknown keys silently ignored.
+- **`from_golden()`** — clean factory that copies golden fields and passes `**kwargs` for runtime data.
+- **`Score.created_at`** uses `datetime.now(timezone.utc)` not the deprecated `datetime.utcnow()`.
+- **`to_dict()` omits None** on both Golden and EvalCase — clean serialization.
+- **`ResourceConsistencyMetric._get_resource_value()`** — typed field first, metadata fallback. Preserves the configurable `resource_key` pattern for custom keys.
+- **Test coverage** — 61 tests covering happy paths, edge cases, backward compat aliases, typed fields, resource key fallback, batch evaluation, async dataset evaluation.
+
+### What to watch
+
+- **`EvalCase` field growth** — currently 12 fields, clean. Phase 2 adds `tools_called`, `trajectory`; Phase 4 adds `mcp_trace`. Around ~15+ fields, consider sub-dataclasses (e.g., `AgentTrace`). Not a problem today.
+- **PLAN.md is stale** — still references `TestCase`, `actual_output`, `expected_output`, `success`, `metadata["latency_ms"]`. The code has moved ahead of the plan. Update PLAN.md to match the implemented types or it will mislead contributors.
+
+---
+
+## What's deferred (correctly)
+
+| Abstraction | Phase | Why not now |
+|---|---|---|
+| Registry (`register_metric`) | 2 | Dead code without YAML config |
+| `BaseLLM` provider abstraction | 2 | No LLM metrics in Phase 1 |
+| YAML config (`eval.yaml`, `run_eval()`) | 2 | No one uses config on day one |
+| JSON schemas for validation | 2 | Maintenance overhead without payoff yet |
+| Dataset loaders (`load_dataset()`) | 2 | Comes with config infrastructure |
+| `BaselineStore` | 3 | Needs score persistence first |
+| Sink lifecycle (`open()`/`close()`) | 3 | Only JUnit/OTLP sinks need it |
+| `BasePerturbation` | 3 (was 5) | **Should ship with robustness metrics** |
+| `Synthesizer` | 5 | Standalone tool, not a metric prerequisite |
 
 ---
 
 ## Verdict
 
-The plan is architecturally sound and well-positioned against the industry. The main adjustments are:
+The abstractions are right. They're minimal, they match how developers actually think about evals, and they have clean extension points for Phases 2-6 without carrying dead infrastructure in Phase 1. The Golden/EvalCase split is genuinely better than what DeepEval, RAGAS, or promptfoo have.
 
-1. **Add `evaluate()`** — table stakes, every framework has it
-2. **Specify sink interface** — minimal ABC, needed for commercial integration
-3. **Add the missing Phase 1 metrics** to the directory structure — align with strategy doc's ~14 count
-4. **Keep `confidence` in metadata** — don't promote to top-level until Phase 2 validates the pattern
-5. **Guard `runs` recursion** — document, don't restructure
-6. **Move citations section** — keep PLAN.md focused on what to build
-
-None of these are blockers. The plan is ready to execute.
+One phasing fix needed: move perturbation generators from Phase 5 to Phase 3 so robustness metrics ship with the tools to use them. Everything else is correctly scoped.

@@ -133,7 +133,6 @@ harness-evals/
 ├── AGENTS.md                   # AI agent conventions
 ├── LICENSE                     # Apache 2.0 (already exists)
 ├── .gitignore
-├── Makefile                    # format, lint, test
 ├── .github/
 │   └── workflows/
 │       └── ci.yml              # pytest + lint on PR
@@ -401,7 +400,7 @@ The AGENTS.md will include:
 - **How to add a metric**: Step-by-step (create file, extend BaseMetric, implement measure(), add test)
 - **Naming conventions**: `snake_case` files, `PascalCase` classes, `{MetricName}Metric` pattern
 - **Testing pattern**: Every metric has a corresponding `test_{metric_name}.py`
-- **Code quality**: `make format` (ruff), `make lint` (ruff check), `make test` (pytest)
+- **Code quality**: `ruff format src/ tests/`, `ruff check src/ tests/`, `pytest tests/ -v`
 - **Commit conventions**: `feat:`, `fix:`, `test:`, `docs:`
 
 ## Dependencies (minimal)
@@ -749,6 +748,30 @@ class CsvSink(BaseSink):
     def __init__(self, path: str): ...
 ```
 
+#### OTLP Sink
+
+Export eval scores as OpenTelemetry metrics to any OTLP-compatible backend (Grafana, Datadog, Honeycomb, New Relic, etc.).
+
+```python
+class OtlpSink(BaseSink):
+    """Export scores as OpenTelemetry metrics to an OTLP endpoint.
+
+    Each Score becomes a gauge metric with attributes:
+    - metric_name, threshold, success, tags (from TestCase)
+    """
+    def __init__(
+        self,
+        endpoint: str = "http://localhost:4317",
+        service_name: str = "harness-evals",
+    ): ...
+```
+
+**Why OTLP**: Users already have OTLP collectors in their infra. An OtlpSink lets them pipe eval scores into existing dashboards alongside latency/error metrics. Enables "eval-in-production" -- run evals on live traffic, export as OTel metrics, alert on regressions via existing alerting.
+
+**Dependencies** (optional): `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-grpc` -- installed via `pip install harness-evals[otlp]`.
+
+**Files**: `src/harness_evals/sinks/otlp_sink.py`
+
 #### Baseline Comparison
 
 Baseline comparison answers: "did scores regress vs. the last passing run?"
@@ -996,7 +1019,6 @@ harness-evals/
 ├── LICENSE                          # Apache 2.0
 ├── PLAN.md                          # This file
 ├── .gitignore
-├── Makefile                         # format, lint, test
 ├── .github/workflows/ci.yml
 │
 ├── src/harness_evals/
@@ -1044,7 +1066,8 @@ harness-evals/
 │   │   ├── stdout.py                # StdoutSink
 │   │   ├── json_sink.py             # JsonSink
 │   │   ├── csv_sink.py              # [Phase 3] CsvSink
-│   │   └── junit_sink.py            # [Phase 3] JUnitSink
+│   │   ├── junit_sink.py            # [Phase 3] JUnitSink
+│   │   └── otlp_sink.py             # [Phase 3] OtlpSink (OpenTelemetry)
 │   │
 │   ├── synthesizer/                 # [Phase 5]
 │   │   ├── __init__.py
@@ -1092,8 +1115,9 @@ dependencies = ["deepdiff>=7.0", "jsonschema>=4.0"]
 
 [project.optional-dependencies]
 llm = ["openai>=1.0", "anthropic>=0.30"]       # Phase 2+
+otlp = ["opentelemetry-sdk>=1.20", "opentelemetry-exporter-otlp-proto-grpc>=1.20"]  # Phase 3+
 dev = ["pytest>=8.0", "ruff>=0.4", "pytest-cov"]
-all = ["harness-evals[llm]"]
+all = ["harness-evals[llm,otlp]"]
 ```
 
 Phase 1 has two dependencies. LLM providers are optional. No heavy ML libraries.

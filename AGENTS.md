@@ -26,26 +26,26 @@ pip install -e ".[all,dev]"     # Everything
 ## Testing
 
 ```bash
-make test                       # Run all tests
-make test-unit                  # Unit tests only
-pytest tests/ -v                # Direct pytest
-pytest tests/metrics/ -v        # Test a specific directory
-pytest tests/test_core.py -v    # Test a specific file
-pytest tests/test_core.py::test_evaluate -v  # Test a specific function
+pytest tests/ -v                              # All tests
+pytest tests/ -v -m unit                      # Unit tests only
+pytest tests/metrics/ -v                      # Specific directory
+pytest tests/test_core.py -v                  # Specific file
+pytest tests/test_core.py::test_evaluate -v   # Specific function
+pytest tests/ --cov=harness_evals --cov-report=html  # With coverage
 ```
 
 - Mark tests: `@pytest.mark.unit`, `@pytest.mark.integration`
 - Test data: `tests/data/`
-- Coverage: `pytest tests/ --cov=harness_evals --cov-report=html`
 
-**ALWAYS run `make test` before committing.**
+**ALWAYS run `pytest tests/ -v` before committing.**
 
 ## Linting & Formatting
 
 ```bash
-make format                     # Auto-format with ruff
-make lint                       # Lint check with ruff
-make check                      # lint + test
+ruff check src/ tests/           # Lint check
+ruff format --check src/ tests/  # Format check
+ruff format src/ tests/          # Auto-format
+ruff check --fix src/ tests/     # Auto-fix lint issues
 ```
 
 Ruff handles both formatting and linting (replaces black + flake8 + isort).
@@ -64,7 +64,7 @@ Ruff handles both formatting and linting (replaces black + flake8 + isort).
 - Keep metrics as single-file, single-class modules
 - Write a test file for every new metric
 - Use async/await for I/O (LLM calls, HTTP)
-- Run `make check` before committing
+- Run `ruff check` and `pytest` before committing
 
 ## DON'Ts
 
@@ -80,7 +80,6 @@ Ruff handles both formatting and linting (replaces black + flake8 + isort).
 ```
 harness-evals/
 ├── pyproject.toml                   # Package config, dependencies, tool settings
-├── Makefile                         # format, lint, test, check
 ├── README.md                        # User-facing documentation
 ├── AGENTS.md                        # This file
 ├── PLAN.md                          # Full vision spec with all phases
@@ -175,7 +174,7 @@ def test_my_metric_failure():
     assert not score.success
 ```
 
-6. **Run tests** — `make test`
+6. **Run tests** — `pytest tests/ -v`
 
 ## Core Types Reference
 

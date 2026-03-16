@@ -218,7 +218,8 @@ class TestMyMetric:
 ### 6. Run Tests
 
 ```bash
-make check  # lint + all tests
+ruff check src/ tests/   # lint
+pytest tests/ -v         # test
 ```
 
 ## Rules

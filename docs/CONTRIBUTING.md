@@ -8,14 +8,15 @@ cd harness-evals
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"
 pre-commit install
-make check  # lint + 42 tests should pass
+ruff check src/ tests/   # lint
+pytest tests/ -v         # 42 tests should pass
 ```
 
 ## Development Workflow
 
 1. Create a branch: `git checkout -b feat/my-feature`
 2. Make changes, following existing patterns
-3. Run `make check` (lint + test)
+3. Run `ruff check src/ tests/` and `pytest tests/ -v`
 4. Commit with conventional format: `feat: add faithfulness metric`
 5. Push and open a PR
 
@@ -39,7 +40,7 @@ This is the most common contribution. See [docs/metrics-guide.md](metrics-guide.
 4. Implement `measure(self, test_case: TestCase) -> Score`
 5. Export from `<category>/__init__.py` and `metrics/__init__.py`
 6. Create `tests/metrics/test_<metric_name>.py`
-7. Run `make check`
+7. Run `ruff check src/ tests/` and `pytest tests/ -v`
 
 A single metric is a single-file PR. Look at `exact_match.py` as a template.
 
@@ -61,9 +62,9 @@ A single metric is a single-file PR. Look at `exact_match.py` as a template.
 ## Testing
 
 ```bash
-make test          # All tests
-make test-unit     # Unit tests only
-pytest tests/metrics/test_exact_match.py -v  # Specific file
+pytest tests/ -v                              # All tests
+pytest tests/ -v -m unit                      # Unit tests only
+pytest tests/metrics/test_exact_match.py -v   # Specific file
 ```
 
 - Mark tests with `@pytest.mark.unit` or `@pytest.mark.integration`

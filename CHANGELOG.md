@@ -16,7 +16,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Operational metrics: `LatencyMetric`, `TokenCostMetric`, `CostEfficiencyMetric`, `RetryCountMetric`
 - Reliability metrics: `OutcomeConsistencyMetric`, `ResourceConsistencyMetric`
 - Output sinks: `StdoutSink`, `JsonSink`
-- Project infrastructure: pyproject.toml, Makefile, .gitignore, .pre-commit-config.yaml
+- Project infrastructure: pyproject.toml, .gitignore, .pre-commit-config.yaml
 - CI: GitHub Actions workflow for Python 3.10/3.11/3.12
 - Documentation: README.md, AGENTS.md, PLAN.md (full 6-phase vision)
 - 42 passing tests covering all metrics and core functions

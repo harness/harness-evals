@@ -6,6 +6,7 @@ from harness_evals.core.metric import BaseMetric, ReliabilityMetric
 from harness_evals.core.runner import assert_test, evaluate, evaluate_cases, evaluate_dataset
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.datasets import Dataset, load_dataset, save_dataset
 
 __all__ = [
     "Golden",
@@ -18,4 +19,7 @@ __all__ = [
     "assert_test",
     "evaluate_cases",
     "evaluate_dataset",
+    "Dataset",
+    "load_dataset",
+    "save_dataset",
 ]

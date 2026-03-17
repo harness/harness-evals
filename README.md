@@ -215,6 +215,13 @@ ruff check src/ tests/   # lint
 pytest tests/ -v         # test
 ```
 
+## References
+
+- Rabanser, Kapoor, Kirgis, Liu, Utpala, Narayanan. ["Towards a Science of AI Agent Reliability"](https://arxiv.org/abs/2602.16666v2). Princeton, 2026. — Defines the 12 reliability metrics across 4 dimensions (consistency, robustness, predictability, safety) that inform this framework's reliability metric design.
+- [DeepEval](https://github.com/confident-ai/deepeval) — LLM evaluation framework. Influenced the `measure()` / `a_measure()` metric interface pattern.
+- [RAGAS](https://docs.ragas.io) — RAG evaluation toolkit. Informed the RAG metric decomposition (faithfulness, context precision/recall).
+- [promptfoo](https://www.promptfoo.dev/docs/intro/) — CLI-first eval tool. Validated the CI/CD-native approach (JUnit output, exit codes, baseline regression).
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).

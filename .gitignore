@@ -33,3 +33,6 @@ Thumbs.db
 *.swo
 
 .harness-evals/
+
+# Research papers / large binaries
+*.pdf

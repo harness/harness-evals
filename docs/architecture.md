@@ -108,9 +108,9 @@ LLM-judged metrics accept a `BaseLLM` instance. Providers implement `generate(pr
 
 Pluggable storage for score baselines. `JsonBaselineStore` uses local files. Enterprise users can implement remote storage.
 
-### 5. Perturbation Generators (`BasePerturbation`, Phase 5+)
+### 5. Perturbation Generators (`BasePerturbation`, Phase 2-3)
 
-Produce semantically equivalent input variants. Feed into robustness metrics.
+Produce semantically equivalent input variants. Deterministic generators (JsonFieldReorder, SchemaVariation, TypoInjection) ship in Phase 2. LLM-based PromptRephrase ships in Phase 3 alongside robustness metrics.
 
 ## Design Decisions
 
@@ -149,7 +149,7 @@ harness_evals/
 ├── llm/           ← [Phase 2] depends on nothing (ABC + optional providers)
 ├── baseline/      ← [Phase 3] depends on core.score
 ├── synthesizer/   ← [Phase 5] depends on llm/, core.eval_case
-└── perturbations/ ← [Phase 5] depends on llm/ (for LLM-based perturbation)
+└── perturbations/ ← [Phase 2-3] deterministic (Phase 2), LLM-based (Phase 3)
 ```
 
 **Key rule**: Dependencies flow downward. `core/` never imports from `metrics/`, `sinks/`, `llm/`, etc. Metrics never import from other metrics.

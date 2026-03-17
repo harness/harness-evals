@@ -6,19 +6,19 @@ Accepted
 
 ## Context
 
-Core types (`TestCase`, `Score`) need a structured data container. Options: stdlib `dataclass`, Pydantic `BaseModel`, or `attrs`.
+Core types (`Golden`, `EvalCase`, `Score`) need a structured data container. Options: stdlib `dataclass`, Pydantic `BaseModel`, or `attrs`.
 
 ## Decision
 
-Use stdlib `@dataclass` for `TestCase` and `Score`.
+Use stdlib `@dataclass` for `Golden`, `EvalCase`, and `Score`.
 
 ## Rationale
 
 1. **Zero dependencies** — `dataclass` is stdlib. Pydantic adds ~5MB and a compiled dependency (pydantic-core in Rust). For a lightweight scoring library, every dependency matters.
 
-2. **No validation needed at the boundary** — `TestCase` and `Score` are internal types created by the user or by metrics, not deserialized from untrusted input. Pydantic's validation is overkill here.
+2. **No validation needed at the boundary** — `Golden`, `EvalCase`, and `Score` are internal types created by the user or by metrics, not deserialized from untrusted input. Pydantic's validation is overkill here.
 
-3. **Simple composition** — `TestCase.runs` is `list[TestCase]`, which works naturally with dataclasses. Pydantic's self-referencing models require `model_rebuild()` and `from __future__ import annotations`.
+3. **Simple composition** — `EvalCase.runs` is `list[EvalCase]`, which works naturally with dataclasses. Pydantic's self-referencing models require `model_rebuild()` and `from __future__ import annotations`.
 
 4. **Familiar** — Every Python developer knows `dataclass`. Pydantic has a learning curve (v1 vs v2, model_config, validators).
 

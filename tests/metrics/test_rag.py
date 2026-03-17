@@ -31,13 +31,17 @@ class MockLLM(BaseLLM):
 class TestFaithfulnessMetric:
     @pytest.mark.asyncio
     async def test_all_supported(self):
-        llm = MockLLM(responses=[
-            {"claims": ["Paris is the capital", "It has the Eiffel Tower"]},
-            {"verdicts": [
-                {"claim": "Paris is the capital", "verdict": "supported"},
-                {"claim": "It has the Eiffel Tower", "verdict": "supported"},
-            ]},
-        ])
+        llm = MockLLM(
+            responses=[
+                {"claims": ["Paris is the capital", "It has the Eiffel Tower"]},
+                {
+                    "verdicts": [
+                        {"claim": "Paris is the capital", "verdict": "supported"},
+                        {"claim": "It has the Eiffel Tower", "verdict": "supported"},
+                    ]
+                },
+            ]
+        )
         metric = FaithfulnessMetric(llm=llm, threshold=0.7)
         ec = EvalCase(
             input="Tell me about Paris",
@@ -50,14 +54,18 @@ class TestFaithfulnessMetric:
 
     @pytest.mark.asyncio
     async def test_partial_support(self):
-        llm = MockLLM(responses=[
-            {"claims": ["claim1", "claim2", "claim3"]},
-            {"verdicts": [
-                {"claim": "claim1", "verdict": "supported"},
-                {"claim": "claim2", "verdict": "unsupported"},
-                {"claim": "claim3", "verdict": "supported"},
-            ]},
-        ])
+        llm = MockLLM(
+            responses=[
+                {"claims": ["claim1", "claim2", "claim3"]},
+                {
+                    "verdicts": [
+                        {"claim": "claim1", "verdict": "supported"},
+                        {"claim": "claim2", "verdict": "unsupported"},
+                        {"claim": "claim3", "verdict": "supported"},
+                    ]
+                },
+            ]
+        )
         metric = FaithfulnessMetric(llm=llm, threshold=0.7)
         ec = EvalCase(input="q", output="a", context=["ctx"])
         score = await metric.a_measure(ec)
@@ -107,10 +115,14 @@ class TestAnswerRelevancyMetric:
 class TestContextPrecisionMetric:
     @pytest.mark.asyncio
     async def test_all_relevant(self):
-        llm = MockLLM(default={"verdicts": [
-            {"chunk_index": 0, "relevant": True},
-            {"chunk_index": 1, "relevant": True},
-        ]})
+        llm = MockLLM(
+            default={
+                "verdicts": [
+                    {"chunk_index": 0, "relevant": True},
+                    {"chunk_index": 1, "relevant": True},
+                ]
+            }
+        )
         metric = ContextPrecisionMetric(llm=llm, threshold=0.5)
         ec = EvalCase(input="q", output="a", context=["c1", "c2"])
         score = await metric.a_measure(ec)
@@ -118,10 +130,14 @@ class TestContextPrecisionMetric:
 
     @pytest.mark.asyncio
     async def test_half_relevant(self):
-        llm = MockLLM(default={"verdicts": [
-            {"chunk_index": 0, "relevant": True},
-            {"chunk_index": 1, "relevant": False},
-        ]})
+        llm = MockLLM(
+            default={
+                "verdicts": [
+                    {"chunk_index": 0, "relevant": True},
+                    {"chunk_index": 1, "relevant": False},
+                ]
+            }
+        )
         metric = ContextPrecisionMetric(llm=llm, threshold=0.5)
         ec = EvalCase(input="q", output="a", context=["c1", "c2"])
         score = await metric.a_measure(ec)
@@ -140,10 +156,14 @@ class TestContextPrecisionMetric:
 class TestContextRecallMetric:
     @pytest.mark.asyncio
     async def test_full_recall(self):
-        llm = MockLLM(default={"statements": [
-            {"statement": "s1", "attributed": True},
-            {"statement": "s2", "attributed": True},
-        ]})
+        llm = MockLLM(
+            default={
+                "statements": [
+                    {"statement": "s1", "attributed": True},
+                    {"statement": "s2", "attributed": True},
+                ]
+            }
+        )
         metric = ContextRecallMetric(llm=llm, threshold=0.7)
         ec = EvalCase(input="q", output="a", expected="expected", context=["ctx"])
         score = await metric.a_measure(ec)
@@ -151,11 +171,15 @@ class TestContextRecallMetric:
 
     @pytest.mark.asyncio
     async def test_partial_recall(self):
-        llm = MockLLM(default={"statements": [
-            {"statement": "s1", "attributed": True},
-            {"statement": "s2", "attributed": False},
-            {"statement": "s3", "attributed": False},
-        ]})
+        llm = MockLLM(
+            default={
+                "statements": [
+                    {"statement": "s1", "attributed": True},
+                    {"statement": "s2", "attributed": False},
+                    {"statement": "s3", "attributed": False},
+                ]
+            }
+        )
         metric = ContextRecallMetric(llm=llm, threshold=0.7)
         ec = EvalCase(input="q", output="a", expected="expected", context=["ctx"])
         score = await metric.a_measure(ec)

@@ -26,7 +26,9 @@ class CalibrationMetric(BaseMetric):
 
     def measure(self, eval_case: EvalCase) -> Score:
         return Score(
-            name=self.name, value=0.0, threshold=self.threshold,
+            name=self.name,
+            value=0.0,
+            threshold=self.threshold,
             reason="Calibration requires multiple eval cases — use measure_dataset()",
         )
 
@@ -39,7 +41,9 @@ class CalibrationMetric(BaseMetric):
         """
         if len(cases) != len(outcomes):
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason=f"cases ({len(cases)}) and outcomes ({len(outcomes)}) must have same length",
             )
 
@@ -51,7 +55,9 @@ class CalibrationMetric(BaseMetric):
 
         if len(pairs) < 2:
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason=f"Need at least 2 cases with confidence, got {len(pairs)}",
             )
 

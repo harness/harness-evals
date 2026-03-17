@@ -21,7 +21,9 @@ class DiscriminationMetric(BaseMetric):
 
     def measure(self, eval_case: EvalCase) -> Score:
         return Score(
-            name=self.name, value=0.0, threshold=self.threshold,
+            name=self.name,
+            value=0.0,
+            threshold=self.threshold,
             reason="Discrimination requires multiple eval cases — use measure_dataset()",
         )
 
@@ -34,7 +36,9 @@ class DiscriminationMetric(BaseMetric):
         """
         if len(cases) != len(outcomes):
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason=f"cases ({len(cases)}) and outcomes ({len(outcomes)}) must have same length",
             )
 
@@ -46,7 +50,9 @@ class DiscriminationMetric(BaseMetric):
 
         if len(pairs) < 2:
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason=f"Need at least 2 cases with confidence, got {len(pairs)}",
             )
 
@@ -55,7 +61,9 @@ class DiscriminationMetric(BaseMetric):
 
         if positives == 0 or negatives == 0:
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason="Need both successes and failures to compute AUC-ROC",
             )
 

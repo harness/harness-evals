@@ -74,19 +74,21 @@ class FaithfulnessMetric(BaseMetric):
     async def a_measure(self, eval_case: EvalCase) -> Score:
         if not eval_case.context:
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason="No context provided for faithfulness check",
             )
 
         # Step 1: Extract claims from output
-        claims_result = await self.llm.generate_json(
-            _CLAIMS_PROMPT.format(text=eval_case.output), _CLAIMS_SCHEMA
-        )
+        claims_result = await self.llm.generate_json(_CLAIMS_PROMPT.format(text=eval_case.output), _CLAIMS_SCHEMA)
         claims = claims_result.get("claims", [])
 
         if not claims:
             return Score(
-                name=self.name, value=1.0, threshold=self.threshold,
+                name=self.name,
+                value=1.0,
+                threshold=self.threshold,
                 reason="No factual claims found in output",
             )
 

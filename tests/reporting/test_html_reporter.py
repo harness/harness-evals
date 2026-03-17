@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from harness_evals import EvalCase, Score
-from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
+from harness_evals.reporting import HtmlReporter, HtmlSink
 
 
 @pytest.mark.unit
@@ -52,10 +52,12 @@ class TestHtmlReporter:
         ec = EvalCase(input="q", output="a")
         scores = self._make_scores(0.9, exact_match=1.0, relevance=0.8)
         reporter.add(ec, scores, group="g1", variant="good")
-        reporter.set_metric_categories({
-            "Deterministic": ["exact_match"],
-            "LLM Judge": ["relevance"],
-        })
+        reporter.set_metric_categories(
+            {
+                "Deterministic": ["exact_match"],
+                "LLM Judge": ["relevance"],
+            }
+        )
         html = reporter.generate()
         assert "Deterministic" in html
         assert "LLM Judge" in html
@@ -89,7 +91,9 @@ class TestHtmlReporter:
         reporter = HtmlReporter()
         ec = EvalCase(input="q", output="a")
         score = Score(
-            name="composite", value=0.8, threshold=0.7,
+            name="composite",
+            value=0.8,
+            threshold=0.7,
             metadata={"sub_a": 0.9, "sub_b": 0.7, "non_numeric": "text"},
         )
         reporter.add(ec, [score], group="g1", variant="good")
@@ -148,7 +152,8 @@ class TestHtmlSink:
             sink = HtmlSink(path)
 
             ec = EvalCase(
-                input="q", output="a",
+                input="q",
+                output="a",
                 tags={"group": "my_group", "variant": "v1", "label": "My Label"},
             )
             sink.write([Score(name="m", value=0.8, threshold=0.5)], ec)

@@ -56,13 +56,13 @@ class ContextPrecisionMetric(BaseMetric):
     async def a_measure(self, eval_case: EvalCase) -> Score:
         if not eval_case.context:
             return Score(
-                name=self.name, value=0.0, threshold=self.threshold,
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
                 reason="No context provided",
             )
 
-        chunks_text = "\n".join(
-            f"[Chunk {i}]: {chunk}" for i, chunk in enumerate(eval_case.context)
-        )
+        chunks_text = "\n".join(f"[Chunk {i}]: {chunk}" for i, chunk in enumerate(eval_case.context))
 
         prompt = _PROMPT_TEMPLATE.format(input=eval_case.input, chunks=chunks_text)
         result = await self.llm.generate_json(prompt, _RESPONSE_SCHEMA)

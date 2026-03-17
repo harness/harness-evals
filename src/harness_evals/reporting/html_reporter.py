@@ -93,13 +93,14 @@ def _variant_badge(variant: str) -> str:
     return (
         f'<span style="background:{c};color:white;padding:3px 10px;border-radius:12px;'
         f'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">'
-        f'{html_mod.escape(variant)}</span>'
+        f"{html_mod.escape(variant)}</span>"
     )
 
 
 # ---------------------------------------------------------------------------
 # HTML building blocks
 # ---------------------------------------------------------------------------
+
 
 def _score_cell(v: float) -> str:
     c = _color(v)
@@ -110,7 +111,7 @@ def _score_cell(v: float) -> str:
         f'<div style="font-size:20px;font-weight:700;color:{c}">{v:.0%}</div>'
         f'<div style="width:100%;height:4px;background:#e5e7eb;border-radius:2px;margin-top:4px">'
         f'<div style="width:{pct:.0f}%;height:100%;background:{c};border-radius:2px"></div>'
-        f'</div></td>'
+        f"</div></td>"
     )
 
 
@@ -131,7 +132,7 @@ def _metric_row(label: str, values: dict[str, float | None], variants: list[str]
 def _section_header(title: str, colspan: int) -> str:
     return (
         f'<tr><td colspan="{colspan}" style="padding:8px 12px;font-size:11px;font-weight:700;'
-        f'color:#64748b;text-transform:uppercase;letter-spacing:1px;background:#f1f5f9;'
+        f"color:#64748b;text-transform:uppercase;letter-spacing:1px;background:#f1f5f9;"
         f'border-top:1px solid #e2e8f0">{html_mod.escape(title)}</td></tr>'
     )
 
@@ -143,16 +144,17 @@ def _summary_card(title: str, value: float, count: int) -> str:
         f'<div style="background:{bg};border:1px solid #e2e8f0;border-radius:12px;'
         f'padding:16px 20px;min-width:150px;flex:1;box-shadow:0 1px 3px rgba(0,0,0,0.04)">'
         f'<div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px">'
-        f'{html_mod.escape(title)}</div>'
+        f"{html_mod.escape(title)}</div>"
         f'<div style="font-size:32px;font-weight:800;color:{c};margin:4px 0">{value:.0%}</div>'
         f'<div style="font-size:12px;color:#94a3b8">{count} test cases</div>'
-        f'</div>'
+        f"</div>"
     )
 
 
 # ---------------------------------------------------------------------------
 # HtmlReporter
 # ---------------------------------------------------------------------------
+
 
 class HtmlReporter:
     """Collects eval results and generates a grouped HTML report.
@@ -242,7 +244,7 @@ class HtmlReporter:
         body_parts.append(self._render_groups(groups, all_variants, categories))
 
         body = "\n".join(body_parts)
-        return f'''<!DOCTYPE html>
+        return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -270,7 +272,7 @@ class HtmlReporter:
         </div>
     </div>
 </body>
-</html>'''
+</html>"""
 
     def _render_methodology(self, variants: list[str]) -> str:
         parts = []
@@ -278,16 +280,16 @@ class HtmlReporter:
         if self._description:
             parts.append(
                 f'<div style="margin-bottom:16px;font-size:14px;line-height:1.6;color:#374151">'
-                f'{self._description}</div>'
+                f"{self._description}</div>"
             )
 
         if self._how_to_read:
             parts.append(
                 f'<div style="margin-bottom:16px">'
                 f'<h3 style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:8px">'
-                f'How to read this report</h3>'
+                f"How to read this report</h3>"
                 f'<div style="font-size:13px;line-height:1.6;color:#374151">{self._how_to_read}</div>'
-                f'</div>'
+                f"</div>"
             )
 
         if self._variant_descriptions and variants:
@@ -297,16 +299,16 @@ class HtmlReporter:
                 if desc:
                     items += (
                         f'<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">'
-                        f'{_variant_badge(v)}'
+                        f"{_variant_badge(v)}"
                         f'<span style="font-size:13px;color:#374151">{desc}</span>'
-                        f'</div>'
+                        f"</div>"
                     )
             if items:
                 parts.append(
                     f'<div style="margin-bottom:4px">'
                     f'<h3 style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:10px">'
-                    f'What the columns mean</h3>'
-                    f'{items}</div>'
+                    f"What the columns mean</h3>"
+                    f"{items}</div>"
                 )
 
         if not parts:
@@ -315,7 +317,7 @@ class HtmlReporter:
         return (
             f'<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;'
             f'padding:24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">'
-            f'{"".join(parts)}</div>'
+            f"{''.join(parts)}</div>"
         )
 
     def _group_results(self) -> dict[str, list[EvalResult]]:
@@ -384,12 +386,12 @@ class HtmlReporter:
 
         narrative = self._render_narrative(variants)
 
-        return f'''
+        return f"""
         <div style="margin-bottom:32px">
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px;
                         overflow-x:auto;-webkit-overflow-scrolling:touch">{"".join(cards)}</div>
             {narrative}
-        </div>'''
+        </div>"""
 
     def _render_narrative(self, variants: list[str]) -> str:
         findings = []
@@ -398,10 +400,8 @@ class HtmlReporter:
         if len(variants) >= 2:
             first_v = variants[0]
             last_v = variants[-1]
-            first_overalls = [r.scores_dict.get(self._overall_key, 0)
-                              for r in self._results if r.variant == first_v]
-            last_overalls = [r.scores_dict.get(self._overall_key, 0)
-                             for r in self._results if r.variant == last_v]
+            first_overalls = [r.scores_dict.get(self._overall_key, 0) for r in self._results if r.variant == first_v]
+            last_overalls = [r.scores_dict.get(self._overall_key, 0) for r in self._results if r.variant == last_v]
             if first_overalls and last_overalls:
                 avg_first = sum(first_overalls) / len(first_overalls)
                 avg_last = sum(last_overalls) / len(last_overalls)
@@ -442,9 +442,12 @@ class HtmlReporter:
                     )
 
         # High-performing metrics
-        perfect = [m for m in all_metrics if m != self._overall_key
-                   and all(r.scores_dict.get(m, 0) >= 0.99
-                           for r in self._results if m in r.scores_dict)]
+        perfect = [
+            m
+            for m in all_metrics
+            if m != self._overall_key
+            and all(r.scores_dict.get(m, 0) >= 0.99 for r in self._results if m in r.scores_dict)
+        ]
         if perfect:
             findings.append(
                 f"<strong>{len(perfect)} metric(s) score 100% across all cases</strong>: "
@@ -454,15 +457,13 @@ class HtmlReporter:
         if not findings:
             return ""
 
-        items = "".join(
-            f'<li style="margin-bottom:6px;line-height:1.5">{f}</li>' for f in findings
-        )
+        items = "".join(f'<li style="margin-bottom:6px;line-height:1.5">{f}</li>' for f in findings)
         return (
             f'<div style="background:white;border:1px solid #e2e8f0;border-radius:12px;'
             f'padding:24px;margin-bottom:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">'
             f'<h3 style="margin:0 0 12px 0;font-size:16px;color:#0f172a">Key Findings</h3>'
             f'<ul style="margin:0;padding-left:20px;color:#374151;font-size:13px">{items}</ul>'
-            f'</div>'
+            f"</div>"
         )
 
     def _render_groups(
@@ -486,16 +487,12 @@ class HtmlReporter:
                 'min-width:200px">Metric</th>'
             )
             for v in cols:
-                header += (
-                    f'<th style="padding:10px 12px;text-align:center;min-width:120px">'
-                    f'{_variant_badge(v)}</th>'
-                )
-            header += '</tr>'
+                header += f'<th style="padding:10px 12px;text-align:center;min-width:120px">{_variant_badge(v)}</th>'
+            header += "</tr>"
 
             # Overall row
             overall_cells = (
-                '<td style="padding:10px 12px;font-size:14px;font-weight:700;color:#0f172a">'
-                'Overall Score</td>'
+                '<td style="padding:10px 12px;font-size:14px;font-weight:700;color:#0f172a">Overall Score</td>'
             )
             for v in cols:
                 val = by_variant.get(v, {}).get(self._overall_key)
@@ -508,9 +505,7 @@ class HtmlReporter:
                         f'<div style="font-size:28px;font-weight:800;color:{c}">{val:.0%}</div></td>'
                     )
                 else:
-                    overall_cells += (
-                        '<td style="padding:10px;text-align:center;color:#9ca3af">\u2014</td>'
-                    )
+                    overall_cells += '<td style="padding:10px;text-align:center;color:#9ca3af">\u2014</td>'
 
             # Metric rows by category
             metric_rows = ""
@@ -524,7 +519,7 @@ class HtmlReporter:
                 if cat_rows:
                     metric_rows += _section_header(cat_name, n_cols) + cat_rows
 
-            sections.append(f'''
+            sections.append(f"""
             <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:0;
                         margin-bottom:20px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
                 <div style="padding:16px 20px;background:linear-gradient(135deg,#f8fafc,#f1f5f9);
@@ -542,7 +537,7 @@ class HtmlReporter:
                         {metric_rows}
                     </table>
                 </div>
-            </div>''')
+            </div>""")
 
         return "\n".join(sections)
 
@@ -550,6 +545,7 @@ class HtmlReporter:
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
+
 
 def _default_group(ec: EvalCase) -> str:
     if isinstance(ec.input, str):

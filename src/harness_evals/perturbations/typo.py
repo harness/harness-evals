@@ -8,11 +8,32 @@ from harness_evals.perturbations.base import BasePerturbation
 
 # Common typo patterns: (original char, replacement char)
 _KEYBOARD_NEIGHBORS: dict[str, str] = {
-    "a": "sq", "b": "vn", "c": "xv", "d": "sf", "e": "rw", "f": "dg",
-    "g": "fh", "h": "gj", "i": "uo", "j": "hk", "k": "jl", "l": "k;",
-    "m": "n,", "n": "bm", "o": "ip", "p": "o[", "q": "wa", "r": "et",
-    "s": "ad", "t": "ry", "u": "yi", "v": "cb", "w": "qe", "x": "zc",
-    "y": "tu", "z": "x",
+    "a": "sq",
+    "b": "vn",
+    "c": "xv",
+    "d": "sf",
+    "e": "rw",
+    "f": "dg",
+    "g": "fh",
+    "h": "gj",
+    "i": "uo",
+    "j": "hk",
+    "k": "jl",
+    "l": "k;",
+    "m": "n,",
+    "n": "bm",
+    "o": "ip",
+    "p": "o[",
+    "q": "wa",
+    "r": "et",
+    "s": "ad",
+    "t": "ry",
+    "u": "yi",
+    "v": "cb",
+    "w": "qe",
+    "x": "zc",
+    "y": "tu",
+    "z": "x",
 }
 
 
@@ -30,8 +51,8 @@ class TypoInjection(BasePerturbation):
 
     def __init__(self, rate: float = 0.05, seed: int | None = None) -> None:
         """Args:
-            rate: Fraction of characters to perturb (0.0-1.0). Default 0.05 (5%).
-            seed: Random seed for reproducibility.
+        rate: Fraction of characters to perturb (0.0-1.0). Default 0.05 (5%).
+        seed: Random seed for reproducibility.
         """
         self.rate = max(0.0, min(1.0, rate))
         self._seed = seed

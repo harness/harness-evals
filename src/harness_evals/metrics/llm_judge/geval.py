@@ -57,9 +57,7 @@ class GEvalMetric(BaseMetric):
         return asyncio.run(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
-        expected_section = (
-            f"**Expected output**: {eval_case.expected}" if eval_case.expected else ""
-        )
+        expected_section = f"**Expected output**: {eval_case.expected}" if eval_case.expected else ""
         prompt = _PROMPT_TEMPLATE.format(
             criteria=self.criteria,
             input=eval_case.input,

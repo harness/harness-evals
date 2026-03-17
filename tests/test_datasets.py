@@ -12,10 +12,7 @@ from harness_evals import Golden, load_dataset, save_dataset
 class TestLoadDataset:
     def test_load_jsonl(self, tmp_path):
         f = tmp_path / "data.jsonl"
-        f.write_text(
-            '{"input": "q1", "expected": "a1"}\n'
-            '{"input": "q2", "expected": "a2"}\n'
-        )
+        f.write_text('{"input": "q1", "expected": "a1"}\n{"input": "q2", "expected": "a2"}\n')
         dataset = load_dataset(str(f))
         assert len(dataset) == 2
         assert dataset[0].input == "q1"

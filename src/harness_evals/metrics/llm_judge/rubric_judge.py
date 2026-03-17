@@ -70,9 +70,7 @@ class RubricJudgeMetric(BaseMetric):
         min_level, max_level = levels[0], levels[-1]
 
         rubric_text = "\n".join(f"  {k}: {v}" for k, v in sorted(self.rubric.items(), reverse=True))
-        expected_section = (
-            f"**Expected output**: {eval_case.expected}" if eval_case.expected else ""
-        )
+        expected_section = f"**Expected output**: {eval_case.expected}" if eval_case.expected else ""
 
         prompt = _PROMPT_TEMPLATE.format(
             input=eval_case.input,

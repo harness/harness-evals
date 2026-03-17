@@ -7,6 +7,7 @@ from harness_evals.core.runner import assert_test, evaluate, evaluate_cases, eva
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.datasets import Dataset, load_dataset, save_dataset
+from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 
 __all__ = [
     "Golden",
@@ -22,4 +23,7 @@ __all__ = [
     "Dataset",
     "load_dataset",
     "save_dataset",
+    "EvalResult",
+    "HtmlReporter",
+    "HtmlSink",
 ]

@@ -3,6 +3,36 @@
 import pytest
 
 from harness_evals.core.eval_case import EvalCase
+from harness_evals.llm.base import BaseLLM
+
+
+class MockLLM(BaseLLM):
+    """In-memory LLM mock for testing LLM-judged metrics.
+
+    Provide a list of ``responses`` to return in order, or a ``default``
+    dict returned once the list is exhausted.
+    """
+
+    def __init__(self, responses: list[dict] | None = None, default: dict | None = None):
+        self._responses = list(responses) if responses else []
+        self._default = default or {}
+        self._call_idx = 0
+
+    async def generate(self, prompt: str, **kwargs) -> str:
+        return ""
+
+    async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+        if self._call_idx < len(self._responses):
+            result = self._responses[self._call_idx]
+            self._call_idx += 1
+            return result
+        return self._default
+
+
+@pytest.fixture
+def mock_llm():
+    """Return a factory for MockLLM instances."""
+    return MockLLM
 
 
 @pytest.fixture

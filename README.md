@@ -16,7 +16,7 @@ pip install harness-evals
 
 **`EvalCase`** — what metrics receive: a Golden enriched with the agent's actual output and runtime metadata (latency, tokens, cost).
 
-**`BaseMetric`** — a scoring function. Takes an `EvalCase`, returns a `Score`. Each metric is a single class with a `measure()` method.
+**`BaseMetric`** — a scoring function. Takes an `EvalCase`, returns a `Score`. Each metric is a single class with a `measure()` method. Specialized base classes: `ReliabilityMetric` for multi-run metrics, `SafetyMetric` for safety metrics (reported separately, never averaged).
 
 **`Score`** — the result: a value between 0.0 and 1.0, a threshold, and an auto-computed `passed` boolean.
 
@@ -146,6 +146,11 @@ scores = evaluate(ec, metrics=[...], sinks=[
 | **Structural** | JsonDiff, SchemaValidation | Structural similarity and schema conformance for JSON/YAML |
 | **Operational** | Latency, TokenCost, CostEfficiency, RetryCount | Performance and cost from typed fields |
 | **Reliability** | OutcomeConsistency, ResourceConsistency | Consistency across repeated runs |
+| **Predictability** | Calibration, Discrimination | Expected calibration error and AUC-ROC over confidence scores |
+| **LLM-Judged** | GEval, RubricJudge | LLM scores output against criteria or rubric (requires `[llm]`) |
+| **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall | Retrieval-augmented generation quality (requires `[llm]`) |
+| **Safety** | PIIMetric, ToxicityMetric, PromptInjectionMetric, HallucinationMetric | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
+| **Agent** | ToolCorrectnessMetric, TaskCompletionMetric | Tool call sequence correctness and LLM-judged task completion |
 
 ## EvalCase Fields
 
@@ -211,8 +216,9 @@ git clone git@github.com:sunilgattupalle/harness-evals.git
 cd harness-evals
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"
-ruff check src/ tests/   # lint
-pytest tests/ -v         # test
+ruff check src/ tests/          # lint
+ruff format --check src/ tests/ # format
+pytest tests/ -v                # test
 ```
 
 ## References

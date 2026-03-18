@@ -28,6 +28,15 @@ class BaseMetric(ABC):
         return self.measure(eval_case)
 
 
+class SafetyMetric(BaseMetric):
+    """Marker base class for safety metrics.
+
+    Safety metrics are reported separately and never averaged into an overall
+    score (hard-constraint design per Rabanser et al.). Use ``isinstance(m,
+    SafetyMetric)`` to identify safety metrics programmatically.
+    """
+
+
 class ReliabilityMetric(BaseMetric):
     """Base class for metrics that evaluate across multiple runs.
 

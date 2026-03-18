@@ -216,8 +216,9 @@ git clone git@github.com:sunilgattupalle/harness-evals.git
 cd harness-evals
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"
-ruff check src/ tests/   # lint
-pytest tests/ -v         # test
+ruff check src/ tests/          # lint
+ruff format --check src/ tests/ # format
+pytest tests/ -v                # test
 ```
 
 ## References

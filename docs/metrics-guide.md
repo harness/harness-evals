@@ -209,8 +209,9 @@ class TestMyMetric:
 ### 6. Run Tests
 
 ```bash
-ruff check src/ tests/   # lint
-pytest tests/ -v         # test
+ruff check src/ tests/          # lint
+ruff format --check src/ tests/ # format
+pytest tests/ -v                # test
 ```
 
 ## Rules

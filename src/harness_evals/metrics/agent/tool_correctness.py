@@ -75,9 +75,7 @@ class ToolCorrectnessMetric(BaseMetric):
 
     def _measure_exact(self, called: list[str], expected: list[str]) -> Score:
         max_len = max(len(called), len(expected))
-        matches = sum(
-            1 for a, b in zip(called, expected, strict=False) if a == b
-        )
+        matches = sum(1 for a, b in zip(called, expected, strict=False) if a == b)
         value = matches / max_len
 
         return Score(
@@ -96,10 +94,7 @@ class ToolCorrectnessMetric(BaseMetric):
     def _measure_subset(self, called: list[str], expected: list[str]) -> Score:
         called_counts = Counter(called)
         expected_counts = Counter(expected)
-        found = sum(
-            min(called_counts[tool], count)
-            for tool, count in expected_counts.items()
-        )
+        found = sum(min(called_counts[tool], count) for tool, count in expected_counts.items())
         total_expected = len(expected)
         value = found / total_expected
 

@@ -228,9 +228,7 @@ class TestTaskCompletionMetric:
 
     @pytest.mark.asyncio
     async def test_not_attempted(self):
-        llm = MockLLM(
-            default={"reasoning": "Agent refused the task", "score": 0.0}
-        )
+        llm = MockLLM(default={"reasoning": "Agent refused the task", "score": 0.0})
         metric = TaskCompletionMetric(llm=llm, threshold=0.7)
         ec = EvalCase(
             input="Write a deployment script",

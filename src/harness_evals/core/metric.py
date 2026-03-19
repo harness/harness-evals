@@ -27,6 +27,16 @@ class BaseMetric(ABC):
         """Async variant. Override for I/O-bound metrics (LLM-judged). Default calls measure()."""
         return self.measure(eval_case)
 
+    def measure_dataset(self, cases: list[EvalCase], outcomes: list[bool]) -> Score | None:
+        """Evaluate across a full dataset with known outcomes.
+
+        Override for dataset-level metrics (e.g. calibration, discrimination)
+        that need the complete set of cases to compute a meaningful score.
+        Returns ``None`` by default, signalling the runner should fall back
+        to per-case evaluation.
+        """
+        return None
+
 
 class SafetyMetric(BaseMetric):
     """Marker base class for safety metrics.

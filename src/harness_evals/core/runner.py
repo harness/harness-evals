@@ -148,9 +148,8 @@ def evaluate_batch_metrics(
     scores: list[Score] = []
     for metric in metrics:
         try:
-            if hasattr(metric, "measure_dataset"):
-                score = metric.measure_dataset(cases, outcomes)
-            else:
+            score = metric.measure_dataset(cases, outcomes)
+            if score is None:
                 case_scores = [metric.measure(c) for c in cases]
                 avg = sum(s.value for s in case_scores) / len(case_scores) if case_scores else 0.0
                 score = Score(
@@ -213,10 +212,12 @@ async def evaluate_dataset(
 
     eval_cases = await asyncio.gather(*[_run_agent(g) for g in goldens])
 
-    results: list[list[Score]] = []
-    for eval_case in eval_cases:
-        scores = await a_evaluate(eval_case, metrics, sinks)
-        results.append(scores)
+    scored = await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases])
+
+    if sinks:
+        for eval_case, scores in zip(eval_cases, scored):
+            for sink in sinks:
+                sink.write(scores, eval_case)
 
     _finalize_sinks(sinks)
-    return results
+    return list(scored)

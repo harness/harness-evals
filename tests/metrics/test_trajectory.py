@@ -193,6 +193,7 @@ class TestTrajectoryEdgeCases:
         assert score.value == 0.0
 
     def test_empty_trajectories(self):
+        """Two runs that both took zero actions are perfectly consistent."""
         ec = EvalCase(
             input="q",
             output="a",
@@ -203,8 +204,23 @@ class TestTrajectoryEdgeCases:
         )
         dist = TrajectoryConsistencyMetric(mode="distributional").measure(ec)
         seq = TrajectoryConsistencyMetric(mode="sequential").measure(ec)
-        assert dist.value == 0.0
+        assert dist.value == 1.0
         assert seq.value == 1.0
+
+    def test_one_empty_one_nonempty(self):
+        """One run with actions and one without are maximally inconsistent."""
+        ec = EvalCase(
+            input="q",
+            output="a",
+            runs=[
+                _run_with_traj([]),
+                _run_with_traj(["a", "b"]),
+            ],
+        )
+        dist = TrajectoryConsistencyMetric(mode="distributional").measure(ec)
+        seq = TrajectoryConsistencyMetric(mode="sequential").measure(ec)
+        assert dist.value == 0.0
+        assert seq.value == 0.0
 
     def test_threshold_applied(self):
         ec = EvalCase(
@@ -218,3 +234,50 @@ class TestTrajectoryEdgeCases:
         metric = TrajectoryConsistencyMetric(mode="distributional", threshold=0.5)
         score = metric.measure(ec)
         assert not score.passed
+
+    def test_max_trajectory_length_truncates(self):
+        """Only the last N actions are compared when max_trajectory_length is set."""
+        ec = EvalCase(
+            input="q",
+            output="a",
+            runs=[
+                _run_with_traj(["x", "y", "a", "b", "c"]),
+                _run_with_traj(["z", "w", "a", "b", "c"]),
+            ],
+        )
+        full = TrajectoryConsistencyMetric(mode="sequential").measure(ec)
+        capped = TrajectoryConsistencyMetric(mode="sequential", max_trajectory_length=3).measure(ec)
+        assert capped.value == pytest.approx(1.0)
+        assert capped.value > full.value
+
+    def test_max_trajectory_length_distributional(self):
+        ec = EvalCase(
+            input="q",
+            output="a",
+            runs=[
+                _run_with_traj(["x", "y", "a"]),
+                _run_with_traj(["z", "w", "a"]),
+            ],
+        )
+        capped = TrajectoryConsistencyMetric(
+            mode="distributional", max_trajectory_length=1
+        ).measure(ec)
+        assert capped.value == pytest.approx(1.0)
+
+    def test_max_trajectory_length_no_op_when_short(self):
+        ec = EvalCase(
+            input="q",
+            output="a",
+            runs=[
+                _run_with_traj(["a", "b"]),
+                _run_with_traj(["a", "b"]),
+            ],
+        )
+        score = TrajectoryConsistencyMetric(
+            mode="sequential", max_trajectory_length=100
+        ).measure(ec)
+        assert score.value == pytest.approx(1.0)
+
+    def test_max_trajectory_length_validation(self):
+        with pytest.raises(ValueError, match="max_trajectory_length"):
+            TrajectoryConsistencyMetric(max_trajectory_length=0)

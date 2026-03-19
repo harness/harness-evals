@@ -55,10 +55,27 @@ class FaultInjector:
         self.history: list[dict[str, Any]] = []
 
     async def run(self, agent_input: Any) -> Any:
+        """Execute a single call, possibly injecting a fault.
+
+        ``timeout`` and ``rate_limit`` faults raise (``TimeoutError`` /
+        ``RuntimeError``).  ``malformed_response`` and ``empty_response``
+        faults return a degraded value.
+        """
         for fault in self.faults:
             if self._rng.random() < fault.probability:
-                self.history.append({"input": agent_input, "injected": True, "fault_type": fault.type})
-                return self._apply_fault(fault)
+                entry: dict[str, Any] = {
+                    "input": agent_input,
+                    "injected": True,
+                    "fault_type": fault.type,
+                }
+                try:
+                    result = self._apply_fault(fault)
+                except Exception:
+                    self.history.append(entry)
+                    raise
+                entry["result"] = result
+                self.history.append(entry)
+                return result
 
         result = await self.agent_fn(agent_input)
         self.history.append({"input": agent_input, "injected": False, "result": result})

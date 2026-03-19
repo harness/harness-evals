@@ -90,6 +90,7 @@ class TestFaultInjector:
         )
         result = await injector.run("test")
         assert result == "BAD"
+        assert injector.history[0]["result"] == "BAD"
 
     async def test_malformed_default(self):
         injector = FaultInjector(
@@ -98,6 +99,7 @@ class TestFaultInjector:
         )
         result = await injector.run("test")
         assert result == "{malformed}"
+        assert injector.history[0]["result"] == "{malformed}"
 
     async def test_empty_response(self):
         injector = FaultInjector(
@@ -106,6 +108,16 @@ class TestFaultInjector:
         )
         result = await injector.run("test")
         assert result == ""
+        assert injector.history[0]["result"] == ""
+
+    async def test_raising_fault_has_no_result_in_history(self):
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="timeout", probability=1.0)],
+        )
+        with pytest.raises(TimeoutError):
+            await injector.run("test")
+        assert "result" not in injector.history[0]
 
     async def test_seed_reproducibility(self):
         faults = [Fault(type="timeout", probability=0.5)]

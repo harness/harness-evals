@@ -10,6 +10,15 @@ from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 
 
+def _finalize_sinks(sinks: list[BaseSink] | None) -> None:
+    """Call finalize() and shutdown() on all sinks (no-op for sinks that don't override)."""
+    if not sinks:
+        return
+    for sink in sinks:
+        sink.finalize()
+        sink.shutdown()
+
+
 def evaluate(
     eval_case: EvalCase,
     metrics: list[BaseMetric],
@@ -98,8 +107,11 @@ def evaluate_cases(
     """Batch evaluation of pre-captured eval cases.
 
     Runs ``evaluate()`` on each case and returns all score lists.
+    Calls ``finalize()`` on all sinks after all cases are processed.
     """
-    return [evaluate(case, metrics, sinks) for case in cases]
+    results = [evaluate(case, metrics, sinks) for case in cases]
+    _finalize_sinks(sinks)
+    return results
 
 
 def evaluate_batch_metrics(
@@ -179,4 +191,5 @@ async def evaluate_dataset(
         return await a_evaluate(eval_case, metrics, sinks)
 
     results = await asyncio.gather(*[_process(g) for g in goldens])
+    _finalize_sinks(sinks)
     return list(results)

@@ -236,6 +236,14 @@ class TestPromptRobustnessDataset:
         assert "acc_perturbed" in score.metadata
         assert score.metadata["n_tasks"] == 2
 
+    def test_empty_perturbed_sublists(self):
+        """A task with an empty perturbed list contributes 0 to the total."""
+        nominal = [True, True]
+        perturbed = [[], [True, False]]
+        score = PromptRobustnessMetric().measure_robustness(nominal, perturbed)
+        assert score.metadata["n_perturbed_total"] == 2
+        assert score.value == pytest.approx(0.5)
+
 
 # ---------------------------------------------------------------------------
 # EnvironmentRobustnessMetric — per-case

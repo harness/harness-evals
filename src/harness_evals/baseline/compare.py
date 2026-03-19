@@ -61,9 +61,10 @@ def compare_to_baseline(
     """Compare current metric scores against a saved baseline.
 
     For each metric present in *both* current and baseline, the average
-    score value is compared.  A decrease exceeding ``tolerance`` is a
-    regression; an increase exceeding ``tolerance`` is an improvement;
-    otherwise the metric is unchanged.
+    score value is compared.  A decrease strictly exceeding ``tolerance``
+    (i.e. ``delta < -tolerance``) is a regression; an increase strictly
+    exceeding ``tolerance`` is an improvement; deltas equal to or within
+    the tolerance are classified as unchanged.
 
     Metrics present only in current or only in baseline are ignored
     (they represent added/removed metrics, not regressions).
@@ -72,6 +73,7 @@ def compare_to_baseline(
         current: Metric name -> scores from the current run.
         baseline: Metric name -> scores from the baseline run.
         tolerance: Minimum absolute delta to count as a change (default 0.05).
+            Deltas exactly equal to the tolerance are considered unchanged.
 
     Returns:
         A ``BaselineResult`` with categorized metric deltas.

@@ -106,6 +106,34 @@ class TestJsonBaselineStoreLatest:
 
 
 # ---------------------------------------------------------------------------
+# JsonBaselineStore — run_id validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestJsonBaselineStoreRunIdValidation:
+    def test_save_rejects_path_separator(self, tmp_path):
+        store = JsonBaselineStore(baseline_dir=str(tmp_path / "baselines"))
+        with pytest.raises(ValueError, match="path separators"):
+            store.save("../../etc/malicious", {"m": [_score("m", 0.5)]})
+
+    def test_save_rejects_backslash(self, tmp_path):
+        store = JsonBaselineStore(baseline_dir=str(tmp_path / "baselines"))
+        with pytest.raises(ValueError, match="path separators"):
+            store.save("foo\\bar", {"m": [_score("m", 0.5)]})
+
+    def test_save_rejects_dot_dot(self, tmp_path):
+        store = JsonBaselineStore(baseline_dir=str(tmp_path / "baselines"))
+        with pytest.raises(ValueError, match="path separators"):
+            store.save("..run", {"m": [_score("m", 0.5)]})
+
+    def test_load_rejects_path_traversal(self, tmp_path):
+        store = JsonBaselineStore(baseline_dir=str(tmp_path / "baselines"))
+        with pytest.raises(ValueError, match="path separators"):
+            store.load("../../etc/passwd")
+
+
+# ---------------------------------------------------------------------------
 # JsonBaselineStore — list_runs
 # ---------------------------------------------------------------------------
 

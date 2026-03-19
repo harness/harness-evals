@@ -63,7 +63,13 @@ class JsonBaselineStore(BaselineStore):
     def __init__(self, baseline_dir: str = ".harness-evals/baselines") -> None:
         self.baseline_dir = Path(baseline_dir)
 
+    @staticmethod
+    def _validate_run_id(run_id: str) -> None:
+        if "/" in run_id or "\\" in run_id or ".." in run_id:
+            raise ValueError(f"run_id must not contain path separators or '..': {run_id!r}")
+
     def save(self, run_id: str, scores: dict[str, list[Score]]) -> None:
+        self._validate_run_id(run_id)
         self.baseline_dir.mkdir(parents=True, exist_ok=True)
 
         payload: dict[str, Any] = {
@@ -81,6 +87,8 @@ class JsonBaselineStore(BaselineStore):
     def load(self, run_id: str | None = None) -> dict[str, list[Score]]:
         if run_id is None:
             run_id = self._latest_run_id()
+        else:
+            self._validate_run_id(run_id)
 
         run_path = self.baseline_dir / f"{run_id}.json"
         if not run_path.exists():

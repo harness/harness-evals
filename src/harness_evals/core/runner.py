@@ -28,6 +28,11 @@ def evaluate(
 
     Does NOT raise on failure — returns scores with passed=False instead.
     Writes to all sinks after scoring.
+
+    Note: ``finalize()`` is NOT called here. When using sinks with
+    ``evaluate()`` in a loop, call ``sink.finalize()`` yourself after
+    all cases are processed. ``evaluate_cases()`` and
+    ``evaluate_dataset()`` handle this automatically.
     """
     scores: list[Score] = []
     for metric in metrics:
@@ -59,6 +64,12 @@ async def a_evaluate(
     Use this inside async contexts (event loops, Jupyter notebooks) to
     avoid the ``asyncio.run()`` crash that occurs when sync ``evaluate()``
     is called with LLM-judged metrics.
+
+    Note: ``finalize()`` is NOT called here. When using sinks with
+    ``evaluate()`` or ``a_evaluate()`` in a loop, call
+    ``sink.finalize()`` yourself after all cases are processed.
+    ``evaluate_cases()`` and ``evaluate_dataset()`` handle this
+    automatically.
     """
     scores: list[Score] = []
     for metric in metrics:
@@ -173,23 +184,39 @@ async def evaluate_dataset(
     passed to ``agent_fn`` to produce an EvalCase, which is then scored
     with ``a_evaluate()`` (the async runner) to avoid event-loop conflicts.
 
+    The ``concurrency`` semaphore gates ``agent_fn`` calls only; metric
+    evaluation (including LLM-judged metrics) runs without throttling.
+
+    Sink writes happen sequentially after all concurrent work completes
+    to avoid thread-safety issues with file-based sinks.
+
     Args:
         goldens: List of Golden instances.
         agent_fn: Async function that produces an EvalCase from a Golden.
         metrics: Metrics to evaluate.
         sinks: Optional output sinks.
-        concurrency: Max concurrent agent calls. None = unlimited.
-    """
-    semaphore = asyncio.Semaphore(concurrency) if concurrency else None
+        concurrency: Max concurrent agent calls. ``None`` = unlimited.
 
-    async def _process(golden: Golden) -> list[Score]:
+    Raises:
+        ValueError: If ``concurrency`` is less than 1.
+    """
+    if concurrency is not None and concurrency < 1:
+        raise ValueError(f"concurrency must be >= 1, got {concurrency}")
+
+    semaphore = asyncio.Semaphore(concurrency) if concurrency is not None else None
+
+    async def _run_agent(golden: Golden) -> EvalCase:
         if semaphore:
             async with semaphore:
-                eval_case = await agent_fn(golden)
-        else:
-            eval_case = await agent_fn(golden)
-        return await a_evaluate(eval_case, metrics, sinks)
+                return await agent_fn(golden)
+        return await agent_fn(golden)
 
-    results = await asyncio.gather(*[_process(g) for g in goldens])
+    eval_cases = await asyncio.gather(*[_run_agent(g) for g in goldens])
+
+    results: list[list[Score]] = []
+    for eval_case in eval_cases:
+        scores = await a_evaluate(eval_case, metrics, sinks)
+        results.append(scores)
+
     _finalize_sinks(sinks)
-    return list(results)
+    return results

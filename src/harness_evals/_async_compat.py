@@ -8,6 +8,7 @@ running and dispatching accordingly.
 from __future__ import annotations
 
 import asyncio
+import atexit
 from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
@@ -15,6 +16,7 @@ from typing import Any, TypeVar
 T = TypeVar("T")
 
 _THREAD_POOL = ThreadPoolExecutor(max_workers=4)
+atexit.register(_THREAD_POOL.shutdown, wait=False)
 
 
 def _run_async(coro: Coroutine[Any, Any, T]) -> T:

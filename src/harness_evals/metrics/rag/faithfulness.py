@@ -71,7 +71,7 @@ class FaithfulnessMetric(BaseMetric):
         return _run_async(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
-        if not eval_case.context:
+        if eval_case.context is None or len(eval_case.context) == 0:
             return Score(
                 name=self.name,
                 value=0.0,

@@ -1,5 +1,6 @@
 """harness-evals: Open-source AI evaluation framework."""
 
+from harness_evals.baseline import BaselineResult, JsonBaselineStore, compare_to_baseline
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric, ReliabilityMetric, SafetyMetric
@@ -35,6 +36,9 @@ __all__ = [
     "evaluate_cases",
     "evaluate_dataset",
     "evaluate_batch_metrics",
+    "JsonBaselineStore",
+    "BaselineResult",
+    "compare_to_baseline",
     "Dataset",
     "load_dataset",
     "save_dataset",

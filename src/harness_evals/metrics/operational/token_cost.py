@@ -25,6 +25,14 @@ class TokenCostMetric(BaseMetric):
             )
 
         tokens = int(eval_case.token_count)
+        if tokens < 0:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason=f"Invalid token_count: {tokens} (must be >= 0)",
+            )
+
         value = max(0.0, 1.0 - tokens / self.max_tokens)
 
         return Score(

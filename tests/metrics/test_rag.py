@@ -29,7 +29,6 @@ class MockLLM(BaseLLM):
 
 @pytest.mark.unit
 class TestFaithfulnessMetric:
-    @pytest.mark.asyncio
     async def test_all_supported(self):
         llm = MockLLM(
             responses=[
@@ -52,7 +51,6 @@ class TestFaithfulnessMetric:
         assert score.value == 1.0
         assert score.passed
 
-    @pytest.mark.asyncio
     async def test_partial_support(self):
         llm = MockLLM(
             responses=[
@@ -72,7 +70,6 @@ class TestFaithfulnessMetric:
         assert abs(score.value - 2 / 3) < 0.01
         assert not score.passed  # 0.667 < 0.7
 
-    @pytest.mark.asyncio
     async def test_no_context(self):
         llm = MockLLM()
         metric = FaithfulnessMetric(llm=llm)
@@ -81,7 +78,6 @@ class TestFaithfulnessMetric:
         assert score.value == 0.0
         assert "No context" in score.reason
 
-    @pytest.mark.asyncio
     async def test_no_claims(self):
         llm = MockLLM(responses=[{"claims": []}])
         metric = FaithfulnessMetric(llm=llm)
@@ -92,7 +88,6 @@ class TestFaithfulnessMetric:
 
 @pytest.mark.unit
 class TestAnswerRelevancyMetric:
-    @pytest.mark.asyncio
     async def test_relevant(self):
         llm = MockLLM(default={"reasoning": "Direct answer", "score": 0.95})
         metric = AnswerRelevancyMetric(llm=llm, threshold=0.7)
@@ -101,7 +96,6 @@ class TestAnswerRelevancyMetric:
         assert score.value == 0.95
         assert score.passed
 
-    @pytest.mark.asyncio
     async def test_irrelevant(self):
         llm = MockLLM(default={"reasoning": "Off topic", "score": 0.1})
         metric = AnswerRelevancyMetric(llm=llm, threshold=0.7)
@@ -113,7 +107,6 @@ class TestAnswerRelevancyMetric:
 
 @pytest.mark.unit
 class TestContextPrecisionMetric:
-    @pytest.mark.asyncio
     async def test_all_relevant(self):
         llm = MockLLM(
             default={
@@ -128,7 +121,6 @@ class TestContextPrecisionMetric:
         score = await metric.a_measure(ec)
         assert score.value == 1.0
 
-    @pytest.mark.asyncio
     async def test_half_relevant(self):
         llm = MockLLM(
             default={
@@ -143,7 +135,6 @@ class TestContextPrecisionMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.5
 
-    @pytest.mark.asyncio
     async def test_no_context(self):
         llm = MockLLM()
         metric = ContextPrecisionMetric(llm=llm)
@@ -154,7 +145,6 @@ class TestContextPrecisionMetric:
 
 @pytest.mark.unit
 class TestContextRecallMetric:
-    @pytest.mark.asyncio
     async def test_full_recall(self):
         llm = MockLLM(
             default={
@@ -169,7 +159,6 @@ class TestContextRecallMetric:
         score = await metric.a_measure(ec)
         assert score.value == 1.0
 
-    @pytest.mark.asyncio
     async def test_partial_recall(self):
         llm = MockLLM(
             default={
@@ -185,7 +174,6 @@ class TestContextRecallMetric:
         score = await metric.a_measure(ec)
         assert abs(score.value - 1 / 3) < 0.01
 
-    @pytest.mark.asyncio
     async def test_no_context(self):
         llm = MockLLM()
         metric = ContextRecallMetric(llm=llm)
@@ -193,7 +181,6 @@ class TestContextRecallMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.0
 
-    @pytest.mark.asyncio
     async def test_no_expected(self):
         llm = MockLLM()
         metric = ContextRecallMetric(llm=llm)

@@ -17,6 +17,14 @@ class RegexMetric(BaseMetric):
         super().__init__(name="regex", threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
+        if eval_case.expected is None:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason="expected is None — no regex pattern provided",
+            )
+
         actual = str(eval_case.output)
         pattern = str(eval_case.expected)
 

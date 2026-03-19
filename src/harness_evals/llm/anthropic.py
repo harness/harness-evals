@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from harness_evals.llm._schema import ANTHROPIC_UNSUPPORTED, make_strict_schema
 from harness_evals.llm.base import BaseLLM
 
 
@@ -44,12 +45,18 @@ class AnthropicLLM(BaseLLM):
         return response.content[0].text if response.content else ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
-        json_prompt = f"{prompt}\n\nRespond ONLY with valid JSON matching this schema:\n{json.dumps(schema)}"
+        strict_schema = make_strict_schema(schema, strip_keywords=ANTHROPIC_UNSUPPORTED)
         response = await self._client.messages.create(
             model=self.model,
-            messages=[{"role": "user", "content": json_prompt}],
+            messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            output_config={
+                "format": {
+                    "type": "json_schema",
+                    "schema": strict_schema,
+                }
+            },
         )
         text = response.content[0].text if response.content else "{}"
         return json.loads(text)

@@ -202,7 +202,6 @@ class TestToolCorrectnessSubset:
 
 @pytest.mark.unit
 class TestTaskCompletionMetric:
-    @pytest.mark.asyncio
     async def test_fully_completed(self):
         llm = MockLLM(default={"reasoning": "Task fully completed", "score": 1.0})
         metric = TaskCompletionMetric(llm=llm, threshold=0.7)
@@ -214,7 +213,6 @@ class TestTaskCompletionMetric:
         assert score.passed
         assert score.value == 1.0
 
-    @pytest.mark.asyncio
     async def test_partially_completed(self):
         llm = MockLLM(default={"reasoning": "Missing error handling", "score": 0.6})
         metric = TaskCompletionMetric(llm=llm, threshold=0.7)
@@ -226,7 +224,6 @@ class TestTaskCompletionMetric:
         assert not score.passed
         assert abs(score.value - 0.6) < 0.01
 
-    @pytest.mark.asyncio
     async def test_not_attempted(self):
         llm = MockLLM(default={"reasoning": "Agent refused the task", "score": 0.0})
         metric = TaskCompletionMetric(llm=llm, threshold=0.7)
@@ -238,7 +235,6 @@ class TestTaskCompletionMetric:
         assert not score.passed
         assert score.value == 0.0
 
-    @pytest.mark.asyncio
     async def test_with_expected_output(self):
         llm = MockLLM(default={"reasoning": "Matches expected", "score": 0.95})
         metric = TaskCompletionMetric(llm=llm, threshold=0.7)
@@ -250,7 +246,6 @@ class TestTaskCompletionMetric:
         score = await metric.a_measure(ec)
         assert score.passed
 
-    @pytest.mark.asyncio
     async def test_score_clamped(self):
         llm = MockLLM(default={"reasoning": "edge", "score": 1.5})
         metric = TaskCompletionMetric(llm=llm)

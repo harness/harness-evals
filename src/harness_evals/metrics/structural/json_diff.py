@@ -54,6 +54,7 @@ class JsonDiffMetric(BaseMetric):
             ignore_order=self.ignore_order,
             exclude_paths=self.exclude_paths,
             get_deep_distance=True,
+            threshold_to_diff_deeper=0,
         )
 
         distance = diff.get("deep_distance", 0.0)

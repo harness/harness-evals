@@ -16,6 +16,14 @@ class ContainsMetric(BaseMetric):
         self.case_sensitive = case_sensitive
 
     def measure(self, eval_case: EvalCase) -> Score:
+        if eval_case.expected is None:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason="expected is None — cannot compare",
+            )
+
         actual = str(eval_case.output)
         expected = str(eval_case.expected)
 

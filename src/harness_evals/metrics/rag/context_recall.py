@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-
+from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
@@ -53,7 +52,7 @@ class ContextRecallMetric(BaseMetric):
         self.llm = llm
 
     def measure(self, eval_case: EvalCase) -> Score:
-        return asyncio.run(self.a_measure(eval_case))
+        return _run_async(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
         if not eval_case.context:
@@ -63,7 +62,7 @@ class ContextRecallMetric(BaseMetric):
                 threshold=self.threshold,
                 reason="No context provided",
             )
-        if not eval_case.expected:
+        if eval_case.expected is None:
             return Score(
                 name=self.name,
                 value=0.0,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from harness_evals.llm._schema import make_strict_schema
 from harness_evals.llm.base import BaseLLM
 
 
@@ -44,12 +45,20 @@ class OpenAILLM(BaseLLM):
         return response.choices[0].message.content or ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
+        strict_schema = make_strict_schema(schema)
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            response_format={"type": "json_object"},
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "eval_response",
+                    "strict": True,
+                    "schema": strict_schema,
+                },
+            },
         )
         text = response.choices[0].message.content or "{}"
         return json.loads(text)

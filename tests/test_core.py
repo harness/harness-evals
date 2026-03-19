@@ -2,7 +2,17 @@
 
 import pytest
 
-from harness_evals import EvalCase, Golden, Score, assert_test, evaluate, evaluate_cases, evaluate_dataset
+from harness_evals import (
+    EvalCase,
+    Golden,
+    Score,
+    a_evaluate,
+    assert_test,
+    evaluate,
+    evaluate_batch_metrics,
+    evaluate_cases,
+    evaluate_dataset,
+)
 from harness_evals.metrics.deterministic import ExactMatchMetric
 
 
@@ -189,8 +199,76 @@ class TestEvaluateCases:
 
 
 @pytest.mark.unit
+class TestAEvaluate:
+    async def test_a_evaluate_returns_scores(self, simple_eval_case):
+        scores = await a_evaluate(simple_eval_case, metrics=[ExactMatchMetric()])
+        assert len(scores) == 1
+        assert scores[0].passed
+        assert scores[0].value == 1.0
+
+    async def test_a_evaluate_catches_exceptions(self):
+        class BrokenMetric(ExactMatchMetric):
+            async def a_measure(self, eval_case):
+                raise RuntimeError("async broken")
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = await a_evaluate(ec, metrics=[BrokenMetric()])
+        assert len(scores) == 1
+        assert not scores[0].passed
+        assert "async broken" in scores[0].reason
+
+    async def test_a_evaluate_does_not_raise(self):
+        ec = EvalCase(input="x", output="wrong", expected="right")
+        scores = await a_evaluate(ec, metrics=[ExactMatchMetric()])
+        assert len(scores) == 1
+        assert not scores[0].passed
+
+
+@pytest.mark.unit
+class TestEvaluateBatchMetrics:
+    def test_with_standard_metric(self):
+        cases = [
+            EvalCase(input="q1", output="a", expected="a"),
+            EvalCase(input="q2", output="b", expected="c"),
+        ]
+        outcomes = [True, False]
+        scores = evaluate_batch_metrics(cases, outcomes, metrics=[ExactMatchMetric()])
+        assert len(scores) == 1
+        assert scores[0].value == 0.5  # average of 1.0 and 0.0
+
+    def test_with_dataset_metric(self):
+        from harness_evals.metrics.reliability.calibration import CalibrationMetric
+
+        cases = [
+            EvalCase(input="q1", output="a", confidence=0.9),
+            EvalCase(input="q2", output="b", confidence=0.9),
+            EvalCase(input="q3", output="c", confidence=0.1),
+            EvalCase(input="q4", output="d", confidence=0.1),
+        ]
+        outcomes = [True, True, False, False]
+        scores = evaluate_batch_metrics(cases, outcomes, metrics=[CalibrationMetric()])
+        assert len(scores) == 1
+        assert scores[0].value > 0.0
+
+    def test_catches_exceptions(self):
+        from harness_evals.core.metric import BaseMetric
+
+        class BadMetric(BaseMetric):
+            def __init__(self):
+                super().__init__(name="bad", threshold=0.5)
+
+            def measure(self, eval_case):
+                raise RuntimeError("boom")
+
+        cases = [EvalCase(input="q", output="a")]
+        scores = evaluate_batch_metrics(cases, [True], metrics=[BadMetric()])
+        assert len(scores) == 1
+        assert scores[0].value == 0.0
+        assert "boom" in scores[0].reason
+
+
+@pytest.mark.unit
 class TestEvaluateDataset:
-    @pytest.mark.asyncio
     async def test_evaluate_dataset(self):
         goldens = [
             Golden(input="q1", expected="a"),
@@ -204,7 +282,6 @@ class TestEvaluateDataset:
         assert len(results) == 2
         assert all(r[0].passed for r in results)
 
-    @pytest.mark.asyncio
     async def test_evaluate_dataset_with_failure(self):
         goldens = [Golden(input="q", expected="right")]
 
@@ -213,3 +290,44 @@ class TestEvaluateDataset:
 
         results = await evaluate_dataset(goldens, bad_agent, metrics=[ExactMatchMetric()])
         assert not results[0][0].passed
+
+    async def test_evaluate_dataset_runs_concurrently(self):
+        """Verify that evaluate_dataset uses asyncio.gather (runs in parallel)."""
+        import asyncio
+
+        call_order: list[str] = []
+
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(3)]
+
+        async def slow_agent(golden: Golden) -> EvalCase:
+            call_order.append(f"start-{golden.input}")
+            await asyncio.sleep(0.01)
+            call_order.append(f"end-{golden.input}")
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        results = await evaluate_dataset(goldens, slow_agent, metrics=[ExactMatchMetric()])
+        assert len(results) == 3
+        # With gather, all starts happen before any ends
+        starts = [e for e in call_order if e.startswith("start")]
+        assert len(starts) == 3
+
+    async def test_evaluate_dataset_concurrency_limit(self):
+        """Verify concurrency parameter limits parallel agent calls."""
+        import asyncio
+
+        active = 0
+        max_active = 0
+
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(5)]
+
+        async def tracked_agent(golden: Golden) -> EvalCase:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.02)
+            active -= 1
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        results = await evaluate_dataset(goldens, tracked_agent, metrics=[ExactMatchMetric()], concurrency=2)
+        assert len(results) == 5
+        assert max_active <= 2

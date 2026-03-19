@@ -25,6 +25,14 @@ class RetryCountMetric(BaseMetric):
             )
 
         retries = int(eval_case.retry_count)
+        if retries < 0:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason=f"Invalid retry_count: {retries} (must be >= 0)",
+            )
+
         value = max(0.0, 1.0 - retries / self.max_retries)
 
         return Score(

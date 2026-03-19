@@ -21,7 +21,6 @@ class MockLLM(BaseLLM):
 
 @pytest.mark.unit
 class TestGEvalMetric:
-    @pytest.mark.asyncio
     async def test_high_score(self):
         llm = MockLLM({"reasoning": "Accurate and complete", "score": 0.9})
         metric = GEvalMetric(llm=llm, criteria="accuracy", threshold=0.7)
@@ -31,7 +30,6 @@ class TestGEvalMetric:
         assert score.passed
         assert "Accurate" in score.reason
 
-    @pytest.mark.asyncio
     async def test_low_score(self):
         llm = MockLLM({"reasoning": "Wrong answer", "score": 0.2})
         metric = GEvalMetric(llm=llm, threshold=0.7)
@@ -40,7 +38,6 @@ class TestGEvalMetric:
         assert score.value == 0.2
         assert not score.passed
 
-    @pytest.mark.asyncio
     async def test_clamps_score(self):
         llm = MockLLM({"reasoning": "test", "score": 1.5})
         metric = GEvalMetric(llm=llm)
@@ -48,7 +45,6 @@ class TestGEvalMetric:
         score = await metric.a_measure(ec)
         assert score.value == 1.0
 
-    @pytest.mark.asyncio
     async def test_missing_score_defaults_zero(self):
         llm = MockLLM({"reasoning": "test"})
         metric = GEvalMetric(llm=llm)
@@ -67,7 +63,6 @@ class TestGEvalMetric:
 
 @pytest.mark.unit
 class TestRubricJudgeMetric:
-    @pytest.mark.asyncio
     async def test_top_level(self):
         llm = MockLLM({"reasoning": "Excellent work", "level": 5})
         metric = RubricJudgeMetric(llm=llm, threshold=0.5)
@@ -77,7 +72,6 @@ class TestRubricJudgeMetric:
         assert score.passed
         assert score.metadata["level"] == 5
 
-    @pytest.mark.asyncio
     async def test_mid_level(self):
         llm = MockLLM({"reasoning": "Acceptable", "level": 3})
         metric = RubricJudgeMetric(llm=llm, threshold=0.5)
@@ -85,7 +79,6 @@ class TestRubricJudgeMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.5  # (3-1)/(5-1) = 0.5
 
-    @pytest.mark.asyncio
     async def test_lowest_level(self):
         llm = MockLLM({"reasoning": "Very poor", "level": 1})
         metric = RubricJudgeMetric(llm=llm, threshold=0.5)
@@ -93,7 +86,6 @@ class TestRubricJudgeMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.0  # (1-1)/(5-1) = 0.0
 
-    @pytest.mark.asyncio
     async def test_clamps_level(self):
         llm = MockLLM({"reasoning": "test", "level": 10})
         metric = RubricJudgeMetric(llm=llm)
@@ -101,7 +93,6 @@ class TestRubricJudgeMetric:
         score = await metric.a_measure(ec)
         assert score.value == 1.0  # clamped to max
 
-    @pytest.mark.asyncio
     async def test_custom_rubric(self):
         custom = {1: "Bad", 2: "OK", 3: "Great"}
         llm = MockLLM({"reasoning": "OK", "level": 2})

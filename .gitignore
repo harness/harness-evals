@@ -34,5 +34,8 @@ Thumbs.db
 
 .harness-evals/
 
+# Example output artifacts
+examples/output/
+
 # Research papers / large binaries
 *.pdf

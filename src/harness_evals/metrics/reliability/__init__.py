@@ -7,7 +7,6 @@ from harness_evals.metrics.reliability.environment_robustness import (
 from harness_evals.metrics.reliability.outcome_consistency import OutcomeConsistencyMetric
 from harness_evals.metrics.reliability.prompt_robustness import PromptRobustnessMetric
 from harness_evals.metrics.reliability.resource_consistency import ResourceConsistencyMetric
-from harness_evals.metrics.reliability.robustness_base import RobustnessMetric
 
 __all__ = [
     "OutcomeConsistencyMetric",
@@ -15,7 +14,6 @@ __all__ = [
     "CalibrationMetric",
     "DiscriminationMetric",
     "BrierScoreMetric",
-    "RobustnessMetric",
     "PromptRobustnessMetric",
     "EnvironmentRobustnessMetric",
 ]

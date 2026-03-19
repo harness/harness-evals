@@ -215,7 +215,7 @@ async def evaluate_dataset(
     scored = await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases])
 
     if sinks:
-        for eval_case, scores in zip(eval_cases, scored):
+        for eval_case, scores in zip(eval_cases, scored, strict=True):
             for sink in sinks:
                 sink.write(scores, eval_case)
 

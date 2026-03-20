@@ -8,7 +8,6 @@ from tests.conftest import MockLLM
 
 @pytest.mark.unit
 class TestPromptRephrase:
-    @pytest.mark.asyncio
     async def test_produces_n_rephrasings(self):
         llm = MockLLM(
             responses=[
@@ -20,7 +19,6 @@ class TestPromptRephrase:
         assert len(results) == 3
         assert results == ["r1", "r2", "r3"]
 
-    @pytest.mark.asyncio
     async def test_pads_when_llm_returns_fewer(self):
         llm = MockLLM(
             responses=[
@@ -34,7 +32,6 @@ class TestPromptRephrase:
         assert results[1] == "Hello"
         assert results[2] == "Hello"
 
-    @pytest.mark.asyncio
     async def test_truncates_when_llm_returns_more(self):
         llm = MockLLM(
             responses=[
@@ -46,7 +43,6 @@ class TestPromptRephrase:
         assert len(results) == 2
         assert results == ["a", "b"]
 
-    @pytest.mark.asyncio
     async def test_empty_string_returns_copies(self):
         llm = MockLLM()
         gen = PromptRephrase(llm)
@@ -54,7 +50,6 @@ class TestPromptRephrase:
         assert len(results) == 4
         assert all(r == "" for r in results)
 
-    @pytest.mark.asyncio
     async def test_whitespace_only_returns_copies(self):
         llm = MockLLM()
         gen = PromptRephrase(llm)
@@ -62,7 +57,6 @@ class TestPromptRephrase:
         assert len(results) == 2
         assert all(r == "   " for r in results)
 
-    @pytest.mark.asyncio
     async def test_handles_missing_rephrasings_key(self):
         llm = MockLLM(responses=[{"unexpected_key": "value"}])
         gen = PromptRephrase(llm)
@@ -70,7 +64,6 @@ class TestPromptRephrase:
         assert len(results) == 3
         assert all(r == "Test input" for r in results)
 
-    @pytest.mark.asyncio
     async def test_handles_empty_rephrasings_list(self):
         llm = MockLLM(responses=[{"rephrasings": []}])
         gen = PromptRephrase(llm)
@@ -78,7 +71,6 @@ class TestPromptRephrase:
         assert len(results) == 2
         assert all(r == "Test input" for r in results)
 
-    @pytest.mark.asyncio
     async def test_default_n_is_five(self):
         llm = MockLLM(
             responses=[
@@ -89,7 +81,6 @@ class TestPromptRephrase:
         results = await gen.perturb("Test")
         assert len(results) == 5
 
-    @pytest.mark.asyncio
     async def test_extends_base_perturbation(self):
         from harness_evals.perturbations.base import BasePerturbation
 
@@ -97,7 +88,6 @@ class TestPromptRephrase:
         gen = PromptRephrase(llm)
         assert isinstance(gen, BasePerturbation)
 
-    @pytest.mark.asyncio
     async def test_curly_braces_in_input(self):
         llm = MockLLM(responses=[{"rephrasings": ["rephrased"]}])
         gen = PromptRephrase(llm)

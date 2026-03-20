@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+try:
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+except ImportError as _err:
+    raise ImportError(
+        "OtlpSink requires the opentelemetry packages. Install them with: pip install harness-evals[otlp]"
+    ) from _err
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score

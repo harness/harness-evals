@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
+
+from harness_evals._async_compat import _run_async
 
 
 class BaseLLM(ABC):
@@ -24,9 +25,9 @@ class BaseLLM(ABC):
         ...
 
     def generate_sync(self, prompt: str, **kwargs: object) -> str:
-        """Sync wrapper around generate(). Convenience for simple usage."""
-        return asyncio.run(self.generate(prompt, **kwargs))
+        """Sync wrapper around generate(). Safe inside running event loops."""
+        return _run_async(self.generate(prompt, **kwargs))
 
     def generate_json_sync(self, prompt: str, schema: dict, **kwargs: object) -> dict:
-        """Sync wrapper around generate_json()."""
-        return asyncio.run(self.generate_json(prompt, schema, **kwargs))
+        """Sync wrapper around generate_json(). Safe inside running event loops."""
+        return _run_async(self.generate_json(prompt, schema, **kwargs))

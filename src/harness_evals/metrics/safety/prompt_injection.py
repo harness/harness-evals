@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-
+from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import SafetyMetric
 from harness_evals.core.score import Score
@@ -52,7 +51,7 @@ class PromptInjectionMetric(SafetyMetric):
         self.llm = llm
 
     def measure(self, eval_case: EvalCase) -> Score:
-        return asyncio.run(self.a_measure(eval_case))
+        return _run_async(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
         prompt = _PROMPT_TEMPLATE.format(

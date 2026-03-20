@@ -11,9 +11,21 @@ class BaseSink(ABC):
 
     Sinks receive scores after evaluation and write them somewhere:
     stdout, JSON file, JUnit XML, CSV, remote API, etc.
+
+    Subclasses that buffer output (e.g. JUnitSink) should override
+    ``finalize()`` to flush. Subclasses that hold external resources
+    (e.g. OtlpSink) should override ``shutdown()`` to release them.
     """
 
     @abstractmethod
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
         """Emit scores for a single eval case to the output destination."""
         ...
+
+    def finalize(self) -> None:
+        """Flush any buffered output. No-op by default."""
+        return  # noqa: B027
+
+    def shutdown(self) -> None:
+        """Release external resources. No-op by default."""
+        return  # noqa: B027

@@ -182,7 +182,6 @@ class TestPIIMetric:
 
 @pytest.mark.unit
 class TestToxicityMetric:
-    @pytest.mark.asyncio
     async def test_safe_content_passes(self):
         llm = MockLLM(default={"reasoning": "Content is safe", "score": 0.95})
         metric = ToxicityMetric(llm=llm, threshold=0.8)
@@ -191,7 +190,6 @@ class TestToxicityMetric:
         assert score.passed
         assert score.value == 0.95
 
-    @pytest.mark.asyncio
     async def test_toxic_content_fails(self):
         llm = MockLLM(default={"reasoning": "Contains hate speech", "score": 0.1})
         metric = ToxicityMetric(llm=llm, threshold=0.8)
@@ -200,7 +198,6 @@ class TestToxicityMetric:
         assert not score.passed
         assert score.value == 0.1
 
-    @pytest.mark.asyncio
     async def test_score_clamped_to_range(self):
         llm = MockLLM(default={"reasoning": "edge", "score": 1.5})
         metric = ToxicityMetric(llm=llm)
@@ -228,7 +225,6 @@ class TestToxicityMetric:
 
 @pytest.mark.unit
 class TestPromptInjectionMetric:
-    @pytest.mark.asyncio
     async def test_no_injection_passes(self):
         llm = MockLLM(
             default={
@@ -244,7 +240,6 @@ class TestPromptInjectionMetric:
         assert score.value == 1.0
         assert score.metadata["injection_detected"] is False
 
-    @pytest.mark.asyncio
     async def test_injection_detected_fails(self):
         llm = MockLLM(
             default={
@@ -263,7 +258,6 @@ class TestPromptInjectionMetric:
         assert score.value == 0.0
         assert score.metadata["injection_detected"] is True
 
-    @pytest.mark.asyncio
     async def test_partial_injection(self):
         llm = MockLLM(
             default={
@@ -303,7 +297,6 @@ class TestPromptInjectionMetric:
 
 @pytest.mark.unit
 class TestHallucinationMetric:
-    @pytest.mark.asyncio
     async def test_no_hallucination_passes(self):
         llm = MockLLM(
             default={
@@ -324,7 +317,6 @@ class TestHallucinationMetric:
         assert score.value == 1.0
         assert score.metadata["hallucinated_claims"] == 0
 
-    @pytest.mark.asyncio
     async def test_hallucination_detected_fails(self):
         llm = MockLLM(
             default={
@@ -345,7 +337,6 @@ class TestHallucinationMetric:
         assert score.value == 0.25
         assert score.metadata["hallucinated_claims"] == 3
 
-    @pytest.mark.asyncio
     async def test_no_context_or_expected_returns_zero(self):
         llm = MockLLM()
         metric = HallucinationMetric(llm=llm)
@@ -354,7 +345,6 @@ class TestHallucinationMetric:
         assert score.value == 0.0
         assert "No context or expected" in score.reason
 
-    @pytest.mark.asyncio
     async def test_uses_expected_as_reference(self):
         llm = MockLLM(
             default={
@@ -369,7 +359,6 @@ class TestHallucinationMetric:
         score = await metric.a_measure(ec)
         assert score.passed
 
-    @pytest.mark.asyncio
     async def test_uses_both_context_and_expected(self):
         llm = MockLLM(
             default={

@@ -25,6 +25,14 @@ class CostEfficiencyMetric(BaseMetric):
             )
 
         cost = float(eval_case.cost_usd)
+        if cost < 0:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason=f"Invalid cost_usd: {cost} (must be >= 0)",
+            )
+
         value = max(0.0, 1.0 - cost / self.max_cost_usd)
 
         return Score(

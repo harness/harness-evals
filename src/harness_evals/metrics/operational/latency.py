@@ -25,6 +25,14 @@ class LatencyMetric(BaseMetric):
             )
 
         latency = float(eval_case.latency_ms)
+        if latency < 0:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason=f"Invalid latency_ms: {latency} (must be >= 0)",
+            )
+
         value = max(0.0, 1.0 - latency / self.max_ms)
 
         return Score(

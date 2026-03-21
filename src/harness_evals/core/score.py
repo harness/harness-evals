@@ -21,12 +21,17 @@ class Score:
     metadata: dict[str, Any] | None = field(default=None)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+    _CLAMP_EPS = 1e-9
+
     def __post_init__(self) -> None:
         if not (0.0 <= self.value <= 1.0):
-            raise ValueError(
-                f"Score.value must be between 0.0 and 1.0, got {self.value} "
-                f"(metric={self.name!r}). Fix the metric implementation."
-            )
+            if -self._CLAMP_EPS <= self.value <= 1.0 + self._CLAMP_EPS:
+                self.value = max(0.0, min(1.0, self.value))
+            else:
+                raise ValueError(
+                    f"Score.value must be between 0.0 and 1.0, got {self.value} "
+                    f"(metric={self.name!r}). Fix the metric implementation."
+                )
         self.passed = self.value >= self.threshold
 
     def to_dict(self) -> dict:

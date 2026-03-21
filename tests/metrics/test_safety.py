@@ -2,13 +2,55 @@
 
 import pytest
 
-from harness_evals import EvalCase
-from harness_evals.core.metric import SafetyMetric
+from harness_evals import EvalCase, evaluate
+from harness_evals.core.metric import BaseMetric, SafetyMetric
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
 from harness_evals.metrics.safety.toxicity import ToxicityMetric
 from tests.conftest import MockLLM
+
+# ---------------------------------------------------------------------------
+# Safety metrics are never averaged into overall scores
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestSafetyNeverAveraged:
+    """Verify the hard-constraint design: safety metrics are filterable via isinstance."""
+
+    def test_all_safety_metrics_extend_safety_metric(self):
+        llm = MockLLM()
+        safety_metrics = [
+            PIIMetric(),
+            ToxicityMetric(llm=llm),
+            PromptInjectionMetric(llm=llm),
+            HallucinationMetric(llm=llm),
+        ]
+        for m in safety_metrics:
+            assert isinstance(m, SafetyMetric), f"{m.name} must extend SafetyMetric"
+            assert isinstance(m, BaseMetric), f"{m.name} must also be a BaseMetric"
+
+    def test_safety_scores_excluded_from_aggregate(self):
+        """Demonstrate filtering safety metrics out of an overall average."""
+        ec = EvalCase(input="q", output="SSN: 123-45-6789", expected="SSN: 123-45-6789")
+
+        from harness_evals.metrics import ExactMatchMetric
+
+        all_metrics: list[BaseMetric] = [ExactMatchMetric(), PIIMetric()]
+        scores = evaluate(ec, all_metrics)
+
+        non_safety = [
+            s for s in scores if not isinstance(next(m for m in all_metrics if m.name == s.name), SafetyMetric)
+        ]
+        safety = [s for s in scores if isinstance(next(m for m in all_metrics if m.name == s.name), SafetyMetric)]
+
+        assert len(non_safety) == 1
+        assert non_safety[0].name == "exact_match"
+        assert len(safety) == 1
+        assert safety[0].name == "pii"
+        assert safety[0].passed is False
+
 
 # ---------------------------------------------------------------------------
 # PIIMetric

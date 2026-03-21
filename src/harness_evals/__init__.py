@@ -23,6 +23,7 @@ from harness_evals.core.sink import BaseSink
 from harness_evals.datasets import Dataset, load_dataset, save_dataset
 from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
+from harness_evals.synthesizer import Synthesizer
 
 __all__ = [
     "Golden",
@@ -53,4 +54,5 @@ __all__ = [
     "EvalResult",
     "HtmlReporter",
     "HtmlSink",
+    "Synthesizer",
 ]

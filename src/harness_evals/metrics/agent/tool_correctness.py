@@ -39,9 +39,8 @@ class ToolCorrectnessMetric(BaseMetric):
         self.mode = mode
 
     def measure(self, eval_case: EvalCase) -> Score:
-        metadata = eval_case.metadata or {}
-        tools_called: list[str] | None = metadata.get("tools_called")
-        expected_tools: list[str] | None = metadata.get("expected_tools")
+        tools_called: list[str] | None = eval_case.meta("tools_called")
+        expected_tools: list[str] | None = eval_case.meta("expected_tools")
 
         if expected_tools is None:
             return Score(

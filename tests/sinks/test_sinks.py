@@ -52,6 +52,36 @@ class TestStdoutSink:
         assert "FAIL" in captured
         assert "bad" in captured
 
+    def test_finalize_prints_summary(self, capsys, eval_case, scores):
+        sink = StdoutSink(summary=True)
+        sink.write(scores, eval_case)
+        sink.write(scores, eval_case)
+        capsys.readouterr()  # clear per-case output
+
+        sink.finalize()
+        captured = capsys.readouterr().out
+
+        assert "Summary" in captured
+        assert "exact_match" in captured
+        assert "latency" in captured
+        assert "pass_rate" in captured
+        assert "Overall pass rate" in captured
+
+    def test_finalize_no_summary_when_disabled(self, capsys, eval_case, scores):
+        sink = StdoutSink(summary=False)
+        sink.write(scores, eval_case)
+        capsys.readouterr()
+
+        sink.finalize()
+        captured = capsys.readouterr().out
+        assert captured == ""
+
+    def test_finalize_no_output_when_no_writes(self, capsys):
+        sink = StdoutSink(summary=True)
+        sink.finalize()
+        captured = capsys.readouterr().out
+        assert captured == ""
+
 
 # ---------------------------------------------------------------------------
 # JsonSink

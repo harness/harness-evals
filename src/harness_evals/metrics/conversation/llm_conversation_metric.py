@@ -35,8 +35,7 @@ class LLMConversationMetric(BaseMetric):
         return _run_async(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
-        meta = eval_case.metadata or {}
-        conversation: list[dict] | None = meta.get("conversation")
+        conversation: list[dict] | None = eval_case.meta("conversation")
 
         if not conversation or len(conversation) < 2:
             return Score(

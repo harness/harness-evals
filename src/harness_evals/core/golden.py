@@ -18,6 +18,10 @@ class Golden:
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
 
+    def meta(self, key: str, default: Any = None) -> Any:
+        """Safely retrieve a metadata value without ``(self.metadata or {})`` boilerplate."""
+        return (self.metadata or {}).get(key, default)
+
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}
 

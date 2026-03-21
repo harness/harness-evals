@@ -21,7 +21,7 @@ class Score:
     metadata: dict[str, Any] | None = field(default=None)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    _CLAMP_EPS = 1e-9
+    _CLAMP_EPS = 1e-6
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.value <= 1.0):
@@ -33,6 +33,11 @@ class Score:
                     f"(metric={self.name!r}). Fix the metric implementation."
                 )
         self.passed = self.value >= self.threshold
+
+    @classmethod
+    def clamped(cls, *, name: str, value: float, threshold: float, **kwargs: Any) -> Score:
+        """Create a Score, clamping ``value`` to [0.0, 1.0] without raising."""
+        return cls(name=name, value=max(0.0, min(1.0, value)), threshold=threshold, **kwargs)
 
     def to_dict(self) -> dict:
         d = asdict(self)

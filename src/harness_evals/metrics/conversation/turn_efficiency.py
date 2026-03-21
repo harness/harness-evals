@@ -22,9 +22,8 @@ class TurnEfficiencyMetric(BaseMetric):
         super().__init__(name="turn_efficiency", threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
-        meta = eval_case.metadata or {}
-        actual = meta.get("actual_turns")
-        expected = meta.get("expected_turns")
+        actual = eval_case.meta("actual_turns")
+        expected = eval_case.meta("expected_turns")
 
         if actual is None or expected is None:
             return Score(

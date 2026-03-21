@@ -1,5 +1,7 @@
 """Tests for core types, evaluate(), assert_test(), evaluate_cases(), and evaluate_dataset()."""
 
+import json
+
 import pytest
 
 from harness_evals import (
@@ -54,6 +56,21 @@ class TestGolden:
     def test_from_dict_ignores_unknown_keys(self):
         g = Golden.from_dict({"input": "q", "unknown_field": 42})
         assert g.input == "q"
+
+    def test_meta_returns_value(self):
+        g = Golden(input="q", metadata={"source": "test", "version": 3})
+        assert g.meta("source") == "test"
+        assert g.meta("version") == 3
+
+    def test_meta_returns_default_when_missing(self):
+        g = Golden(input="q", metadata={"source": "test"})
+        assert g.meta("missing") is None
+        assert g.meta("missing", "fallback") == "fallback"
+
+    def test_meta_handles_none_metadata(self):
+        g = Golden(input="q")
+        assert g.meta("any_key") is None
+        assert g.meta("any_key", 42) == 42
 
 
 @pytest.mark.unit
@@ -113,11 +130,107 @@ class TestEvalCase:
         assert ec.tags == {"env": "ci"}
         assert ec.latency_ms == 200
 
+    def test_from_golden_metadata_extra_merges(self):
+        g = Golden(input="q", expected="a", metadata={"source": "dataset", "version": 1})
+        ec = EvalCase.from_golden(g, output="a", metadata_extra={"model": "gpt-4", "version": 2})
+        assert ec.metadata["source"] == "dataset"
+        assert ec.metadata["model"] == "gpt-4"
+        assert ec.metadata["version"] == 2  # extra wins on conflict
+
+    def test_from_golden_metadata_extra_with_none_golden_metadata(self):
+        g = Golden(input="q", expected="a")
+        ec = EvalCase.from_golden(g, output="a", metadata_extra={"model": "gpt-4"})
+        assert ec.metadata == {"model": "gpt-4"}
+
+    def test_from_golden_no_metadata_extra(self):
+        g = Golden(input="q", expected="a", metadata={"source": "test"})
+        ec = EvalCase.from_golden(g, output="a")
+        assert ec.metadata == {"source": "test"}
+
+    def test_from_golden_both_metadata_none(self):
+        g = Golden(input="q", expected="a")
+        ec = EvalCase.from_golden(g, output="a")
+        assert ec.metadata is None
+
     def test_to_dict_omits_none(self):
         ec = EvalCase(input="q", output="a")
         d = ec.to_dict()
         assert d == {"input": "q", "output": "a"}
         assert "latency_ms" not in d
+
+    def test_meta_returns_value(self):
+        ec = EvalCase(input="q", output="a", metadata={"model": "gpt-4"})
+        assert ec.meta("model") == "gpt-4"
+
+    def test_meta_returns_default_when_missing(self):
+        ec = EvalCase(input="q", output="a", metadata={"model": "gpt-4"})
+        assert ec.meta("missing") is None
+        assert ec.meta("missing", "default") == "default"
+
+    def test_meta_handles_none_metadata(self):
+        ec = EvalCase(input="q", output="a")
+        assert ec.meta("any") is None
+
+    def test_output_as_str_from_string(self):
+        ec = EvalCase(input="q", output="hello world")
+        assert ec.output_as_str() == "hello world"
+
+    def test_output_as_str_from_dict(self):
+        ec = EvalCase(input="q", output={"key": "value"})
+        assert json.loads(ec.output_as_str()) == {"key": "value"}
+
+    def test_output_as_str_from_list(self):
+        ec = EvalCase(input="q", output=[1, 2, 3])
+        assert json.loads(ec.output_as_str()) == [1, 2, 3]
+
+    def test_output_as_dict_from_dict(self):
+        ec = EvalCase(input="q", output={"key": "value"})
+        assert ec.output_as_dict() == {"key": "value"}
+
+    def test_output_as_dict_from_json_string(self):
+        ec = EvalCase(input="q", output='{"key": "value"}')
+        assert ec.output_as_dict() == {"key": "value"}
+
+    def test_output_as_dict_raises_for_list(self):
+        ec = EvalCase(input="q", output=[1, 2])
+        with pytest.raises(TypeError, match="expected str or dict"):
+            ec.output_as_dict()
+
+    def test_output_as_dict_raises_for_json_array_string(self):
+        ec = EvalCase(input="q", output="[1, 2]")
+        with pytest.raises(TypeError, match="parsed to list"):
+            ec.output_as_dict()
+
+    def test_output_as_dict_raises_for_invalid_json(self):
+        ec = EvalCase(input="q", output="not json")
+        with pytest.raises(json.JSONDecodeError):
+            ec.output_as_dict()
+
+    def test_expected_as_str(self):
+        ec = EvalCase(input="q", output="a", expected="hello")
+        assert ec.expected_as_str() == "hello"
+
+    def test_expected_as_str_from_dict(self):
+        ec = EvalCase(input="q", output="a", expected={"k": "v"})
+        assert json.loads(ec.expected_as_str()) == {"k": "v"}
+
+    def test_expected_as_str_raises_when_none(self):
+        ec = EvalCase(input="q", output="a")
+        with pytest.raises(TypeError, match="expected is None"):
+            ec.expected_as_str()
+
+    def test_expected_as_dict(self):
+        ec = EvalCase(input="q", output="a", expected={"k": "v"})
+        assert ec.expected_as_dict() == {"k": "v"}
+
+    def test_expected_as_dict_from_json_string(self):
+        ec = EvalCase(input="q", output="a", expected='{"k": "v"}')
+        assert ec.expected_as_dict() == {"k": "v"}
+
+    def test_expected_as_dict_raises_when_none(self):
+        ec = EvalCase(input="q", output="a")
+        with pytest.raises(TypeError, match="expected is None"):
+            ec.expected_as_dict()
 
 
 @pytest.mark.unit
@@ -146,6 +259,30 @@ class TestScore:
         assert d["reason"] == "good"
         assert "created_at" in d
 
+    def test_clamp_eps_widened(self):
+        s = Score(name="test", value=1.0 + 5e-7, threshold=0.5)
+        assert s.value == 1.0
+        assert s.passed is True
+
+    def test_clamp_eps_rejects_large_overshoot(self):
+        with pytest.raises(ValueError, match="must be between"):
+            Score(name="test", value=1.01, threshold=0.5)
+
+    def test_clamped_factory_clamps_high(self):
+        s = Score.clamped(name="test", value=1.5, threshold=0.5)
+        assert s.value == 1.0
+        assert s.passed is True
+
+    def test_clamped_factory_clamps_low(self):
+        s = Score.clamped(name="test", value=-0.3, threshold=0.5)
+        assert s.value == 0.0
+        assert s.passed is False
+
+    def test_clamped_factory_passes_through_normal(self):
+        s = Score.clamped(name="test", value=0.75, threshold=0.5, reason="ok")
+        assert s.value == 0.75
+        assert s.reason == "ok"
+
 
 @pytest.mark.unit
 class TestEvaluate:
@@ -171,6 +308,21 @@ class TestEvaluate:
         assert len(scores) == 1
         assert not scores[0].passed
         assert "broken" in scores[0].reason
+
+    def test_evaluate_filters_none_scores(self):
+        from harness_evals.core.metric import BaseMetric
+
+        class SkippingMetric(BaseMetric):
+            def __init__(self):
+                super().__init__(name="skipper", threshold=0.5)
+
+            def measure(self, eval_case):
+                return None
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = evaluate(ec, metrics=[ExactMatchMetric(), SkippingMetric()])
+        assert len(scores) == 1
+        assert scores[0].name == "exact_match"
 
 
 @pytest.mark.unit
@@ -222,6 +374,24 @@ class TestAEvaluate:
         scores = await a_evaluate(ec, metrics=[ExactMatchMetric()])
         assert len(scores) == 1
         assert not scores[0].passed
+
+    async def test_a_evaluate_filters_none_scores(self):
+        from harness_evals.core.metric import BaseMetric
+
+        class AsyncSkipper(BaseMetric):
+            def __init__(self):
+                super().__init__(name="async_skipper", threshold=0.5)
+
+            def measure(self, eval_case):
+                return None
+
+            async def a_measure(self, eval_case):
+                return None
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = await a_evaluate(ec, metrics=[ExactMatchMetric(), AsyncSkipper()])
+        assert len(scores) == 1
+        assert scores[0].name == "exact_match"
 
 
 @pytest.mark.unit

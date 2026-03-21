@@ -23,9 +23,8 @@ class ToolSelectionAccuracyMetric(BaseMetric):
         super().__init__(name="tool_selection_accuracy", threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
-        meta = eval_case.metadata or {}
-        mcp_trace: list[dict] | None = meta.get("mcp_trace")
-        expected_tools: list[str] | None = meta.get("expected_tools")
+        mcp_trace: list[dict] | None = eval_case.meta("mcp_trace")
+        expected_tools: list[str] | None = eval_case.meta("expected_tools")
 
         if mcp_trace is None or expected_tools is None:
             return Score(

@@ -88,9 +88,7 @@ class TrajectoryConsistencyMetric(ReliabilityMetric):
         if mode not in ("distributional", "sequential"):
             raise ValueError(f"mode must be 'distributional' or 'sequential', got '{mode}'")
         if max_trajectory_length is not None and max_trajectory_length < 1:
-            raise ValueError(
-                f"max_trajectory_length must be >= 1 or None, got {max_trajectory_length}"
-            )
+            raise ValueError(f"max_trajectory_length must be >= 1 or None, got {max_trajectory_length}")
         super().__init__(name="trajectory_consistency", threshold=threshold, k=k, **kwargs)
         self.mode = mode
         self.max_trajectory_length = max_trajectory_length

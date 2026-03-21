@@ -259,9 +259,7 @@ class TestTrajectoryEdgeCases:
                 _run_with_traj(["z", "w", "a"]),
             ],
         )
-        capped = TrajectoryConsistencyMetric(
-            mode="distributional", max_trajectory_length=1
-        ).measure(ec)
+        capped = TrajectoryConsistencyMetric(mode="distributional", max_trajectory_length=1).measure(ec)
         assert capped.value == pytest.approx(1.0)
 
     def test_max_trajectory_length_no_op_when_short(self):
@@ -273,9 +271,7 @@ class TestTrajectoryEdgeCases:
                 _run_with_traj(["a", "b"]),
             ],
         )
-        score = TrajectoryConsistencyMetric(
-            mode="sequential", max_trajectory_length=100
-        ).measure(ec)
+        score = TrajectoryConsistencyMetric(mode="sequential", max_trajectory_length=100).measure(ec)
         assert score.value == pytest.approx(1.0)
 
     def test_max_trajectory_length_validation(self):

@@ -19,9 +19,14 @@ from harness_evals.metrics.rag.answer_relevancy import AnswerRelevancyMetric
 from harness_evals.metrics.rag.context_precision import ContextPrecisionMetric
 from harness_evals.metrics.rag.context_recall import ContextRecallMetric
 from harness_evals.metrics.rag.faithfulness import FaithfulnessMetric
+from harness_evals.metrics.reliability.brier_score import BrierScoreMetric
 from harness_evals.metrics.reliability.calibration import CalibrationMetric
 from harness_evals.metrics.reliability.discrimination import DiscriminationMetric
+from harness_evals.metrics.reliability.environment_robustness import (
+    EnvironmentRobustnessMetric,
+)
 from harness_evals.metrics.reliability.outcome_consistency import OutcomeConsistencyMetric
+from harness_evals.metrics.reliability.prompt_robustness import PromptRobustnessMetric
 from harness_evals.metrics.reliability.resource_consistency import ResourceConsistencyMetric
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
@@ -51,6 +56,9 @@ __all__ = [
     "ContextRecallMetric",
     "CalibrationMetric",
     "DiscriminationMetric",
+    "BrierScoreMetric",
+    "PromptRobustnessMetric",
+    "EnvironmentRobustnessMetric",
     "PIIMetric",
     "ToxicityMetric",
     "PromptInjectionMetric",

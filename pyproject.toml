@@ -22,8 +22,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "deepdiff>=8.6",
-    "jsonschema>=4.26",
+    "deepdiff>=7.0",
+    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]

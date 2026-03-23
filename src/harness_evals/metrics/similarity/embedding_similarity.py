@@ -40,5 +40,6 @@ class EmbeddingSimilarityMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"cosine similarity = {similarity:.4f}",
             metadata={"cosine_similarity": similarity},
         )

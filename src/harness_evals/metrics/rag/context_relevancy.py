@@ -71,7 +71,7 @@ class ContextRelevancyMetric(BaseMetric):
 
         total = len(eval_case.context)
         relevant = sum(1 for v in verdicts if v.get("relevant", False))
-        value = relevant / total if total > 0 else 0.0
+        value = min(1.0, relevant / total) if total > 0 else 0.0
 
         return Score(
             name=self.name,

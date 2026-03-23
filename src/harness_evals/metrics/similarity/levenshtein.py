@@ -58,5 +58,6 @@ class LevenshteinMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"edit distance {dist}/{max_len}",
             metadata={"edit_distance": dist, "max_length": max_len},
         )

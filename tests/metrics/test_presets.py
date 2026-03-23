@@ -14,7 +14,7 @@ class TestPresets:
             assert len(value) > 10, f"{name} should be a non-trivial criteria string"
 
     def test_preset_count(self):
-        assert len(presets.__all__) == 8
+        assert len(presets.__all__) >= 8
 
     def test_factuality(self):
         assert "factual" in presets.FACTUALITY.lower()

@@ -33,8 +33,7 @@ def _bleu_pure_python(reference_tokens: list[str], hypothesis_tokens: list[str],
         else:
             precisions.append(clipped / total)
 
-    if any(p == 0.0 for p in precisions):
-        return 0.0
+    precisions = [max(p, 1e-10) for p in precisions]
 
     log_avg = sum(math.log(p) for p in precisions) / len(precisions)
 
@@ -93,5 +92,6 @@ class BLEUMetric(BaseMetric):
             name=self.name,
             value=float(value),
             threshold=self.threshold,
+            reason=f"BLEU-{self.max_n} = {value:.4f}",
             metadata={"max_n": self.max_n},
         )

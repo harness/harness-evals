@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 
-from harness_evals.llm._schema import make_strict_schema
 from harness_evals.llm.base import BaseLLM
 
 
@@ -19,6 +18,8 @@ class OpenAILLM(BaseLLM):
         self,
         model: str = "gpt-4o",
         api_key: str | None = None,
+        base_url: str | None = None,
+        default_headers: dict[str, str] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> None:
@@ -33,7 +34,11 @@ class OpenAILLM(BaseLLM):
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not resolved_key:
             raise ValueError("No API key: pass api_key= or set OPENAI_API_KEY")
-        self._client = openai.AsyncOpenAI(api_key=resolved_key)
+        self._client = openai.AsyncOpenAI(
+            api_key=resolved_key,
+            base_url=base_url,
+            default_headers=default_headers,
+        )
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
         response = await self._client.chat.completions.create(
@@ -45,20 +50,12 @@ class OpenAILLM(BaseLLM):
         return response.choices[0].message.content or ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
-        strict_schema = make_strict_schema(schema)
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "eval_response",
-                    "strict": True,
-                    "schema": strict_schema,
-                },
-            },
+            response_format={"type": "json_object"},
         )
         text = response.choices[0].message.content or "{}"
         return json.loads(text)

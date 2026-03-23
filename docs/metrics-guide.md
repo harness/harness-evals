@@ -36,7 +36,8 @@ class MyMetric(BaseMetric):
 | `operational/` | Latency, cost, tokens, retries | `BaseMetric` |
 | `reliability/` | Multi-run consistency, robustness | `ReliabilityMetric` |
 | `llm_judge/` | LLM scores against criteria | `BaseMetric` (takes `llm` param) |
-| `rag/` | Faithfulness, relevancy, context | `BaseMetric` (takes `llm` param) |
+| `rag/` | Faithfulness, relevancy, context | `BaseMetric` (takes `llm` and/or `embedding` param) |
+| `similarity/` | Levenshtein, BLEU, embedding similarity | `BaseMetric` (optionally takes `embedding` param) |
 | `safety/` | PII, toxicity, injection, hallucination | `BaseMetric` |
 | `agent/` | Tool correctness, task completion | `BaseMetric` |
 | `conversation/` | Multi-turn coherence, resolution | `BaseMetric` |
@@ -132,29 +133,52 @@ class MyReliabilityMetric(ReliabilityMetric):
         )
 ```
 
-#### LLM-Judged Metric Template (Phase 2+)
+#### LLM-Judged Metric Template
 
-For metrics that use an LLM as a judge — override `a_measure()`:
+For metrics that use an LLM as a judge — override `a_measure()` and use `_run_async` for the sync wrapper:
 
 ```python
+from harness_evals._async_compat import _run_async
 from harness_evals.llm.base import BaseLLM
 
 class MyLLMMetric(BaseMetric):
-    def __init__(self, threshold: float = 0.7, llm: BaseLLM | None = None, **kwargs) -> None:
+    def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs) -> None:
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
         self.llm = llm
 
     def measure(self, eval_case: EvalCase) -> Score:
-        if self.llm is None:
-            return Score(name=self.name, value=0.0, threshold=self.threshold,
-                         reason="No LLM provider configured")
-        import asyncio
-        return asyncio.run(self.a_measure(eval_case))
+        return _run_async(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
         prompt = f"Rate the following response...\nInput: {eval_case.input}\nOutput: {eval_case.output}"
         result = await self.llm.generate_json(prompt, schema={"score": "number"})
-        value = result["score"] / 10.0
+        value = max(0.0, min(1.0, result.get("score", 0.0)))
+        return Score(
+            name=self.name,
+            value=value,
+            threshold=self.threshold,
+        )
+```
+
+#### Embedding Metric Template
+
+For metrics that use embedding similarity — take a `BaseEmbedding` parameter:
+
+```python
+from harness_evals._async_compat import _run_async
+from harness_evals.llm.embedding import BaseEmbedding, _cosine_similarity
+
+class MyEmbeddingMetric(BaseMetric):
+    def __init__(self, embedding: BaseEmbedding, threshold: float = 0.8, **kwargs) -> None:
+        super().__init__(name="my_metric", threshold=threshold, **kwargs)
+        self.embedding = embedding
+
+    def measure(self, eval_case: EvalCase) -> Score:
+        return _run_async(self.a_measure(eval_case))
+
+    async def a_measure(self, eval_case: EvalCase) -> Score:
+        vectors = await self.embedding.embed([str(eval_case.output), str(eval_case.expected)])
+        value = max(0.0, min(1.0, _cosine_similarity(vectors[0], vectors[1])))
         return Score(
             name=self.name,
             value=value,

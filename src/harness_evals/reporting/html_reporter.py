@@ -50,6 +50,10 @@ class EvalResult:
                 for k, v in s.metadata.items():
                     if isinstance(v, (int, float)):
                         result[k] = float(v)
+                    elif isinstance(v, dict):
+                        for nested_k, nested_v in v.items():
+                            if isinstance(nested_v, (int, float)):
+                                result[nested_k] = float(nested_v)
         return result
 
 

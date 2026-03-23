@@ -61,6 +61,18 @@ class HtmlSink(BaseSink):
         """Pass through to the underlying reporter."""
         self._reporter.set_overall_key(key)
 
+    def set_description(self, html: str) -> None:
+        """Pass through to the underlying reporter."""
+        self._reporter.set_description(html)
+
+    def set_variant_descriptions(self, descs: dict[str, str]) -> None:
+        """Pass through to the underlying reporter."""
+        self._reporter.set_variant_descriptions(descs)
+
+    def set_how_to_read(self, html: str) -> None:
+        """Pass through to the underlying reporter."""
+        self._reporter.set_how_to_read(html)
+
     def finalize(self) -> str:
         """Generate the HTML report and write to file. Returns the file path."""
         self._reporter.generate(self.path)

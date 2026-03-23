@@ -82,6 +82,23 @@ class TestContextRelevancyMetric:
         score = metric.measure(ec)
         assert score.value == 1.0
 
+    async def test_score_clamped_with_hallucinated_verdicts(self):
+        llm = MockLLM(
+            default={
+                "verdicts": [
+                    {"chunk_index": 0, "relevant": True},
+                    {"chunk_index": 1, "relevant": True},
+                    {"chunk_index": 2, "relevant": True},
+                    {"chunk_index": 3, "relevant": True},
+                ]
+            }
+        )
+        metric = ContextRelevancyMetric(llm=llm, threshold=0.5)
+        ec = EvalCase(input="q", output="a", context=["c1", "c2"])
+        score = await metric.a_measure(ec)
+        assert score.value == 1.0
+        assert score.value <= 1.0
+
 
 @pytest.mark.unit
 class TestContextEntityRecallMetric:
@@ -187,6 +204,19 @@ class TestAnswerCorrectnessMetric:
         ec = EvalCase(input="q", output="a", expected="a")
         score = await metric.a_measure(ec)
         assert score.metadata["f1"] == 1.0
+
+    async def test_metadata_keys(self):
+        llm = MockLLM(default={"TP": ["s1", "s2"], "FP": ["s3"], "FN": []})
+        emb = MockEmbedding()
+        metric = AnswerCorrectnessMetric(llm=llm, embedding=emb, threshold=0.7)
+        ec = EvalCase(input="q", output="answer", expected="answer")
+        score = await metric.a_measure(ec)
+        expected_keys = {"f1", "tp", "fp", "fn", "cosine_similarity", "factuality_weight", "similarity_weight"}
+        assert expected_keys == set(score.metadata.keys())
+        assert score.metadata["tp"] == 2
+        assert score.metadata["fp"] == 1
+        assert score.metadata["fn"] == 0
+        assert score.metadata["cosine_similarity"] >= 0.0
 
     def test_sync_measure(self):
         llm = MockLLM(default={"TP": ["s1"], "FP": [], "FN": []})

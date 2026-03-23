@@ -93,6 +93,11 @@ class TestBLEUMetric:
         score = BLEUMetric(threshold=0.3, max_n=2).measure(ec)
         assert 0.0 < score.value < 1.0
 
+    def test_short_hypothesis_smoothing_nonzero(self):
+        ec = EvalCase(input="q", output="the cat", expected="the cat sat on the mat")
+        score = BLEUMetric().measure(ec)
+        assert score.value > 0.0
+
 
 @pytest.mark.unit
 class TestEmbeddingSimilarityMetric:

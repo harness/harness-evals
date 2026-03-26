@@ -188,6 +188,23 @@ scores = evaluate(ec, metrics=[
 ], sinks=[LangfuseSink()])  # scores written back to the same trace
 ```
 
+### Batch-evaluate Langfuse traces by filter
+
+```python
+from harness_evals.sources.langfuse import LangfuseSource
+from harness_evals import evaluate_cases
+from harness_evals.metrics import LatencyMetric, PIIMetric
+from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+source = LangfuseSource(langfuse_client)
+cases = source.from_traces(tags=["production"], user_id="user_123", limit=50)
+
+all_scores = evaluate_cases(cases, metrics=[
+    LatencyMetric(max_ms=3000),
+    PIIMetric(),
+], sinks=[LangfuseSink()])
+```
+
 ### Evaluate production traces from OpenTelemetry
 
 ```python

@@ -5,6 +5,8 @@ Requires: pip install harness-evals[langfuse]
 
 from __future__ import annotations
 
+from datetime import datetime
+
 try:
     from langfuse import Langfuse
 except ImportError as _err:
@@ -110,6 +112,9 @@ class LangfuseSource:
         else:
             metadata = {"langfuse_trace_id": trace_id}
 
+        if start_time is not None:
+            metadata["langfuse_trace_start_time"] = start_time.isoformat()
+
         return EvalCase(
             input=trace_input,
             output=trace_output,
@@ -121,6 +126,71 @@ class LangfuseSource:
             tags=tags,
             metadata=metadata,
         )
+
+    def from_traces(
+        self,
+        *,
+        name: str | None = None,
+        tags: list[str] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
+        limit: int = 100,
+    ) -> list[EvalCase]:
+        """Fetch multiple Langfuse traces matching filters and convert each to an EvalCase.
+
+        Uses cursor-based pagination to collect up to ``limit`` traces.
+
+        Args:
+            name: Filter by trace name.
+            tags: Filter by tags (traces must have all listed tags).
+            user_id: Filter by user ID.
+            session_id: Filter by session ID.
+            from_timestamp: Only include traces started at or after this time.
+            to_timestamp: Only include traces started before this time.
+            limit: Maximum number of traces to fetch.
+
+        Returns:
+            List of EvalCases, one per trace, ordered as returned by the API.
+        """
+        kwargs: dict[str, object] = {}
+        if name is not None:
+            kwargs["name"] = name
+        if tags is not None:
+            kwargs["tags"] = tags
+        if user_id is not None:
+            kwargs["user_id"] = user_id
+        if session_id is not None:
+            kwargs["session_id"] = session_id
+        if from_timestamp is not None:
+            kwargs["from_timestamp"] = from_timestamp
+        if to_timestamp is not None:
+            kwargs["to_timestamp"] = to_timestamp
+
+        collected: list[object] = []
+        cursor: str | None = None
+        page_size = min(limit, 100)
+
+        while len(collected) < limit:
+            page = self._client.api.trace.list(limit=page_size, cursor=cursor, **kwargs)
+            page_data = page.data if hasattr(page, "data") else []
+            if not page_data:
+                break
+            collected.extend(page_data)
+            page_meta = getattr(page, "meta", None)
+            cursor = getattr(page_meta, "next_cursor", None) if page_meta else None
+            if not cursor:
+                break
+
+        collected = collected[:limit]
+
+        results: list[EvalCase] = []
+        for trace in collected:
+            trace_id = getattr(trace, "id", None)
+            if trace_id:
+                results.append(self.from_trace(trace_id))
+        return results
 
     @staticmethod
     def _process_generation(

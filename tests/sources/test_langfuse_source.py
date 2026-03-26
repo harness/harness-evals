@@ -165,3 +165,109 @@ class TestLangfuseSource:
         source = self._make_source(trace, [])
         ec = source.from_trace("t1")
         assert ec.tags is None
+
+    def test_start_time_stored_in_metadata(self):
+        source = self._make_source(_FakeTrace(), [])
+        ec = source.from_trace("t1")
+        assert "langfuse_trace_start_time" in ec.metadata
+
+
+@dataclass
+class _FakeTraceListItem:
+    """Minimal trace object returned by api.trace.list()."""
+
+    id: str = "trace-1"
+
+
+@dataclass
+class _FakePageMeta:
+    next_cursor: str | None = None
+
+
+@dataclass
+class _FakeTracePage:
+    data: list[_FakeTraceListItem] = field(default_factory=list)
+    meta: _FakePageMeta = field(default_factory=_FakePageMeta)
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("_langfuse_module")
+class TestLangfuseSourceFromTraces:
+    def _make_source(
+        self,
+        pages: list[_FakeTracePage],
+        trace_map: dict[str, _FakeTrace] | None = None,
+        obs_map: dict[str, list[_FakeObservation]] | None = None,
+    ):
+        from harness_evals.sources.langfuse import LangfuseSource
+
+        client = MagicMock()
+        client.api.trace.list.side_effect = pages
+
+        if trace_map is None:
+            trace_map = {}
+        if obs_map is None:
+            obs_map = {}
+
+        def get_trace(tid):
+            return trace_map.get(tid, _FakeTrace())
+
+        def get_obs(trace_id, **_kwargs):
+            return _FakeObservationList(data=obs_map.get(trace_id, []))
+
+        client.api.trace.get.side_effect = get_trace
+        client.api.observations.get_many.side_effect = get_obs
+        return LangfuseSource(client), client
+
+    def test_single_page(self):
+        page = _FakeTracePage(
+            data=[_FakeTraceListItem(id="t1"), _FakeTraceListItem(id="t2")],
+        )
+        source, client = self._make_source([page])
+        cases = source.from_traces(tags=["prod"], limit=10)
+        assert len(cases) == 2
+        assert cases[0].metadata["langfuse_trace_id"] == "t1"
+        assert cases[1].metadata["langfuse_trace_id"] == "t2"
+        client.api.trace.list.assert_called_once()
+        call_kwargs = client.api.trace.list.call_args
+        assert call_kwargs.kwargs.get("tags") == ["prod"] or call_kwargs[1].get("tags") == ["prod"]
+
+    def test_pagination(self):
+        page1 = _FakeTracePage(
+            data=[_FakeTraceListItem(id="t1")],
+            meta=_FakePageMeta(next_cursor="cursor_2"),
+        )
+        page2 = _FakeTracePage(
+            data=[_FakeTraceListItem(id="t2")],
+        )
+        source, client = self._make_source([page1, page2])
+        cases = source.from_traces(limit=10)
+        assert len(cases) == 2
+        assert client.api.trace.list.call_count == 2
+
+    def test_limit_truncates(self):
+        page = _FakeTracePage(
+            data=[_FakeTraceListItem(id=f"t{i}") for i in range(5)],
+        )
+        source, _ = self._make_source([page])
+        cases = source.from_traces(limit=3)
+        assert len(cases) == 3
+
+    def test_empty_result(self):
+        page = _FakeTracePage(data=[])
+        source, _ = self._make_source([page])
+        cases = source.from_traces()
+        assert cases == []
+
+    def test_filter_kwargs_forwarded(self):
+        page = _FakeTracePage(data=[])
+        source, client = self._make_source([page])
+        source.from_traces(
+            name="my-trace",
+            user_id="u1",
+            session_id="s1",
+        )
+        call_kwargs = client.api.trace.list.call_args[1]
+        assert call_kwargs["name"] == "my-trace"
+        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["session_id"] == "s1"

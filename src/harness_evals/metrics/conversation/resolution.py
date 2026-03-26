@@ -26,9 +26,9 @@ Respond with JSON:
 class ConversationResolutionMetric(LLMConversationMetric):
     """LLM-judged evaluation of whether a conversation reached resolution.
 
-    Reads ``metadata["conversation"]`` — a list of
-    ``{"role": str, "content": str}`` dicts representing ordered turns.
-    Returns 0.0 if the conversation is missing or has fewer than 2 turns.
+    Reads ``eval_case.messages`` — a list of ``Message`` objects representing
+    ordered turns.  Returns 0.0 if messages is missing or has fewer than
+    2 turns.
     """
 
     _prompt_template = _PROMPT_TEMPLATE

@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from harness_evals.core.golden import Golden
+from harness_evals.core.types import Message, ToolCall
 
 
 @dataclass
@@ -25,6 +26,10 @@ class EvalCase:
     cost_usd: float | None = None
     retry_count: int | None = None
     confidence: float | None = None
+
+    messages: list[Message] | None = field(default=None)
+    tool_calls: list[ToolCall] | None = field(default=None)
+    expected_tools: list[str] | None = field(default=None)
 
     tags: dict[str, str] | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
@@ -96,6 +101,7 @@ class EvalCase:
 
         Accepts ``actual_output`` for ``output``, ``expected_output`` for
         ``expected``, and ``token_usage`` for ``token_count``.
+        Deserializes ``messages`` and ``tool_calls`` from plain dicts.
         """
         mapped = dict(data)
         if "actual_output" in mapped and "output" not in mapped:
@@ -104,6 +110,13 @@ class EvalCase:
             mapped["expected"] = mapped.pop("expected_output")
         if "token_usage" in mapped and "token_count" not in mapped:
             mapped["token_count"] = mapped.pop("token_usage")
+
+        if "messages" in mapped and mapped["messages"] is not None:
+            mapped["messages"] = [m if isinstance(m, Message) else Message.from_dict(m) for m in mapped["messages"]]
+        if "tool_calls" in mapped and mapped["tool_calls"] is not None:
+            mapped["tool_calls"] = [
+                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc) for tc in mapped["tool_calls"]
+            ]
 
         known = {f.name for f in cls.__dataclass_fields__.values()}
         return cls(**{k: v for k, v in mapped.items() if k in known})
@@ -131,6 +144,7 @@ class EvalCase:
             output=output,
             expected=golden.expected,
             context=golden.context,
+            expected_tools=golden.expected_tools,
             tags=golden.tags,
             metadata=merged_meta,
             **kwargs,

@@ -10,7 +10,7 @@ from harness_evals.core.score import Score
 
 
 class ToolCorrectnessMetric(BaseMetric):
-    """Compare ``metadata["tools_called"]`` against ``metadata["expected_tools"]``.
+    """Compare ``eval_case.tool_calls`` names against ``eval_case.expected_tools``.
 
     Supports two modes:
 
@@ -19,12 +19,10 @@ class ToolCorrectnessMetric(BaseMetric):
       the expected tool. Uses ``max(len(called), len(expected))`` as the
       denominator, so extra tools reduce the score proportionally while
       missing tools reduce it more heavily.
-    - **subset**: All expected tools must appear in ``tools_called``,
+    - **subset**: All expected tools must appear in ``tool_calls``,
       order-independent but count-sensitive (duplicates in expected
       require matching duplicates in called). Score is the fraction of
       expected tool occurrences found.
-
-    Both lists should be ``list[str]`` of tool/function names.
     """
 
     def __init__(
@@ -39,24 +37,25 @@ class ToolCorrectnessMetric(BaseMetric):
         self.mode = mode
 
     def measure(self, eval_case: EvalCase) -> Score:
-        tools_called: list[str] | None = eval_case.meta("tools_called")
-        expected_tools: list[str] | None = eval_case.meta("expected_tools")
+        expected_tools = eval_case.expected_tools
 
         if expected_tools is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="metadata['expected_tools'] not provided",
+                reason="expected_tools not provided on EvalCase",
             )
 
-        if tools_called is None:
+        if eval_case.tool_calls is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="metadata['tools_called'] not provided",
+                reason="tool_calls not provided on EvalCase",
             )
+
+        tools_called = [tc.name for tc in eval_case.tool_calls]
 
         if not expected_tools:
             value = 1.0 if not tools_called else 0.0

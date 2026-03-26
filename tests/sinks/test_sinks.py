@@ -415,3 +415,142 @@ class TestOtlpSink:
         sink = OtlpSink()
         assert sink._provider is mock_provider
         mock_provider.get_meter.assert_called_once_with("harness-evals")
+
+
+# ---------------------------------------------------------------------------
+# LangfuseSink
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLangfuseSink:
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_write_sends_scores(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        ec = EvalCase(input="q", output="a")
+        sink.write(
+            [Score(name="exact_match", value=1.0, threshold=0.5, reason="perfect")],
+            ec,
+        )
+
+        mock_client.score.assert_called_once()
+        call_kwargs = mock_client.score.call_args[1]
+        assert call_kwargs["name"] == "exact_match"
+        assert call_kwargs["value"] == 1.0
+        assert call_kwargs["comment"] == "perfect"
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_write_with_trace_id(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        ec = EvalCase(
+            input="q",
+            output="a",
+            metadata={"langfuse_trace_id": "trace-123", "langfuse_observation_id": "obs-456"},
+        )
+        sink.write([Score(name="m", value=0.9, threshold=0.5)], ec)
+
+        call_kwargs = mock_client.score.call_args[1]
+        assert call_kwargs["trace_id"] == "trace-123"
+        assert call_kwargs["observation_id"] == "obs-456"
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_write_without_trace_id(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        ec = EvalCase(input="q", output="a")
+        sink.write([Score(name="m", value=0.8, threshold=0.5)], ec)
+
+        call_kwargs = mock_client.score.call_args[1]
+        assert "trace_id" not in call_kwargs
+        assert "observation_id" not in call_kwargs
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_write_includes_tags_in_metadata(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        ec = EvalCase(input="q", output="a", tags={"env": "prod", "model": "gpt-4"})
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        call_kwargs = mock_client.score.call_args[1]
+        assert call_kwargs["metadata"]["tag.env"] == "prod"
+        assert call_kwargs["metadata"]["tag.model"] == "gpt-4"
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_write_merges_score_metadata(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        ec = EvalCase(input="q", output="a", tags={"env": "staging"})
+        sink.write(
+            [Score(name="m", value=0.9, threshold=0.5, metadata={"edit_distance": 2})],
+            ec,
+        )
+
+        call_kwargs = mock_client.score.call_args[1]
+        assert call_kwargs["metadata"]["edit_distance"] == 2
+        assert call_kwargs["metadata"]["tag.env"] == "staging"
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_multiple_scores_per_write(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        ec = EvalCase(input="q", output="a")
+        sink.write(
+            [
+                Score(name="m1", value=1.0, threshold=0.5),
+                Score(name="m2", value=0.3, threshold=0.5),
+            ],
+            ec,
+        )
+
+        assert mock_client.score.call_count == 2
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_finalize_flushes(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        sink.finalize()
+
+        mock_client.flush.assert_called_once()
+
+    @patch("harness_evals.sinks.langfuse_sink.Langfuse")
+    def test_shutdown_flushes_and_shuts_down(self, mock_langfuse_cls):
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+        sink = LangfuseSink(secret_key="sk", public_key="pk")
+        sink.shutdown()
+
+        mock_client.flush.assert_called_once()
+        mock_client.shutdown.assert_called_once()

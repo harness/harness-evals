@@ -3,6 +3,7 @@
 import pytest
 
 from harness_evals import EvalCase
+from harness_evals.core.types import ToolCall
 from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from tests.conftest import MockLLM
@@ -18,10 +19,8 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search", "summarize", "respond"],
-                "expected_tools": ["search", "summarize", "respond"],
-            },
+            tool_calls=[ToolCall(name="search"), ToolCall(name="summarize"), ToolCall(name="respond")],
+            expected_tools=["search", "summarize", "respond"],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.passed
@@ -31,10 +30,8 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search", "wrong_tool", "respond"],
-                "expected_tools": ["search", "summarize", "respond"],
-            },
+            tool_calls=[ToolCall(name="search"), ToolCall(name="wrong_tool"), ToolCall(name="respond")],
+            expected_tools=["search", "summarize", "respond"],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert abs(score.value - 2 / 3) < 0.01
@@ -43,10 +40,8 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["a", "b"],
-                "expected_tools": ["x", "y"],
-            },
+            tool_calls=[ToolCall(name="a"), ToolCall(name="b")],
+            expected_tools=["x", "y"],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.value == 0.0
@@ -55,10 +50,8 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search"],
-                "expected_tools": ["search", "summarize", "respond"],
-            },
+            tool_calls=[ToolCall(name="search")],
+            expected_tools=["search", "summarize", "respond"],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert abs(score.value - 1 / 3) < 0.01
@@ -67,10 +60,13 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search", "summarize", "respond", "extra"],
-                "expected_tools": ["search", "summarize", "respond"],
-            },
+            tool_calls=[
+                ToolCall(name="search"),
+                ToolCall(name="summarize"),
+                ToolCall(name="respond"),
+                ToolCall(name="extra"),
+            ],
+            expected_tools=["search", "summarize", "respond"],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert abs(score.value - 3 / 4) < 0.01
@@ -79,23 +75,23 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={"tools_called": ["search"]},
+            tool_calls=[ToolCall(name="search")],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.value == 0.0
         assert "expected_tools" in score.reason
 
-    def test_missing_tools_called(self):
+    def test_missing_tool_calls(self):
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={"expected_tools": ["search"]},
+            expected_tools=["search"],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.value == 0.0
-        assert "tools_called" in score.reason
+        assert "tool_calls" in score.reason
 
-    def test_no_metadata(self):
+    def test_no_fields(self):
         ec = EvalCase(input="task", output="result")
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.value == 0.0
@@ -104,7 +100,8 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={"tools_called": [], "expected_tools": []},
+            tool_calls=[],
+            expected_tools=[],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.value == 1.0
@@ -113,7 +110,8 @@ class TestToolCorrectnessExact:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={"tools_called": ["search"], "expected_tools": []},
+            tool_calls=[ToolCall(name="search")],
+            expected_tools=[],
         )
         score = ToolCorrectnessMetric(mode="exact").measure(ec)
         assert score.value == 0.0
@@ -130,10 +128,13 @@ class TestToolCorrectnessSubset:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search", "summarize", "respond", "log"],
-                "expected_tools": ["search", "respond"],
-            },
+            tool_calls=[
+                ToolCall(name="search"),
+                ToolCall(name="summarize"),
+                ToolCall(name="respond"),
+                ToolCall(name="log"),
+            ],
+            expected_tools=["search", "respond"],
         )
         score = ToolCorrectnessMetric(mode="subset").measure(ec)
         assert score.passed
@@ -143,10 +144,8 @@ class TestToolCorrectnessSubset:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search", "log"],
-                "expected_tools": ["search", "summarize", "respond"],
-            },
+            tool_calls=[ToolCall(name="search"), ToolCall(name="log")],
+            expected_tools=["search", "summarize", "respond"],
         )
         score = ToolCorrectnessMetric(mode="subset").measure(ec)
         assert abs(score.value - 1 / 3) < 0.01
@@ -157,10 +156,8 @@ class TestToolCorrectnessSubset:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["a", "b"],
-                "expected_tools": ["x", "y"],
-            },
+            tool_calls=[ToolCall(name="a"), ToolCall(name="b")],
+            expected_tools=["x", "y"],
         )
         score = ToolCorrectnessMetric(mode="subset").measure(ec)
         assert score.value == 0.0
@@ -169,10 +166,8 @@ class TestToolCorrectnessSubset:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search"],
-                "expected_tools": ["search", "search"],
-            },
+            tool_calls=[ToolCall(name="search")],
+            expected_tools=["search", "search"],
         )
         score = ToolCorrectnessMetric(mode="subset").measure(ec)
         assert score.value == 0.5
@@ -182,10 +177,8 @@ class TestToolCorrectnessSubset:
         ec = EvalCase(
             input="task",
             output="result",
-            metadata={
-                "tools_called": ["search", "search", "respond"],
-                "expected_tools": ["search", "search"],
-            },
+            tool_calls=[ToolCall(name="search"), ToolCall(name="search"), ToolCall(name="respond")],
+            expected_tools=["search", "search"],
         )
         score = ToolCorrectnessMetric(mode="subset").measure(ec)
         assert score.value == 1.0

@@ -15,6 +15,7 @@ class Golden:
     input: str | dict | list
     expected: str | dict | list | None = None
     context: list[str] | None = None
+    expected_tools: list[str] | None = None
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
 

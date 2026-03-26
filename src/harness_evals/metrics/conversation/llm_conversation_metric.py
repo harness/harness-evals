@@ -19,7 +19,7 @@ _RESPONSE_SCHEMA = {
 
 
 class LLMConversationMetric(BaseMetric):
-    """Base for LLM-judged metrics that read ``metadata["conversation"]``.
+    """Base for LLM-judged metrics that read ``eval_case.messages``.
 
     Subclasses only need to set ``name`` and provide a ``_prompt_template``
     class attribute containing a ``{conversation_text}`` placeholder.
@@ -35,19 +35,17 @@ class LLMConversationMetric(BaseMetric):
         return _run_async(self.a_measure(eval_case))
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
-        conversation: list[dict] | None = eval_case.meta("conversation")
+        messages = eval_case.messages
 
-        if not conversation or len(conversation) < 2:
+        if not messages or len(messages) < 2:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="metadata['conversation'] missing or has fewer than 2 turns",
+                reason="messages missing or has fewer than 2 turns",
             )
 
-        conversation_text = "\n".join(
-            f"[{turn.get('role', 'unknown')}]: {turn.get('content', '')}" for turn in conversation
-        )
+        conversation_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
         prompt = self._prompt_template.format(conversation_text=conversation_text)
 
         result = await self.llm.generate_json(prompt, _RESPONSE_SCHEMA)
@@ -59,5 +57,5 @@ class LLMConversationMetric(BaseMetric):
             value=value,
             threshold=self.threshold,
             reason=reasoning,
-            metadata={"n_turns": len(conversation)},
+            metadata={"n_turns": len(messages)},
         )

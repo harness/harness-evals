@@ -61,8 +61,8 @@ def _normalized_lcs(a: list[str], b: list[str]) -> float:
 class TrajectoryConsistencyMetric(ReliabilityMetric):
     """Action-path similarity across K runs.
 
-    Each run in ``eval_case.runs`` must have ``metadata["trajectory"]`` —
-    a ``list[str]`` of action names taken during that run.
+    Each run in ``eval_case.runs`` must have ``tool_calls`` — a list of
+    ``ToolCall`` objects.  Tool names are extracted to form the trajectory.
 
     Two modes:
 
@@ -103,10 +103,9 @@ class TrajectoryConsistencyMetric(ReliabilityMetric):
 
         trajectories: list[list[str]] = []
         for run in runs:
-            meta = run.metadata or {}
-            traj = meta.get("trajectory")
-            if traj is not None:
-                trajectories.append(self._truncate(list(traj)))
+            if run.tool_calls is not None:
+                traj = [tc.name for tc in run.tool_calls]
+                trajectories.append(self._truncate(traj))
 
         if len(trajectories) < 2:
             return Score(

@@ -6,4 +6,7 @@ from harness_evals.sinks.stdout import StdoutSink
 # OtlpSink is intentionally excluded — it requires the heavy `opentelemetry`
 # optional dependency (pip install harness-evals[otlp]).  Import it directly:
 #   from harness_evals.sinks.otlp_sink import OtlpSink
+#
+# LangfuseSink is also excluded — requires `langfuse` (pip install harness-evals[langfuse]):
+#   from harness_evals.sinks.langfuse_sink import LangfuseSink
 __all__ = ["StdoutSink", "JsonSink", "CsvSink", "JUnitSink"]

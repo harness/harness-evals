@@ -14,42 +14,39 @@ class TurnEfficiencyMetric(BaseMetric):
     resolution.  Conversations that resolve in fewer turns than expected
     are capped at 1.0 (no bonus for being faster).
 
-    Reads ``metadata["actual_turns"]`` (int) and
-    ``metadata["expected_turns"]`` (int).
+    Derives ``actual_turns`` from ``len(eval_case.messages)`` and reads
+    ``metadata["expected_turns"]`` (int) for the target.
     """
 
     def __init__(self, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="turn_efficiency", threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
-        actual = eval_case.meta("actual_turns")
+        if not eval_case.messages:
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason="messages is empty or not provided",
+            )
+
+        actual = len(eval_case.messages)
         expected = eval_case.meta("expected_turns")
 
-        if actual is None or expected is None:
+        if expected is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason='metadata must contain "actual_turns" and "expected_turns"',
+                reason='metadata must contain "expected_turns"',
             )
 
-        if not isinstance(actual, (int, float)) or not isinstance(expected, (int, float)):
+        if not isinstance(expected, (int, float)):
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=(
-                    f"actual_turns and expected_turns must be numeric, "
-                    f"got {type(actual).__name__} and {type(expected).__name__}"
-                ),
-            )
-
-        if actual <= 0:
-            return Score(
-                name=self.name,
-                value=0.0,
-                threshold=self.threshold,
-                reason=f"actual_turns must be > 0, got {actual}",
+                reason=f"expected_turns must be numeric, got {type(expected).__name__}",
             )
 
         if expected <= 0:

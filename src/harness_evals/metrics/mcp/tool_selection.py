@@ -12,8 +12,8 @@ from harness_evals.core.score import Score
 class ToolSelectionAccuracyMetric(BaseMetric):
     """Fraction of tool calls matching expected tools (Jaccard over multisets).
 
-    Reads ``metadata["mcp_trace"]`` (list of ``{"tool": str, ...}`` dicts)
-    and ``metadata["expected_tools"]`` (list of tool name strings).
+    Reads ``eval_case.tool_calls`` (list of ``ToolCall``) and
+    ``eval_case.expected_tools`` (list of tool name strings).
 
     Score = ``|intersection| / |union|`` of tool name multisets.
     Returns 0.0 if either field is missing.
@@ -23,18 +23,15 @@ class ToolSelectionAccuracyMetric(BaseMetric):
         super().__init__(name="tool_selection_accuracy", threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
-        mcp_trace: list[dict] | None = eval_case.meta("mcp_trace")
-        expected_tools: list[str] | None = eval_case.meta("expected_tools")
-
-        if mcp_trace is None or expected_tools is None:
+        if eval_case.tool_calls is None or eval_case.expected_tools is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason='metadata must contain "mcp_trace" and "expected_tools"',
+                reason="tool_calls and expected_tools must both be provided on EvalCase",
             )
 
-        if not expected_tools and not mcp_trace:
+        if not eval_case.expected_tools and not eval_case.tool_calls:
             return Score(
                 name=self.name,
                 value=1.0,
@@ -42,9 +39,9 @@ class ToolSelectionAccuracyMetric(BaseMetric):
                 reason="No tools expected and none called",
             )
 
-        actual_names = [entry.get("tool", "") for entry in mcp_trace]
+        actual_names = [tc.name for tc in eval_case.tool_calls]
         actual_counts = Counter(actual_names)
-        expected_counts = Counter(expected_tools)
+        expected_counts = Counter(eval_case.expected_tools)
 
         all_tools = set(actual_counts) | set(expected_counts)
         if not all_tools:
@@ -67,7 +64,7 @@ class ToolSelectionAccuracyMetric(BaseMetric):
             reason=f"Jaccard similarity: {intersection}/{union}",
             metadata={
                 "actual_tools": actual_names,
-                "expected_tools": expected_tools,
+                "expected_tools": eval_case.expected_tools,
                 "intersection": intersection,
                 "union": union,
             },

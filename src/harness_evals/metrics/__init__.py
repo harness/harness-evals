@@ -10,9 +10,11 @@ from harness_evals.metrics.conversation.resolution import ConversationResolution
 from harness_evals.metrics.conversation.turn_efficiency import TurnEfficiencyMetric
 from harness_evals.metrics.deterministic.contains import ContainsMetric
 from harness_evals.metrics.deterministic.exact_match import ExactMatchMetric
+from harness_evals.metrics.deterministic.list_contains import ListContainsMetric
 from harness_evals.metrics.deterministic.numeric_diff import NumericDiffMetric
 from harness_evals.metrics.deterministic.regex_match import RegexMetric
 from harness_evals.metrics.llm_judge.geval import GEvalMetric
+from harness_evals.metrics.llm_judge.pairwise import PairwiseMetric
 from harness_evals.metrics.llm_judge.rubric_judge import RubricJudgeMetric
 from harness_evals.metrics.mcp.tool_selection import ToolSelectionAccuracyMetric
 from harness_evals.metrics.mcp.trace_completeness import MCPTraceCompletenessMetric
@@ -20,9 +22,13 @@ from harness_evals.metrics.operational.cost_efficiency import CostEfficiencyMetr
 from harness_evals.metrics.operational.latency import LatencyMetric
 from harness_evals.metrics.operational.retry_count import RetryCountMetric
 from harness_evals.metrics.operational.token_cost import TokenCostMetric
+from harness_evals.metrics.rag.answer_correctness import AnswerCorrectnessMetric
 from harness_evals.metrics.rag.answer_relevancy import AnswerRelevancyMetric
+from harness_evals.metrics.rag.answer_similarity import AnswerSimilarityMetric
+from harness_evals.metrics.rag.context_entity_recall import ContextEntityRecallMetric
 from harness_evals.metrics.rag.context_precision import ContextPrecisionMetric
 from harness_evals.metrics.rag.context_recall import ContextRecallMetric
+from harness_evals.metrics.rag.context_relevancy import ContextRelevancyMetric
 from harness_evals.metrics.rag.faithfulness import FaithfulnessMetric
 from harness_evals.metrics.reliability.brier_score import BrierScoreMetric
 from harness_evals.metrics.reliability.calibration import CalibrationMetric
@@ -41,6 +47,9 @@ from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
 from harness_evals.metrics.safety.toxicity import ToxicityMetric
+from harness_evals.metrics.similarity.bleu import BLEUMetric
+from harness_evals.metrics.similarity.embedding_similarity import EmbeddingSimilarityMetric
+from harness_evals.metrics.similarity.levenshtein import LevenshteinMetric
 from harness_evals.metrics.structural.json_diff import JsonDiffMetric
 from harness_evals.metrics.structural.schema_validation import SchemaValidationMetric
 
@@ -81,4 +90,13 @@ __all__ = [
     "TurnEfficiencyMetric",
     "ToolSelectionAccuracyMetric",
     "MCPTraceCompletenessMetric",
+    "ListContainsMetric",
+    "PairwiseMetric",
+    "LevenshteinMetric",
+    "BLEUMetric",
+    "EmbeddingSimilarityMetric",
+    "ContextRelevancyMetric",
+    "ContextEntityRecallMetric",
+    "AnswerSimilarityMetric",
+    "AnswerCorrectnessMetric",
 ]

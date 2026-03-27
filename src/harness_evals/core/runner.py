@@ -27,7 +27,8 @@ def evaluate(
     """Run all metrics on an eval case and return scores.
 
     Does NOT raise on failure — returns scores with passed=False instead.
-    Writes to all sinks after scoring.
+    Metrics that return ``None`` (not applicable) are excluded from the
+    result list.  Writes to all sinks after scoring.
 
     Note: ``finalize()`` is NOT called here. When using sinks with
     ``evaluate()`` in a loop, call ``sink.finalize()`` yourself after
@@ -45,7 +46,8 @@ def evaluate(
                 threshold=metric.threshold,
                 reason=f"Metric raised: {e}",
             )
-        scores.append(score)
+        if score is not None:
+            scores.append(score)
 
     if sinks:
         for sink in sinks:
@@ -65,6 +67,9 @@ async def a_evaluate(
     avoid the ``asyncio.run()`` crash that occurs when sync ``evaluate()``
     is called with LLM-judged metrics.
 
+    Metrics that return ``None`` (not applicable) are excluded from the
+    result list.
+
     Note: ``finalize()`` is NOT called here. When using sinks with
     ``evaluate()`` or ``a_evaluate()`` in a loop, call
     ``sink.finalize()`` yourself after all cases are processed.
@@ -82,7 +87,8 @@ async def a_evaluate(
                 threshold=metric.threshold,
                 reason=f"Metric raised: {e}",
             )
-        scores.append(score)
+        if score is not None:
+            scores.append(score)
 
     if sinks:
         for sink in sinks:
@@ -150,7 +156,7 @@ def evaluate_batch_metrics(
         try:
             score = metric.measure_dataset(cases, outcomes)
             if score is None:
-                case_scores = [metric.measure(c) for c in cases]
+                case_scores = [s for c in cases if (s := metric.measure(c)) is not None]
                 avg = sum(s.value for s in case_scores) / len(case_scores) if case_scores else 0.0
                 score = Score(
                     name=metric.name,

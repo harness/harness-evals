@@ -35,18 +35,17 @@ class RobustnessMetric(BaseMetric):
     """
 
     def measure(self, eval_case: EvalCase) -> Score:
-        meta = eval_case.metadata or {}
+        _sentinel = object()
+        nominal_passed = eval_case.meta("nominal_passed", _sentinel)
+        perturbed_results = eval_case.meta("perturbed_results", _sentinel)
 
-        if "nominal_passed" not in meta or "perturbed_results" not in meta:
+        if nominal_passed is _sentinel or perturbed_results is _sentinel:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
                 reason='metadata must contain "nominal_passed" (bool) and "perturbed_results" (list[bool])',
             )
-
-        nominal_passed: bool = meta["nominal_passed"]
-        perturbed_results: list[bool] = meta["perturbed_results"]
 
         if not perturbed_results:
             return Score(

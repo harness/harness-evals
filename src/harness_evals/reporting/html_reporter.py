@@ -41,15 +41,43 @@ class EvalResult:
     variant: str = ""
     label: str = ""
 
+    @staticmethod
+    def _extract_metadata(
+        metadata: dict,
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """Split metadata into normalised scores ([0, 1]) and raw info values."""
+        scores: dict[str, float] = {}
+        info: dict[str, float] = {}
+        for k, v in metadata.items():
+            if isinstance(v, (int, float)):
+                fv = float(v)
+                (scores if 0.0 <= fv <= 1.0 else info)[k] = fv
+            elif isinstance(v, dict):
+                for nk, nv in v.items():
+                    if isinstance(nv, (int, float)):
+                        fv = float(nv)
+                        (scores if 0.0 <= fv <= 1.0 else info)[nk] = fv
+        return scores, info
+
     @property
     def scores_dict(self) -> dict[str, float]:
-        result = {}
+        """Normalised scores (0–1 range) for percentage display."""
+        result: dict[str, float] = {}
         for s in self.scores:
             result[s.name] = s.value
             if s.metadata:
-                for k, v in s.metadata.items():
-                    if isinstance(v, (int, float)):
-                        result[k] = float(v)
+                sub_scores, _ = self._extract_metadata(s.metadata)
+                result.update(sub_scores)
+        return result
+
+    @property
+    def info_dict(self) -> dict[str, float]:
+        """Raw informational values (e.g. latency_ms) for display as-is."""
+        result: dict[str, float] = {}
+        for s in self.scores:
+            if s.metadata:
+                _, info = self._extract_metadata(s.metadata)
+                result.update(info)
         return result
 
 
@@ -115,15 +143,35 @@ def _score_cell(v: float) -> str:
     )
 
 
-def _metric_row(label: str, values: dict[str, float | None], variants: list[str]) -> str:
+def _info_cell(v: float) -> str:
+    """Render a raw informational value (not a percentage)."""
+    if v >= 1000:
+        display = f"{v:,.0f}"
+    elif v >= 1:
+        display = f"{v:,.1f}"
+    else:
+        display = f"{v:.4f}"
+    return (
+        f'<td style="padding:8px 12px;text-align:center">'
+        f'<div style="font-size:16px;font-weight:600;color:#475569">{display}</div></td>'
+    )
+
+
+def _metric_row(
+    label: str,
+    values: dict[str, float | None],
+    variants: list[str],
+    is_info: bool = False,
+) -> str:
     cells = (
         f'<td style="padding:8px 12px;font-size:13px;font-weight:500;'
         f'color:#374151;white-space:nowrap">{html_mod.escape(label)}</td>'
     )
+    render = _info_cell if is_info else _score_cell
     for v in variants:
         val = values.get(v)
         if val is not None:
-            cells += _score_cell(val)
+            cells += render(val)
         else:
             cells += '<td style="padding:8px;text-align:center;color:#9ca3af">\u2014</td>'
     return f'<tr style="border-bottom:1px solid #f3f4f6">{cells}</tr>'
@@ -476,6 +524,7 @@ class HtmlReporter:
         for group_key, results in groups.items():
             label = results[0].label or group_key
             by_variant = {r.variant: r.scores_dict for r in results}
+            by_variant_info = {r.variant: r.info_dict for r in results}
 
             # Variant column headers
             cols = variants if variants else list(by_variant.keys())
@@ -518,6 +567,29 @@ class HtmlReporter:
                         cat_rows += _metric_row(display_name, values, cols)
                 if cat_rows:
                     metric_rows += _section_header(cat_name, n_cols) + cat_rows
+
+            # Info rows — raw values displayed as-is (e.g. latency_ms)
+            all_info_keys: list[str] = []
+            seen: set[str] = set()
+            for info in by_variant_info.values():
+                for k in info:
+                    if k not in seen:
+                        all_info_keys.append(k)
+                        seen.add(k)
+            if all_info_keys:
+                info_rows = ""
+                for key in all_info_keys:
+                    values = {v: by_variant_info.get(v, {}).get(key) for v in cols}
+                    if any(val is not None for val in values.values()):
+                        unit = ""
+                        if key.endswith("_ms"):
+                            unit = " (ms)"
+                        elif key.endswith("_s"):
+                            unit = " (s)"
+                        display_name = key.replace("_", " ").title() + unit
+                        info_rows += _metric_row(display_name, values, cols, is_info=True)
+                if info_rows:
+                    metric_rows += _section_header("Info", n_cols) + info_rows
 
             sections.append(f"""
             <div style="background:white;border:1px solid #e2e8f0;border-radius:12px;padding:0;

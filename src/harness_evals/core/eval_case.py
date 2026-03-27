@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -29,6 +30,59 @@ class EvalCase:
     metadata: dict[str, Any] | None = field(default=None)
     runs: list[EvalCase] | None = field(default=None)
 
+    def meta(self, key: str, default: Any = None) -> Any:
+        """Safely retrieve a metadata value without ``(self.metadata or {})`` boilerplate."""
+        return (self.metadata or {}).get(key, default)
+
+    def output_as_str(self) -> str:
+        """Return output as a string, JSON-encoding dicts/lists."""
+        if isinstance(self.output, str):
+            return self.output
+        return json.dumps(self.output, ensure_ascii=False)
+
+    def output_as_dict(self) -> dict:
+        """Return output as a dict, parsing JSON strings.
+
+        Raises ``TypeError`` if output is a list or parses to a non-dict.
+        Raises ``json.JSONDecodeError`` if output is an unparseable string.
+        """
+        if isinstance(self.output, dict):
+            return self.output
+        if isinstance(self.output, str):
+            parsed = json.loads(self.output)
+            if not isinstance(parsed, dict):
+                raise TypeError(f"output parsed to {type(parsed).__name__}, expected dict")
+            return parsed
+        raise TypeError(f"output is {type(self.output).__name__}, expected str or dict")
+
+    def expected_as_str(self) -> str:
+        """Return expected as a string, JSON-encoding dicts/lists.
+
+        Raises ``TypeError`` if expected is ``None``.
+        """
+        if self.expected is None:
+            raise TypeError("expected is None")
+        if isinstance(self.expected, str):
+            return self.expected
+        return json.dumps(self.expected, ensure_ascii=False)
+
+    def expected_as_dict(self) -> dict:
+        """Return expected as a dict, parsing JSON strings.
+
+        Raises ``TypeError`` if expected is ``None``, a list, or parses to a non-dict.
+        Raises ``json.JSONDecodeError`` if expected is an unparseable string.
+        """
+        if self.expected is None:
+            raise TypeError("expected is None")
+        if isinstance(self.expected, dict):
+            return self.expected
+        if isinstance(self.expected, str):
+            parsed = json.loads(self.expected)
+            if not isinstance(parsed, dict):
+                raise TypeError(f"expected parsed to {type(parsed).__name__}, expected dict")
+            return parsed
+        raise TypeError(f"expected is {type(self.expected).__name__}, expected str or dict")
+
     def to_dict(self) -> dict:
         result = {}
         for k, v in asdict(self).items():
@@ -55,14 +109,29 @@ class EvalCase:
         return cls(**{k: v for k, v in mapped.items() if k in known})
 
     @classmethod
-    def from_golden(cls, golden: Golden, output: str | dict | list, **kwargs: Any) -> EvalCase:
-        """Create an EvalCase by combining a Golden with agent output."""
+    def from_golden(
+        cls,
+        golden: Golden,
+        output: str | dict | list,
+        *,
+        metadata_extra: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalCase:
+        """Create an EvalCase by combining a Golden with agent output.
+
+        ``metadata_extra`` is merged on top of ``golden.metadata``, so
+        runtime keys (model name, conversation ID, etc.) win on conflicts.
+        """
+        if golden.metadata or metadata_extra:
+            merged_meta = {**(golden.metadata or {}), **(metadata_extra or {})}
+        else:
+            merged_meta = None
         return cls(
             input=golden.input,
             output=output,
             expected=golden.expected,
             context=golden.context,
             tags=golden.tags,
-            metadata=golden.metadata,
+            metadata=merged_meta,
             **kwargs,
         )

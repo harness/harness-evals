@@ -10,8 +10,12 @@ class BaseMetric(ABC):
     """Base class for all evaluation metrics.
 
     Subclasses implement ``measure()`` (sync) which takes an EvalCase and
-    returns a Score. For I/O-bound metrics (LLM-judged), override
-    ``a_measure()`` instead — the default calls ``measure()`` synchronously.
+    returns a Score — or ``None`` to signal that the metric does not apply
+    to this particular case (e.g. missing metadata).  Skipped (``None``)
+    results are excluded from aggregation and do not count as failures.
+
+    For I/O-bound metrics (LLM-judged), override ``a_measure()`` instead —
+    the default calls ``measure()`` synchronously.
     """
 
     def __init__(self, name: str, threshold: float = 1.0, **kwargs: object) -> None:
@@ -19,11 +23,11 @@ class BaseMetric(ABC):
         self.threshold = threshold
 
     @abstractmethod
-    def measure(self, eval_case: EvalCase) -> Score:
-        """Evaluate the case and return a Score. Sync — override for deterministic metrics."""
+    def measure(self, eval_case: EvalCase) -> Score | None:
+        """Evaluate the case and return a Score, or ``None`` to skip."""
         ...
 
-    async def a_measure(self, eval_case: EvalCase) -> Score:
+    async def a_measure(self, eval_case: EvalCase) -> Score | None:
         """Async variant. Override for I/O-bound metrics (LLM-judged). Default calls measure()."""
         return self.measure(eval_case)
 
@@ -59,15 +63,15 @@ class ReliabilityMetric(BaseMetric):
         self.k = k
 
     @abstractmethod
-    def measure_runs(self, eval_case: EvalCase) -> Score:
+    def measure_runs(self, eval_case: EvalCase) -> Score | None:
         """Evaluate across eval_case.runs. Called by measure() when runs are present."""
         ...
 
-    async def a_measure_runs(self, eval_case: EvalCase) -> Score:
+    async def a_measure_runs(self, eval_case: EvalCase) -> Score | None:
         """Async variant of measure_runs(). Default calls measure_runs()."""
         return self.measure_runs(eval_case)
 
-    def measure(self, eval_case: EvalCase) -> Score:
+    def measure(self, eval_case: EvalCase) -> Score | None:
         if eval_case.runs:
             return self.measure_runs(eval_case)
         return Score(
@@ -77,7 +81,7 @@ class ReliabilityMetric(BaseMetric):
             reason=f"No runs provided (expected {self.k})",
         )
 
-    async def a_measure(self, eval_case: EvalCase) -> Score:
+    async def a_measure(self, eval_case: EvalCase) -> Score | None:
         if eval_case.runs:
             return await self.a_measure_runs(eval_case)
         return Score(

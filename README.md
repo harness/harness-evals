@@ -7,7 +7,11 @@ Every metric produces a normalized `Score` (0.0–1.0). Pass/fail is determined 
 ## Install
 
 ```bash
-pip install harness-evals
+pip install harness-evals            # core only
+pip install harness-evals[llm]       # + LLM-judged metrics (OpenAI, Anthropic)
+pip install harness-evals[langfuse]  # + Langfuse source/sink
+pip install harness-evals[similarity]# + BLEU metric (nltk)
+pip install harness-evals[all]       # everything
 ```
 
 ## Core Concepts
@@ -18,16 +22,23 @@ pip install harness-evals
 
 **`BaseMetric`** — a scoring function. Takes an `EvalCase`, returns a `Score`. Each metric is a single class with a `measure()` method. Specialized base classes: `ReliabilityMetric` for multi-run metrics, `SafetyMetric` for safety metrics (reported separately, never averaged).
 
+**`Message`** — a conversation turn: role, content, and optional tool calls. Maps to OpenAI chat messages, Langfuse generations, OTEL LLM spans.
+
+**`ToolCall`** — a tool/function invocation: name, input, output. Maps to OpenAI function calls, Anthropic tool_use blocks, MCP invocations.
+
 **`Score`** — the result: a value between 0.0 and 1.0, a threshold, and an auto-computed `passed` boolean.
 
 **`evaluate()`** — runs multiple metrics on an eval case. Never raises — returns all scores including failures.
 
 **`assert_test()`** — same as `evaluate()`, but raises `AssertionError` if any metric fails. Drop it into pytest.
 
+**Sources** — adapters that hydrate `EvalCase` from production trace data. `LangfuseSource` and `OTELSource` map traces to typed fields automatically.
+
 ### Data Flow
 
 ```
-Golden (authored) + agent output → EvalCase (evaluated) → Score (result)
+Golden (authored) + agent output → EvalCase → Score (result)
+Production traces (Langfuse/OTEL) → Source → EvalCase → Score (result)
 ```
 
 ## Usage
@@ -127,15 +138,105 @@ ec = EvalCase(input="task", output=runs[0].output, runs=runs)
 scores = evaluate(ec, metrics=[OutcomeConsistencyMetric(threshold=0.8)])
 ```
 
+### Evaluate with typed tool calls
+
+```python
+from harness_evals import EvalCase, ToolCall, evaluate
+from harness_evals.metrics import ToolCorrectnessMetric
+
+ec = EvalCase(
+    input="Check weather in Paris",
+    output="It's 18C and sunny",
+    tool_calls=[ToolCall(name="get_weather", input={"city": "Paris"})],
+    expected_tools=["get_weather"],
+)
+scores = evaluate(ec, metrics=[ToolCorrectnessMetric()])
+```
+
+### Evaluate conversation messages
+
+```python
+from harness_evals import EvalCase, Message
+
+ec = EvalCase(
+    input="Help me debug this error",
+    output="The issue is a null pointer...",
+    messages=[
+        Message(role="user", content="Help me debug this error"),
+        Message(role="assistant", content="Can you share the stack trace?"),
+        Message(role="user", content="Here it is: NullPointerException at..."),
+        Message(role="assistant", content="The issue is a null pointer..."),
+    ],
+)
+```
+
+### Evaluate production traces from Langfuse
+
+```python
+from harness_evals.sources.langfuse import LangfuseSource
+from harness_evals import evaluate
+from harness_evals.metrics import FaithfulnessMetric, LatencyMetric, PIIMetric
+from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+source = LangfuseSource(langfuse_client)
+ec = source.from_trace("trace-id-123")
+
+scores = evaluate(ec, metrics=[
+    FaithfulnessMetric(llm=llm),
+    LatencyMetric(max_ms=3000),
+    PIIMetric(),
+], sinks=[LangfuseSink()])  # scores written back to the same trace
+```
+
+### Batch-evaluate Langfuse traces by filter
+
+```python
+from harness_evals.sources.langfuse import LangfuseSource
+from harness_evals import evaluate_cases
+from harness_evals.metrics import LatencyMetric, PIIMetric
+from harness_evals.sinks.langfuse_sink import LangfuseSink
+
+source = LangfuseSource(langfuse_client)
+cases = source.from_traces(tags=["production"], user_id="user_123", limit=50)
+
+all_scores = evaluate_cases(cases, metrics=[
+    LatencyMetric(max_ms=3000),
+    PIIMetric(),
+], sinks=[LangfuseSink()])
+```
+
+### Evaluate production traces from OpenTelemetry
+
+```python
+from harness_evals.sources.otel import OTELSource
+
+ec = OTELSource.from_spans(collected_spans)
+scores = evaluate(ec, metrics=[...])
+```
+
 ### Write results to a file
 
 ```python
 from harness_evals.sinks import StdoutSink, JsonSink
+from harness_evals.sinks.langfuse_sink import LangfuseSink
 
 scores = evaluate(ec, metrics=[...], sinks=[
     StdoutSink(),
     JsonSink("results/scores.jsonl"),
+    LangfuseSink(),  # requires pip install harness-evals[langfuse]
 ])
+```
+
+### Summarize results across a dataset
+
+```python
+from harness_evals import evaluate_cases, summarize
+
+all_scores = evaluate_cases(eval_cases, metrics=[...])
+summary = summarize(all_scores)
+
+for name, m in summary.by_metric.items():
+    print(f"{name}: mean={m.mean:.2f} pass_rate={m.pass_rate:.0%} ({m.count} cases)")
 ```
 
 ## Available Metrics
@@ -147,8 +248,9 @@ scores = evaluate(ec, metrics=[...], sinks=[
 | **Operational** | Latency, TokenCost, CostEfficiency, RetryCount | Performance and cost from typed fields |
 | **Reliability** | OutcomeConsistency, ResourceConsistency | Consistency across repeated runs |
 | **Predictability** | Calibration, Discrimination | Expected calibration error and AUC-ROC over confidence scores |
-| **LLM-Judged** | GEval, RubricJudge | LLM scores output against criteria or rubric (requires `[llm]`) |
-| **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall | Retrieval-augmented generation quality (requires `[llm]`) |
+| **Similarity** | Levenshtein, BLEU, EmbeddingSimilarity | String distance, n-gram overlap, and semantic vector similarity |
+| **LLM-Judged** | GEval, RubricJudge, Pairwise | LLM scores output against criteria, rubric, or A/B comparison (requires `[llm]`) |
+| **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, AnswerCorrectness, AnswerSimilarity, ContextEntityRecall, ContextRelevancy | Retrieval-augmented generation quality (requires `[llm]`) |
 | **Safety** | PIIMetric, ToxicityMetric, PromptInjectionMetric, HallucinationMetric | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
 | **Agent** | ToolCorrectnessMetric, TaskCompletionMetric | Tool call sequence correctness and LLM-judged task completion |
 
@@ -160,6 +262,9 @@ EvalCase(
     output="what the agent produced",              # required
     expected="ground truth",                       # optional (not needed for LLM-judged metrics)
     context=["retrieved doc 1", "retrieved doc 2"],# optional (for RAG metrics)
+    messages=[Message(role="user", content="...")], # optional (for conversation metrics)
+    tool_calls=[ToolCall(name="fn", input={...})], # optional (for agent/tool metrics)
+    expected_tools=["fn1", "fn2"],                 # optional (expected tool names)
     latency_ms=320,                                # optional (typed, for LatencyMetric)
     token_count=150,                               # optional (typed, for TokenCostMetric)
     cost_usd=0.003,                                # optional (typed, for CostEfficiencyMetric)
@@ -170,6 +275,8 @@ EvalCase(
     runs=[...],                                    # optional (for reliability metrics)
 )
 ```
+
+`Golden` also supports `expected_tools` for defining expected tool names in datasets.
 
 ## Extending
 
@@ -184,9 +291,10 @@ class MyMetric(BaseMetric):
     def __init__(self, threshold: float = 0.8):
         super().__init__(name="my_metric", threshold=threshold)
 
-    def measure(self, eval_case: EvalCase) -> Score:
+    def measure(self, eval_case: EvalCase) -> Score | None:
         value = compute_something(eval_case)  # return 0.0–1.0
         return Score(name=self.name, value=value, threshold=self.threshold)
+        # return None to skip this case (excluded from aggregation)
 ```
 
 ### Custom sink

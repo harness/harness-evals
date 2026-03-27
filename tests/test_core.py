@@ -7,7 +7,9 @@ import pytest
 from harness_evals import (
     EvalCase,
     Golden,
+    Message,
     Score,
+    ToolCall,
     a_evaluate,
     assert_test,
     evaluate,
@@ -71,6 +73,19 @@ class TestGolden:
         g = Golden(input="q")
         assert g.meta("any_key") is None
         assert g.meta("any_key", 42) == 42
+
+    def test_expected_tools(self):
+        g = Golden(input="q", expected_tools=["search", "read"])
+        assert g.expected_tools == ["search", "read"]
+
+    def test_expected_tools_to_dict(self):
+        g = Golden(input="q", expected_tools=["search"])
+        d = g.to_dict()
+        assert d["expected_tools"] == ["search"]
+
+    def test_expected_tools_from_dict(self):
+        g = Golden.from_dict({"input": "q", "expected_tools": ["search", "read"]})
+        assert g.expected_tools == ["search", "read"]
 
 
 @pytest.mark.unit
@@ -151,6 +166,61 @@ class TestEvalCase:
         g = Golden(input="q", expected="a")
         ec = EvalCase.from_golden(g, output="a")
         assert ec.metadata is None
+
+    def test_from_golden_copies_expected_tools(self):
+        g = Golden(input="q", expected="a", expected_tools=["search", "read"])
+        ec = EvalCase.from_golden(g, output="a")
+        assert ec.expected_tools == ["search", "read"]
+
+    def test_messages_field(self):
+        msgs = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
+        ec = EvalCase(input="q", output="a", messages=msgs)
+        assert len(ec.messages) == 2
+        assert ec.messages[0].role == "user"
+
+    def test_tool_calls_field(self):
+        tcs = [ToolCall(name="search", input={"q": "foo"})]
+        ec = EvalCase(input="q", output="a", tool_calls=tcs)
+        assert len(ec.tool_calls) == 1
+        assert ec.tool_calls[0].name == "search"
+
+    def test_expected_tools_field(self):
+        ec = EvalCase(input="q", output="a", expected_tools=["search"])
+        assert ec.expected_tools == ["search"]
+
+    def test_from_dict_deserializes_messages(self):
+        ec = EvalCase.from_dict(
+            {
+                "input": "q",
+                "output": "a",
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "hello"},
+                ],
+            }
+        )
+        assert len(ec.messages) == 2
+        assert isinstance(ec.messages[0], Message)
+        assert ec.messages[0].role == "user"
+
+    def test_from_dict_deserializes_tool_calls(self):
+        ec = EvalCase.from_dict(
+            {
+                "input": "q",
+                "output": "a",
+                "tool_calls": [
+                    {"name": "search", "input": {"q": "foo"}},
+                ],
+            }
+        )
+        assert len(ec.tool_calls) == 1
+        assert isinstance(ec.tool_calls[0], ToolCall)
+        assert ec.tool_calls[0].name == "search"
+
+    def test_from_dict_passes_through_message_objects(self):
+        msgs = [Message(role="user", content="hi")]
+        ec = EvalCase.from_dict({"input": "q", "output": "a", "messages": msgs})
+        assert ec.messages[0] is msgs[0]
 
     def test_to_dict_omits_none(self):
         ec = EvalCase(input="q", output="a")

@@ -3,13 +3,18 @@
 import pytest
 
 from harness_evals.core.eval_case import EvalCase
+from harness_evals.core.types import ToolCall
 from harness_evals.metrics.reliability.trajectory_consistency import (
     TrajectoryConsistencyMetric,
 )
 
 
 def _run_with_traj(trajectory: list[str]) -> EvalCase:
-    return EvalCase(input="q", output="a", metadata={"trajectory": trajectory})
+    return EvalCase(
+        input="q",
+        output="a",
+        tool_calls=[ToolCall(name=t) for t in trajectory],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -173,13 +178,13 @@ class TestTrajectoryEdgeCases:
         with pytest.raises(ValueError, match="mode must be"):
             TrajectoryConsistencyMetric(mode="invalid")
 
-    def test_missing_trajectory_metadata(self):
+    def test_missing_tool_calls(self):
         ec = EvalCase(
             input="q",
             output="a",
             runs=[
-                EvalCase(input="q", output="a", metadata={}),
-                EvalCase(input="q", output="a", metadata={}),
+                EvalCase(input="q", output="a"),
+                EvalCase(input="q", output="a"),
             ],
         )
         metric = TrajectoryConsistencyMetric(mode="distributional")

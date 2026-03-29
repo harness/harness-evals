@@ -243,16 +243,18 @@ for name, m in summary.by_metric.items():
 
 | Category | Metrics | What They Measure |
 |----------|---------|------------------|
-| **Deterministic** | ExactMatch, Contains, Regex, NumericDiff | Exact comparison against expected output |
+| **Deterministic** | ExactMatch, Contains, Regex, NumericDiff, ListContains | Exact comparison against expected output |
 | **Structural** | JsonDiff, SchemaValidation | Structural similarity and schema conformance for JSON/YAML |
 | **Operational** | Latency, TokenCost, CostEfficiency, RetryCount | Performance and cost from typed fields |
-| **Reliability** | OutcomeConsistency, ResourceConsistency | Consistency across repeated runs |
+| **Reliability** | OutcomeConsistency, ResourceConsistency, TrajectoryConsistency, PromptRobustness, EnvironmentRobustness, FaultRobustness, BrierScore | Consistency across repeated runs, trajectory similarity, robustness to prompt/environment/fault perturbations |
 | **Predictability** | Calibration, Discrimination | Expected calibration error and AUC-ROC over confidence scores |
+| **MCP** | ToolSelectionAccuracy, MCPTraceCompleteness | MCP tool selection accuracy and trace completeness |
 | **Similarity** | Levenshtein, BLEU, EmbeddingSimilarity | String distance, n-gram overlap, and semantic vector similarity |
 | **LLM-Judged** | GEval, RubricJudge, Pairwise | LLM scores output against criteria, rubric, or A/B comparison (requires `[llm]`) |
 | **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, AnswerCorrectness, AnswerSimilarity, ContextEntityRecall, ContextRelevancy | Retrieval-augmented generation quality (requires `[llm]`) |
-| **Safety** | PIIMetric, ToxicityMetric, PromptInjectionMetric, HallucinationMetric | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
-| **Agent** | ToolCorrectnessMetric, TaskCompletionMetric | Tool call sequence correctness and LLM-judged task completion |
+| **Safety** | PII, Toxicity, PromptInjection, Hallucination | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
+| **Agent** | ToolCorrectness, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, task completion, argument validation, plan quality/adherence, step efficiency (requires `[llm]`) |
+| **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |
 
 ## EvalCase Fields
 

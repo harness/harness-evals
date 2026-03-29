@@ -84,12 +84,8 @@ class ToolUseMetric(BaseMetric):
                 reason="No tool calls found in conversation messages",
             )
 
-        conversation_text = "\n".join(
-            f"[{msg.role}]: {msg.content or ''}" for msg in messages
-        )
-        tool_calls_text = json.dumps(
-            [tc.to_dict() for tc in all_tool_calls], indent=2
-        )
+        conversation_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
+        tool_calls_text = json.dumps([tc.to_dict() for tc in all_tool_calls], indent=2)
 
         prompt = _PROMPT_TEMPLATE.format(
             conversation_text=conversation_text,

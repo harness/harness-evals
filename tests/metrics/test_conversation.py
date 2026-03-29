@@ -359,7 +359,8 @@ class TestRoleAdherence:
         llm = MockLLM(default={"reasoning": "Stays in character", "score": 0.95})
         metric = RoleAdherenceMetric(llm=llm, threshold=0.7)
         ec = EvalCase(
-            input="q", output="a",
+            input="q",
+            output="a",
             messages=COHERENT_MESSAGES,
             metadata={"chatbot_role": "A helpful geography tutor"},
         )
@@ -372,7 +373,8 @@ class TestRoleAdherence:
         llm = MockLLM(default={"reasoning": "Broke character", "score": 0.2})
         metric = RoleAdherenceMetric(llm=llm, threshold=0.7)
         ec = EvalCase(
-            input="q", output="a",
+            input="q",
+            output="a",
             messages=INCOHERENT_MESSAGES,
             metadata={"chatbot_role": "A geography tutor"},
         )
@@ -399,7 +401,8 @@ class TestRoleAdherence:
         llm = MockLLM()
         metric = RoleAdherenceMetric(llm=llm)
         ec = EvalCase(
-            input="q", output="a",
+            input="q",
+            output="a",
             messages=[Message(role="user", content="hi")],
             metadata={"chatbot_role": "tutor"},
         )
@@ -411,7 +414,8 @@ class TestRoleAdherence:
         llm = MockLLM(default={"reasoning": "ok", "score": 0.8})
         metric = RoleAdherenceMetric(llm=llm, threshold=0.7)
         ec = EvalCase(
-            input="q", output="a",
+            input="q",
+            output="a",
             messages=COHERENT_MESSAGES,
             metadata={"chatbot_role": "tutor"},
         )

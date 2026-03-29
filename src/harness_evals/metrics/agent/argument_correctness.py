@@ -67,9 +67,7 @@ class ArgumentCorrectnessMetric(BaseMetric):
                 reason="No tool_calls present to evaluate",
             )
 
-        tool_calls_text = json.dumps(
-            [tc.to_dict() for tc in tool_calls], indent=2
-        )
+        tool_calls_text = json.dumps([tc.to_dict() for tc in tool_calls], indent=2)
         prompt = _PROMPT_TEMPLATE.format(
             input=eval_case.input,
             tool_calls_text=tool_calls_text,

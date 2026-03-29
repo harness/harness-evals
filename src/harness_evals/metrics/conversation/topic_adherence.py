@@ -74,9 +74,7 @@ class TopicAdherenceMetric(BaseMetric):
                 reason="messages missing or has fewer than 2 turns",
             )
 
-        conversation_text = "\n".join(
-            f"[{msg.role}]: {msg.content or ''}" for msg in messages
-        )
+        conversation_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
         prompt = _PROMPT_TEMPLATE.format(
             allowed_topics=", ".join(self.allowed_topics),
             conversation_text=conversation_text,

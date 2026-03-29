@@ -81,9 +81,7 @@ class StepEfficiencyMetric(BaseMetric):
             )
 
         messages_text = (
-            "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
-            if messages
-            else "No messages recorded"
+            "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages) if messages else "No messages recorded"
         )
 
         tool_calls_list = tool_calls or []

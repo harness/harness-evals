@@ -77,15 +77,11 @@ class PlanAdherenceMetric(BaseMetric):
                 reason="No messages present to evaluate plan adherence",
             )
 
-        messages_text = "\n".join(
-            f"[{msg.role}]: {msg.content or ''}" for msg in messages
-        )
+        messages_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
 
         tool_calls = eval_case.tool_calls or []
         tool_calls_text = (
-            json.dumps([tc.to_dict() for tc in tool_calls], indent=2)
-            if tool_calls
-            else "No tool calls recorded"
+            json.dumps([tc.to_dict() for tc in tool_calls], indent=2) if tool_calls else "No tool calls recorded"
         )
 
         prompt = _PROMPT_TEMPLATE.format(

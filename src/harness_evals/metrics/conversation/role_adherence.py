@@ -71,9 +71,7 @@ class RoleAdherenceMetric(BaseMetric):
                 reason="chatbot_role missing from metadata",
             )
 
-        conversation_text = "\n".join(
-            f"[{msg.role}]: {msg.content or ''}" for msg in messages
-        )
+        conversation_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
         prompt = _PROMPT_TEMPLATE.format(
             chatbot_role=chatbot_role,
             conversation_text=conversation_text,

@@ -71,9 +71,7 @@ class PlanQualityMetric(BaseMetric):
                 reason="No messages present to evaluate plan quality",
             )
 
-        messages_text = "\n".join(
-            f"[{msg.role}]: {msg.content or ''}" for msg in messages
-        )
+        messages_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
         prompt = _PROMPT_TEMPLATE.format(
             input=eval_case.input,
             messages_text=messages_text,

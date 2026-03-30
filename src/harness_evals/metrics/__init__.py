@@ -3,11 +3,26 @@
 Import metrics from their category subpackages or directly from here.
 """
 
+from harness_evals.metrics.agent.argument_correctness import ArgumentCorrectnessMetric
+from harness_evals.metrics.agent.plan_adherence import PlanAdherenceMetric
+from harness_evals.metrics.agent.plan_quality import PlanQualityMetric
+from harness_evals.metrics.agent.step_efficiency import StepEfficiencyMetric
 from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from harness_evals.metrics.conversation.coherence import ConversationCoherenceMetric
+from harness_evals.metrics.conversation.conversation_completeness import (
+    ConversationCompletenessMetric,
+)
+from harness_evals.metrics.conversation.goal_accuracy import GoalAccuracyMetric
+from harness_evals.metrics.conversation.knowledge_retention import (
+    KnowledgeRetentionMetric,
+)
 from harness_evals.metrics.conversation.resolution import ConversationResolutionMetric
+from harness_evals.metrics.conversation.role_adherence import RoleAdherenceMetric
+from harness_evals.metrics.conversation.tool_use import ToolUseMetric
+from harness_evals.metrics.conversation.topic_adherence import TopicAdherenceMetric
 from harness_evals.metrics.conversation.turn_efficiency import TurnEfficiencyMetric
+from harness_evals.metrics.conversation.turn_relevancy import TurnRelevancyMetric
 from harness_evals.metrics.deterministic.contains import ContainsMetric
 from harness_evals.metrics.deterministic.exact_match import ExactMatchMetric
 from harness_evals.metrics.deterministic.list_contains import ListContainsMetric
@@ -83,11 +98,22 @@ __all__ = [
     "ToxicityMetric",
     "PromptInjectionMetric",
     "HallucinationMetric",
+    "ArgumentCorrectnessMetric",
+    "PlanAdherenceMetric",
+    "PlanQualityMetric",
+    "StepEfficiencyMetric",
     "ToolCorrectnessMetric",
     "TaskCompletionMetric",
     "ConversationCoherenceMetric",
+    "ConversationCompletenessMetric",
     "ConversationResolutionMetric",
+    "GoalAccuracyMetric",
+    "KnowledgeRetentionMetric",
+    "RoleAdherenceMetric",
+    "ToolUseMetric",
+    "TopicAdherenceMetric",
     "TurnEfficiencyMetric",
+    "TurnRelevancyMetric",
     "ToolSelectionAccuracyMetric",
     "MCPTraceCompletenessMetric",
     "ListContainsMetric",

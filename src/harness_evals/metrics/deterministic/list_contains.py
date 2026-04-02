@@ -33,6 +33,8 @@ class ListContainsMetric(BaseMetric):
         ``"exact"``: score = 1.0 if sets are equal, else Jaccard-like fraction.
     """
 
+    _VALID_MODES = ("subset", "exact")
+
     def __init__(
         self,
         threshold: float = 1.0,
@@ -40,6 +42,8 @@ class ListContainsMetric(BaseMetric):
         case_sensitive: bool = True,
         **kwargs: object,
     ) -> None:
+        if mode not in self._VALID_MODES:
+            raise ValueError(f"mode must be one of {self._VALID_MODES}, got '{mode}'")
         super().__init__(name="list_contains", threshold=threshold, **kwargs)
         self.mode = mode
         self.case_sensitive = case_sensitive

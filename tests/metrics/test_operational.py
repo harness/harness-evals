@@ -18,10 +18,19 @@ class TestLatency:
         assert score.passed
         assert score.value == pytest.approx(0.76, abs=0.01)
 
-    def test_slow(self):
-        ec = EvalCase(input="q", output="a", latency_ms=10000)
-        score = LatencyMetric(max_ms=5000).measure(ec)
-        assert score.value == 0.0
+    @pytest.mark.parametrize(
+        "latency_ms, max_ms, expected_value",
+        [
+            (10000, 5000, 0.0),
+            (0, 5000, 1.0),
+            (2500, 5000, 0.5),
+        ],
+        ids=["over_max", "zero", "half"],
+    )
+    def test_latency_values(self, latency_ms, max_ms, expected_value):
+        ec = EvalCase(input="q", output="a", latency_ms=latency_ms)
+        score = LatencyMetric(max_ms=max_ms).measure(ec)
+        assert score.value == pytest.approx(expected_value)
 
     def test_missing(self):
         ec = EvalCase(input="q", output="a")
@@ -52,11 +61,16 @@ class TestCostEfficiency:
 
 @pytest.mark.unit
 class TestRetryCount:
-    def test_no_retries(self, operational_eval_case):
-        score = RetryCountMetric().measure(operational_eval_case)
-        assert score.value == 1.0
-
-    def test_some_retries(self):
-        ec = EvalCase(input="q", output="a", retry_count=3)
-        score = RetryCountMetric(max_retries=5).measure(ec)
-        assert score.value == pytest.approx(0.4)
+    @pytest.mark.parametrize(
+        "retry_count, max_retries, expected_value",
+        [
+            (0, 5, 1.0),
+            (3, 5, 0.4),
+            (5, 5, 0.0),
+        ],
+        ids=["no_retries", "some_retries", "max_retries"],
+    )
+    def test_retry_values(self, retry_count, max_retries, expected_value):
+        ec = EvalCase(input="q", output="a", retry_count=retry_count)
+        score = RetryCountMetric(max_retries=max_retries).measure(ec)
+        assert score.value == pytest.approx(expected_value)

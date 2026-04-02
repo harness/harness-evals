@@ -101,3 +101,8 @@ class TestRubricJudgeMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.5  # (2-1)/(3-1) = 0.5
         assert score.passed
+
+    def test_empty_rubric_raises(self):
+        llm = MockLLM({"reasoning": "test", "level": 1})
+        with pytest.raises(ValueError, match="non-empty"):
+            RubricJudgeMetric(llm=llm, rubric={})

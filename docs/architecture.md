@@ -98,19 +98,19 @@ Metrics are stateless. Configuration goes in `__init__()`. No global state, no s
 
 Every sink implements `write(scores, eval_case)`. Sinks are called after all metrics finish for an eval case. Sinks should not raise exceptions — they should handle errors gracefully.
 
-Current: `StdoutSink`, `JsonSink`. Planned: `JUnitSink`, `CsvSink` (Phase 3).
+Shipped: `StdoutSink`, `JsonSink`, `CsvSink`, `JUnitSink`, `OtlpSink`, `LangfuseSink`, `HtmlSink`.
 
-### 3. LLM Providers (`BaseLLM`, Phase 2+)
+### 3. LLM Providers (`BaseLLM`)
 
 LLM-judged metrics accept a `BaseLLM` instance. Providers implement `generate(prompt)` and `generate_json(prompt, schema)`. No global LLM configuration — metrics are explicit about which provider they use.
 
-### 4. Baseline Stores (`BaselineStore`, Phase 3+)
+### 4. Baseline Stores (`BaselineStore`)
 
 Pluggable storage for score baselines. `JsonBaselineStore` uses local files. Enterprise users can implement remote storage.
 
-### 5. Perturbation Generators (`BasePerturbation`, Phase 2-3)
+### 5. Perturbation Generators (`BasePerturbation`)
 
-Produce semantically equivalent input variants. Deterministic generators (JsonFieldReorder, SchemaVariation, TypoInjection) ship in Phase 2. LLM-based PromptRephrase ships in Phase 3 alongside robustness metrics.
+Produce semantically equivalent input variants. Deterministic generators (JsonFieldReorder, SchemaVariation, TypoInjection) and LLM-based PromptRephrase are shipped.
 
 ## Design Decisions
 
@@ -147,9 +147,9 @@ harness_evals/
 │   └── json_sink  ← imports core.score, core.sink, core.eval_case
 │
 ├── llm/           ← [Phase 2] depends on nothing (ABC + optional providers)
-├── baseline/      ← [Phase 3] depends on core.score
-├── synthesizer/   ← [Phase 5] depends on llm/, core.eval_case
-└── perturbations/ ← [Phase 2-3] deterministic (Phase 2), LLM-based (Phase 3)
+├── baseline/      ← depends on core.score
+├── synthesizer/   ← depends on llm/, core.eval_case
+└── perturbations/ ← deterministic + LLM-based
 ```
 
 **Key rule**: Dependencies flow downward. `core/` never imports from `metrics/`, `sinks/`, `llm/`, etc. Metrics never import from other metrics.

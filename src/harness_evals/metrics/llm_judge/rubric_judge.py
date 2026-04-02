@@ -59,6 +59,8 @@ class RubricJudgeMetric(BaseMetric):
     ) -> None:
         super().__init__(name="rubric_judge", threshold=threshold, **kwargs)
         self.llm = llm
+        if rubric is not None and not rubric:
+            raise ValueError("rubric must be a non-empty dict mapping int levels to descriptions")
         self.rubric = rubric or _DEFAULT_RUBRIC
 
     def measure(self, eval_case: EvalCase) -> Score:

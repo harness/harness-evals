@@ -63,3 +63,7 @@ class TestListContainsMetric:
         ec = EvalCase(input="q", output=["a"], expected=[])
         score = ListContainsMetric().measure(ec)
         assert score.value == 1.0
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError, match="mode must be"):
+            ListContainsMetric(mode="invalid")

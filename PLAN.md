@@ -452,10 +452,10 @@ pytest test_agent.py --junitxml=eval-results.xml
 | Phase | Content | Status | Cumulative Metrics |
 |-------|---------|--------|-------------------|
 | **1** | Core framework + deterministic + structural + operational + reliability | **COMPLETE** | 12 |
-| **2** | Datasets + LLM abstraction + LLM-judged + RAG + predictability + deterministic perturbations | Next | ~20 + data tooling |
-| **3** | Safety + agent + robustness + LLM perturbation (PromptRephrase) + JUnit sink + baseline | Planned | ~30 |
-| **4** | Conversation + MCP + trajectory consistency + fault robustness | Planned | ~37 |
-| **5** | Synthesizer (dataset generation from documents) | Planned | ~37 + tooling |
+| **2** | Datasets + LLM abstraction + LLM-judged + RAG + predictability + deterministic perturbations | **COMPLETE** | ~20 + data tooling |
+| **3** | Safety + agent + robustness + LLM perturbation (PromptRephrase) + JUnit sink + baseline | **COMPLETE** | ~30 |
+| **4** | Conversation + MCP + trajectory consistency + fault robustness | **COMPLETE** | ~37 |
+| **5** | Synthesizer (dataset generation from documents) | **COMPLETE** | ~37 + tooling |
 | **6** | Harness AI Evals integration | Planned | Product bridge |
 
 ---

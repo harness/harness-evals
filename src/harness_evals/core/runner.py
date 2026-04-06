@@ -10,6 +10,13 @@ from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 
 
+def _enrich_score(score: Score, metric: BaseMetric) -> None:
+    """Attach metric metadata (dimension) to score for downstream sinks."""
+    if score.metadata is None:
+        score.metadata = {}
+    score.metadata.setdefault("dimension", metric.dimension.value)
+
+
 def _finalize_sinks(sinks: list[BaseSink] | None) -> None:
     """Call finalize() and shutdown() on all sinks (no-op for sinks that don't override)."""
     if not sinks:
@@ -47,6 +54,7 @@ def evaluate(
                 reason=f"Metric raised: {e}",
             )
         if score is not None:
+            _enrich_score(score, metric)
             scores.append(score)
 
     if sinks:
@@ -88,6 +96,7 @@ async def a_evaluate(
                 reason=f"Metric raised: {e}",
             )
         if score is not None:
+            _enrich_score(score, metric)
             scores.append(score)
 
     if sinks:

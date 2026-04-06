@@ -50,6 +50,7 @@ class OtlpSink(BaseSink):
         for score in scores:
             attributes = {
                 "metric_name": score.name,
+                "eval.dimension": (score.metadata or {}).get("dimension", ""),
                 "threshold": str(score.threshold),
                 "passed": str(score.passed),
                 **{f"tag.{k}": v for k, v in tags.items()},

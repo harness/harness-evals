@@ -101,6 +101,7 @@ class OtlpSink(BaseSink):
         protocol: str = "grpc",
         headers: dict[str, str] | None = None,
         run_id: str | None = None,
+        model: str | None = None,
         resource_attributes: dict[str, str] | None = None,
         extra_attributes: dict[str, str] | None = None,
     ) -> None:
@@ -110,6 +111,7 @@ class OtlpSink(BaseSink):
         self.endpoint = endpoint
         self.service_name = service_name
         self._run_id = run_id or str(uuid.uuid4())
+        self._model = model
         self._extra_attributes = extra_attributes or {}
         self._finalized = False
 
@@ -174,12 +176,15 @@ class OtlpSink(BaseSink):
         """Create the root eval-run span on first write (under lock)."""
         if self._root_span is not None:
             return
+        root_attrs: dict[str, Any] = {
+            "eval.run_id": self._run_id,
+            **self._extra_attributes,
+        }
+        if self._model:
+            root_attrs["model"] = self._model
         self._root_span = self._tracer.start_span(
             "eval-run",
-            attributes={
-                "eval.run_id": self._run_id,
-                **self._extra_attributes,
-            },
+            attributes=root_attrs,
         )
 
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
@@ -201,9 +206,17 @@ class OtlpSink(BaseSink):
                 "eval.threshold": str(score.threshold),
                 "eval.passed": str(score.passed),
             }
-            dimension = (score.metadata or {}).get("dimension")
-            if dimension:
-                metric_attrs["eval.dimension"] = dimension
+            # Propagate generic score.metadata as OTel attributes (prefixed with "eval.meta.")
+            # Callers control what's in metadata — the sink doesn't interpret it.
+            meta = score.metadata or {}
+            for mk, mv in meta.items():
+                if isinstance(mv, (str, int, float, bool)):
+                    metric_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
+            # dimension gets a first-class attribute (generic eval concept)
+            if meta.get("dimension"):
+                metric_attrs["eval.dimension"] = meta["dimension"]
+            if self._model:
+                metric_attrs["model"] = self._model
             self._score_gauge.set(score.value, attributes=metric_attrs)
 
         if eval_case.latency_ms is not None:
@@ -231,6 +244,14 @@ class OtlpSink(BaseSink):
             "eval.item.passed": all_passed,
             **self._extra_attributes,
         }
+        # Propagate generic score metadata to span (first score as representative)
+        if scores:
+            span_meta = scores[0].metadata or {}
+            for mk, mv in span_meta.items():
+                if isinstance(mv, (str, int, float, bool)):
+                    item_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
+            if self._model:
+                item_attrs["model"] = self._model
         if eval_case.input is not None:
             item_attrs["eval.item.input"] = _truncate(eval_case.input)
         if eval_case.output is not None:

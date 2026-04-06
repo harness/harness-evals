@@ -9,6 +9,7 @@ Every metric produces a normalized `Score` (0.0–1.0). Pass/fail is determined 
 ```bash
 pip install harness-evals            # core only
 pip install harness-evals[llm]       # + LLM-judged metrics (OpenAI, Anthropic)
+pip install harness-evals[otlp]      # + OTLP metrics & traces export
 pip install harness-evals[langfuse]  # + Langfuse source/sink
 pip install harness-evals[similarity]# + BLEU metric (nltk)
 pip install harness-evals[all]       # everything
@@ -239,6 +240,21 @@ scores = evaluate(ec, metrics=[...], sinks=[
     JsonSink("results/scores.jsonl"),
     LangfuseSink(),  # requires pip install harness-evals[langfuse]
 ])
+```
+
+### Export to an OTLP-compatible backend
+
+```python
+from harness_evals.sinks.otlp_sink import OtlpSink  # requires pip install harness-evals[otlp]
+
+sink = OtlpSink(
+    endpoint="http://collector:4317",
+    run_id="my-eval-run-001",
+    resource_attributes={"deployment.environment": "ci"},
+    extra_attributes={"eval.suite_id": "nightly-regression"},
+)
+
+scores = evaluate(ec, metrics=[...], sinks=[sink])
 ```
 
 ### Summarize results across a dataset

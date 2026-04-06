@@ -36,6 +36,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: pypi
     permissions:
+      contents: read
       id-token: write
 
     steps:

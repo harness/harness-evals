@@ -27,7 +27,15 @@ class LLMConversationMetric(BaseMetric):
 
     _prompt_template: str = ""
 
-    def __init__(self, llm: BaseLLM, threshold: float = 0.7, *, name: str, dimension: Dimension = Dimension.CORRECTNESS, **kwargs: object) -> None:
+    def __init__(
+        self,
+        llm: BaseLLM,
+        threshold: float = 0.7,
+        *,
+        name: str,
+        dimension: Dimension = Dimension.CORRECTNESS,
+        **kwargs: object,
+    ) -> None:
         super().__init__(name=name, dimension=dimension, threshold=threshold, **kwargs)
         self.llm = llm
 

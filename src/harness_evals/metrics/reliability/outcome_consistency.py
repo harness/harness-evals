@@ -14,7 +14,9 @@ class OutcomeConsistencyMetric(ReliabilityMetric):
     """
 
     def __init__(self, threshold: float = 0.8, k: int = 5, **kwargs: object) -> None:
-        super().__init__(name="outcome_consistency", dimension=Dimension.CORRECTNESS, threshold=threshold, k=k, **kwargs)
+        super().__init__(
+            name="outcome_consistency", dimension=Dimension.CORRECTNESS, threshold=threshold, k=k, **kwargs
+        )
 
     def measure_runs(self, eval_case: EvalCase) -> Score:
         runs = eval_case.runs or []

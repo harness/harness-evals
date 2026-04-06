@@ -35,4 +35,6 @@ class ConversationCompletenessMetric(LLMConversationMetric):
     _prompt_template = _PROMPT_TEMPLATE
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
-        super().__init__(llm=llm, threshold=threshold, name="conversation_completeness", dimension=Dimension.CORRECTNESS, **kwargs)
+        super().__init__(
+            llm=llm, threshold=threshold, name="conversation_completeness", dimension=Dimension.CORRECTNESS, **kwargs
+        )

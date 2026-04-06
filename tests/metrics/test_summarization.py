@@ -21,7 +21,10 @@ class TestSummarizationMetric:
             responses=[
                 {"reasoning": "Summary is factually accurate", "score": 0.95},  # alignment
                 {"questions": ["Does summary mention X?", "Does summary mention Y?"]},  # generate questions
-                {"answers": [{"question": "X?", "covered": True}, {"question": "Y?", "covered": True}], "score": 0.9},  # coverage
+                {
+                    "answers": [{"question": "X?", "covered": True}, {"question": "Y?", "covered": True}],
+                    "score": 0.9,
+                },  # coverage
             ]
         )
         metric = SummarizationMetric(llm=llm)

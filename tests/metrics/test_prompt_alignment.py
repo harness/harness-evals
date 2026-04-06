@@ -87,11 +87,7 @@ class TestPromptAlignmentMetric:
 
     async def test_single_instruction(self):
         """Single instruction followed → 1.0."""
-        llm = MockLLM(
-            responses=[
-                {"results": [{"instruction": "Be JSON", "followed": True, "reasoning": "is json"}]}
-            ]
-        )
+        llm = MockLLM(responses=[{"results": [{"instruction": "Be JSON", "followed": True, "reasoning": "is json"}]}])
         metric = PromptAlignmentMetric(llm=llm, prompt_instructions=["Be JSON"])
         ec = EvalCase(input="q", output='{"key": "value"}')
         score = await metric.a_measure(ec)

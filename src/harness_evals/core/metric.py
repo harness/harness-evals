@@ -68,7 +68,9 @@ class SafetyMetric(BaseMetric):
     Defaults to ``Dimension.SAFETY`` — subclasses do not need to pass it.
     """
 
-    def __init__(self, name: str, threshold: float = 1.0, *, dimension: Dimension = Dimension.SAFETY, **kwargs: object) -> None:
+    def __init__(
+        self, name: str, threshold: float = 1.0, *, dimension: Dimension = Dimension.SAFETY, **kwargs: object
+    ) -> None:
         super().__init__(name=name, dimension=dimension, threshold=threshold, **kwargs)
 
 

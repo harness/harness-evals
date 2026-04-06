@@ -24,7 +24,9 @@ class ResourceConsistencyMetric(ReliabilityMetric):
         resource_key: str = "token_count",
         **kwargs: object,
     ) -> None:
-        super().__init__(name="resource_consistency", dimension=Dimension.PERFORMANCE, threshold=threshold, k=k, **kwargs)
+        super().__init__(
+            name="resource_consistency", dimension=Dimension.PERFORMANCE, threshold=threshold, k=k, **kwargs
+        )
         self.resource_key = resource_key
 
     def _get_resource_value(self, run: EvalCase) -> float | None:

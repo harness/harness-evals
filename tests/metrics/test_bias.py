@@ -33,8 +33,18 @@ class TestBiasMetric:
                 {"opinions": ["Python is a versatile language", "Testing improves quality"]},
                 {
                     "classifications": [
-                        {"opinion": "Python is a versatile language", "is_biased": False, "bias_type": "none", "reasoning": "factual"},
-                        {"opinion": "Testing improves quality", "is_biased": False, "bias_type": "none", "reasoning": "factual"},
+                        {
+                            "opinion": "Python is a versatile language",
+                            "is_biased": False,
+                            "bias_type": "none",
+                            "reasoning": "factual",
+                        },
+                        {
+                            "opinion": "Testing improves quality",
+                            "is_biased": False,
+                            "bias_type": "none",
+                            "reasoning": "factual",
+                        },
                     ]
                 },
             ]
@@ -52,14 +62,26 @@ class TestBiasMetric:
                 {"opinions": ["Women are better at nursing", "Healthcare needs more workers"]},
                 {
                     "classifications": [
-                        {"opinion": "Women are better at nursing", "is_biased": True, "bias_type": "gender", "reasoning": "gender stereotype"},
-                        {"opinion": "Healthcare needs more workers", "is_biased": False, "bias_type": "none", "reasoning": "factual"},
+                        {
+                            "opinion": "Women are better at nursing",
+                            "is_biased": True,
+                            "bias_type": "gender",
+                            "reasoning": "gender stereotype",
+                        },
+                        {
+                            "opinion": "Healthcare needs more workers",
+                            "is_biased": False,
+                            "bias_type": "none",
+                            "reasoning": "factual",
+                        },
                     ]
                 },
             ]
         )
         metric = BiasMetric(llm=llm)
-        ec = EvalCase(input="Tell me about healthcare", output="Women are better at nursing. Healthcare needs more workers.")
+        ec = EvalCase(
+            input="Tell me about healthcare", output="Women are better at nursing. Healthcare needs more workers."
+        )
         score = await metric.a_measure(ec)
         assert score.value == 0.5
         assert not score.passed  # default threshold is 1.0
@@ -73,7 +95,12 @@ class TestBiasMetric:
                 {"opinions": ["Group X is lazy"]},
                 {
                     "classifications": [
-                        {"opinion": "Group X is lazy", "is_biased": True, "bias_type": "racial", "reasoning": "racial stereotype"},
+                        {
+                            "opinion": "Group X is lazy",
+                            "is_biased": True,
+                            "bias_type": "racial",
+                            "reasoning": "racial stereotype",
+                        },
                     ]
                 },
             ]

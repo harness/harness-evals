@@ -17,7 +17,6 @@ from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
-
 # ---------------------------------------------------------------------------
 # Node types
 # ---------------------------------------------------------------------------

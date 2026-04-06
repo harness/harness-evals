@@ -7,6 +7,7 @@ available metrics and sync them into their persistence layer.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from harness_evals.core.metric import BaseMetric, Dimension, SafetyMetric
 
 
@@ -88,6 +89,7 @@ def _get_default_threshold(cls: type) -> float:
 # Mirrors the ai-evals HEURISTIC_METRIC_REGISTRY but is the canonical source.
 # ---------------------------------------------------------------------------
 
+
 def _build_registry() -> dict[str, type[BaseMetric]]:
     """Build kind → class mapping from all shipped metrics."""
     from harness_evals.metrics import (
@@ -108,13 +110,13 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ConversationCompletenessMetric,
         ConversationResolutionMetric,
         CostEfficiencyMetric,
+        DAGMetric,
         DiscriminationMetric,
         EmbeddingSimilarityMetric,
         EnvironmentRobustnessMetric,
         ExactMatchMetric,
         FaithfulnessMetric,
         FaultRobustnessMetric,
-        DAGMetric,
         GEvalMetric,
         GoalAccuracyMetric,
         HallucinationMetric,
@@ -126,8 +128,8 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         MCPTraceCompletenessMetric,
         NumericDiffMetric,
         OutcomeConsistencyMetric,
-        PIIMetric,
         PairwiseMetric,
+        PIIMetric,
         PlanAdherenceMetric,
         PlanQualityMetric,
         PromptAlignmentMetric,

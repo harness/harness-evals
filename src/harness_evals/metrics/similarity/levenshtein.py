@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -33,7 +33,7 @@ class LevenshteinMetric(BaseMetric):
     """
 
     def __init__(self, threshold: float = 0.8, **kwargs: object) -> None:
-        super().__init__(name="levenshtein", threshold=threshold, **kwargs)
+        super().__init__(name="levenshtein", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
         if eval_case.expected is None:

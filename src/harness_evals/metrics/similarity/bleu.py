@@ -6,7 +6,7 @@ import math
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -52,7 +52,7 @@ class BLEUMetric(BaseMetric):
     """
 
     def __init__(self, threshold: float = 0.5, max_n: int = 4, **kwargs: object) -> None:
-        super().__init__(name="bleu", threshold=threshold, **kwargs)
+        super().__init__(name="bleu", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.max_n = max_n
 
     def measure(self, eval_case: EvalCase) -> Score:

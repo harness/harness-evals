@@ -6,7 +6,7 @@ import math
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import ReliabilityMetric
+from harness_evals.core.metric import Dimension, ReliabilityMetric
 from harness_evals.core.score import Score
 
 
@@ -89,7 +89,7 @@ class TrajectoryConsistencyMetric(ReliabilityMetric):
             raise ValueError(f"mode must be 'distributional' or 'sequential', got '{mode}'")
         if max_trajectory_length is not None and max_trajectory_length < 1:
             raise ValueError(f"max_trajectory_length must be >= 1 or None, got {max_trajectory_length}")
-        super().__init__(name="trajectory_consistency", threshold=threshold, k=k, **kwargs)
+        super().__init__(name="trajectory_consistency", dimension=Dimension.TRAJECTORY, threshold=threshold, k=k, **kwargs)
         self.mode = mode
         self.max_trajectory_length = max_trajectory_length
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from harness_evals.core.metric import Dimension
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.conversation.llm_conversation_metric import (
     LLMConversationMetric,
@@ -43,4 +44,4 @@ class GoalAccuracyMetric(LLMConversationMetric):
     _prompt_template = _PROMPT_TEMPLATE
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
-        super().__init__(llm=llm, threshold=threshold, name="goal_accuracy", **kwargs)
+        super().__init__(llm=llm, threshold=threshold, name="goal_accuracy", dimension=Dimension.CORRECTNESS, **kwargs)

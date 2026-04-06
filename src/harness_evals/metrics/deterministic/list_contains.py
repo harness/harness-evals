@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -44,7 +44,7 @@ class ListContainsMetric(BaseMetric):
     ) -> None:
         if mode not in self._VALID_MODES:
             raise ValueError(f"mode must be one of {self._VALID_MODES}, got '{mode}'")
-        super().__init__(name="list_contains", threshold=threshold, **kwargs)
+        super().__init__(name="list_contains", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.mode = mode
         self.case_sensitive = case_sensitive
 

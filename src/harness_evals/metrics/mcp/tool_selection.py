@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -20,7 +20,7 @@ class ToolSelectionAccuracyMetric(BaseMetric):
     """
 
     def __init__(self, threshold: float = 0.7, **kwargs: object) -> None:
-        super().__init__(name="tool_selection_accuracy", threshold=threshold, **kwargs)
+        super().__init__(name="tool_selection_accuracy", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)
 
     def measure(self, eval_case: EvalCase) -> Score:
         if eval_case.tool_calls is None or eval_case.expected_tools is None:

@@ -6,7 +6,7 @@ from typing import Any
 from deepdiff import DeepDiff
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -27,7 +27,7 @@ class JsonDiffMetric(BaseMetric):
         exclude_paths: list[str] | None = None,
         **kwargs: object,
     ) -> None:
-        super().__init__(name="json_diff", threshold=threshold, **kwargs)
+        super().__init__(name="json_diff", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.ignore_order = ignore_order
         self.exclude_paths = exclude_paths
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -31,7 +31,7 @@ class ToolCorrectnessMetric(BaseMetric):
         threshold: float = 1.0,
         **kwargs: object,
     ) -> None:
-        super().__init__(name="tool_correctness", threshold=threshold, **kwargs)
+        super().__init__(name="tool_correctness", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)
         if mode not in ("exact", "subset"):
             raise ValueError(f"mode must be 'exact' or 'subset', got '{mode}'")
         self.mode = mode

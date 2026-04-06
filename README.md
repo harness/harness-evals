@@ -14,6 +14,20 @@ pip install harness-evals[similarity]# + BLEU metric (nltk)
 pip install harness-evals[all]       # everything
 ```
 
+## Five Dimensions
+
+Every metric belongs to one of five evaluation dimensions. Together they answer: *where is my agent strong, and where is it weak?*
+
+| Dimension | Question | Example Metrics |
+|-----------|----------|----------------|
+| **Correctness** | Is it right? | ExactMatch, TaskCompletion, GEval, GoalAccuracy |
+| **Groundedness** | Is it supported by evidence? | Faithfulness, ContextPrecision, AnswerRelevancy |
+| **Safety** | Did it violate policy? | PII, Toxicity, PromptInjection, Hallucination |
+| **Trajectory** | Did it take a good path? | PlanAdherence, StepEfficiency, ToolCorrectness |
+| **Performance** | Was it fast and cheap? | Latency, TokenCost, CostEfficiency |
+
+Dimensions are set by the metric author — not user-configured. Any combination of metrics in a suite automatically produces a radar chart grouped by dimension.
+
 ## Core Concepts
 
 **`Golden`** — what you author: an input, the expected output, and optional context. Lives in your dataset files.

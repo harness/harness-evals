@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -21,7 +21,7 @@ class CalibrationMetric(BaseMetric):
     """
 
     def __init__(self, n_bins: int = 10, threshold: float = 0.7, **kwargs: object) -> None:
-        super().__init__(name="calibration", threshold=threshold, **kwargs)
+        super().__init__(name="calibration", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.n_bins = n_bins
 
     def measure(self, eval_case: EvalCase) -> Score:

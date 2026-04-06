@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from harness_evals.core.metric import Dimension
 from harness_evals.metrics.reliability.robustness_base import RobustnessMetric
 
 
@@ -17,4 +18,4 @@ class FaultRobustnessMetric(RobustnessMetric):
     """
 
     def __init__(self, threshold: float = 0.7, **kwargs: object) -> None:
-        super().__init__(name="fault_robustness", threshold=threshold, **kwargs)
+        super().__init__(name="fault_robustness", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

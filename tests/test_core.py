@@ -380,11 +380,11 @@ class TestEvaluate:
         assert "broken" in scores[0].reason
 
     def test_evaluate_filters_none_scores(self):
-        from harness_evals.core.metric import BaseMetric
+        from harness_evals.core.metric import BaseMetric, Dimension
 
         class SkippingMetric(BaseMetric):
             def __init__(self):
-                super().__init__(name="skipper", threshold=0.5)
+                super().__init__(name="skipper", dimension=Dimension.CORRECTNESS, threshold=0.5)
 
             def measure(self, eval_case):
                 return None
@@ -446,11 +446,11 @@ class TestAEvaluate:
         assert not scores[0].passed
 
     async def test_a_evaluate_filters_none_scores(self):
-        from harness_evals.core.metric import BaseMetric
+        from harness_evals.core.metric import BaseMetric, Dimension
 
         class AsyncSkipper(BaseMetric):
             def __init__(self):
-                super().__init__(name="async_skipper", threshold=0.5)
+                super().__init__(name="async_skipper", dimension=Dimension.CORRECTNESS, threshold=0.5)
 
             def measure(self, eval_case):
                 return None
@@ -491,11 +491,11 @@ class TestEvaluateBatchMetrics:
         assert scores[0].value > 0.0
 
     def test_catches_exceptions(self):
-        from harness_evals.core.metric import BaseMetric
+        from harness_evals.core.metric import BaseMetric, Dimension
 
         class BadMetric(BaseMetric):
             def __init__(self):
-                super().__init__(name="bad", threshold=0.5)
+                super().__init__(name="bad", dimension=Dimension.CORRECTNESS, threshold=0.5)
 
             def measure(self, eval_case):
                 raise RuntimeError("boom")

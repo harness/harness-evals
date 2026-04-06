@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -12,7 +12,7 @@ class LatencyMetric(BaseMetric):
     """
 
     def __init__(self, max_ms: float = 5000, threshold: float = 0.5, **kwargs: object) -> None:
-        super().__init__(name="latency", threshold=threshold, **kwargs)
+        super().__init__(name="latency", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
         self.max_ms = max_ms
 
     def measure(self, eval_case: EvalCase) -> Score:

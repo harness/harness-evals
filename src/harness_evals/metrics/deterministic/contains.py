@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -12,7 +12,7 @@ class ContainsMetric(BaseMetric):
     """
 
     def __init__(self, threshold: float = 1.0, case_sensitive: bool = True, **kwargs: object) -> None:
-        super().__init__(name="contains", threshold=threshold, **kwargs)
+        super().__init__(name="contains", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.case_sensitive = case_sensitive
 
     def measure(self, eval_case: EvalCase) -> Score:

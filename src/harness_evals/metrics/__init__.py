@@ -28,9 +28,19 @@ from harness_evals.metrics.deterministic.exact_match import ExactMatchMetric
 from harness_evals.metrics.deterministic.list_contains import ListContainsMetric
 from harness_evals.metrics.deterministic.numeric_diff import NumericDiffMetric
 from harness_evals.metrics.deterministic.regex_match import RegexMetric
+from harness_evals.metrics.llm_judge.dag import (
+    BinaryJudgementNode,
+    DAGMetric,
+    DeepAcyclicGraph,
+    NonBinaryJudgementNode,
+    TaskNode,
+    VerdictNode,
+)
 from harness_evals.metrics.llm_judge.geval import GEvalMetric
 from harness_evals.metrics.llm_judge.pairwise import PairwiseMetric
+from harness_evals.metrics.llm_judge.prompt_alignment import PromptAlignmentMetric
 from harness_evals.metrics.llm_judge.rubric_judge import RubricJudgeMetric
+from harness_evals.metrics.llm_judge.summarization import SummarizationMetric
 from harness_evals.metrics.mcp.tool_selection import ToolSelectionAccuracyMetric
 from harness_evals.metrics.mcp.trace_completeness import MCPTraceCompletenessMetric
 from harness_evals.metrics.operational.cost_efficiency import CostEfficiencyMetric
@@ -58,6 +68,7 @@ from harness_evals.metrics.reliability.resource_consistency import ResourceConsi
 from harness_evals.metrics.reliability.trajectory_consistency import (
     TrajectoryConsistencyMetric,
 )
+from harness_evals.metrics.safety.bias import BiasMetric
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
@@ -125,4 +136,13 @@ __all__ = [
     "ContextEntityRecallMetric",
     "AnswerSimilarityMetric",
     "AnswerCorrectnessMetric",
+    "DAGMetric",
+    "DeepAcyclicGraph",
+    "TaskNode",
+    "BinaryJudgementNode",
+    "NonBinaryJudgementNode",
+    "VerdictNode",
+    "SummarizationMetric",
+    "PromptAlignmentMetric",
+    "BiasMetric",
 ]

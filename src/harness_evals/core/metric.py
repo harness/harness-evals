@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import Enum
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
+
+
+class Dimension(str, Enum):
+    """The five evaluation dimensions — every metric belongs to exactly one.
+
+    See ADR-009 for rationale. Adding a new dimension requires an ADR and
+    community consensus.
+    """
+
+    CORRECTNESS = "correctness"
+    GROUNDEDNESS = "groundedness"
+    SAFETY = "safety"
+    TRAJECTORY = "trajectory"
+    PERFORMANCE = "performance"
 
 
 class BaseMetric(ABC):
@@ -18,8 +33,9 @@ class BaseMetric(ABC):
     the default calls ``measure()`` synchronously.
     """
 
-    def __init__(self, name: str, threshold: float = 1.0, **kwargs: object) -> None:
+    def __init__(self, name: str, dimension: Dimension, threshold: float = 1.0, **kwargs: object) -> None:
         self.name = name
+        self.dimension = dimension
         self.threshold = threshold
 
     @abstractmethod
@@ -48,7 +64,12 @@ class SafetyMetric(BaseMetric):
     Safety metrics are reported separately and never averaged into an overall
     score (hard-constraint design per Rabanser et al.). Use ``isinstance(m,
     SafetyMetric)`` to identify safety metrics programmatically.
+
+    Defaults to ``Dimension.SAFETY`` — subclasses do not need to pass it.
     """
+
+    def __init__(self, name: str, threshold: float = 1.0, *, dimension: Dimension = Dimension.SAFETY, **kwargs: object) -> None:
+        super().__init__(name=name, dimension=dimension, threshold=threshold, **kwargs)
 
 
 class ReliabilityMetric(BaseMetric):
@@ -58,8 +79,8 @@ class ReliabilityMetric(BaseMetric):
     Subclasses implement ``measure_runs()`` instead of ``measure()``.
     """
 
-    def __init__(self, name: str, threshold: float = 1.0, k: int = 5, **kwargs: object) -> None:
-        super().__init__(name=name, threshold=threshold, **kwargs)
+    def __init__(self, name: str, dimension: Dimension, threshold: float = 1.0, k: int = 5, **kwargs: object) -> None:
+        super().__init__(name=name, dimension=dimension, threshold=threshold, **kwargs)
         self.k = k
 
     @abstractmethod

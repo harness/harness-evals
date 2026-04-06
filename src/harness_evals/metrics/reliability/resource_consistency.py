@@ -3,7 +3,7 @@ from __future__ import annotations
 import statistics
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import ReliabilityMetric
+from harness_evals.core.metric import Dimension, ReliabilityMetric
 from harness_evals.core.score import Score
 
 
@@ -24,7 +24,7 @@ class ResourceConsistencyMetric(ReliabilityMetric):
         resource_key: str = "token_count",
         **kwargs: object,
     ) -> None:
-        super().__init__(name="resource_consistency", threshold=threshold, k=k, **kwargs)
+        super().__init__(name="resource_consistency", dimension=Dimension.PERFORMANCE, threshold=threshold, k=k, **kwargs)
         self.resource_key = resource_key
 
     def _get_resource_value(self, run: EvalCase) -> float | None:

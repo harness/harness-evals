@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from harness_evals.core.metric import Dimension
 from harness_evals.metrics.reliability.robustness_base import RobustnessMetric
 
 
@@ -14,4 +15,4 @@ class PromptRobustnessMetric(RobustnessMetric):
     """
 
     def __init__(self, threshold: float = 0.8, **kwargs: object) -> None:
-        super().__init__(name="prompt_robustness", threshold=threshold, **kwargs)
+        super().__init__(name="prompt_robustness", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

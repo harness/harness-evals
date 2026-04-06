@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -48,7 +48,7 @@ class GEvalMetric(BaseMetric):
         threshold: float = 0.7,
         **kwargs: object,
     ) -> None:
-        super().__init__(name="geval", threshold=threshold, **kwargs)
+        super().__init__(name="geval", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.llm = llm
         self.criteria = criteria
 

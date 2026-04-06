@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -64,7 +64,7 @@ class FaithfulnessMetric(BaseMetric):
     """
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
-        super().__init__(name="faithfulness", threshold=threshold, **kwargs)
+        super().__init__(name="faithfulness", dimension=Dimension.GROUNDEDNESS, threshold=threshold, **kwargs)
         self.llm = llm
 
     def measure(self, eval_case: EvalCase) -> Score:

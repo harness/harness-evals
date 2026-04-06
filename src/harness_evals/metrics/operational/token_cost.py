@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -12,7 +12,7 @@ class TokenCostMetric(BaseMetric):
     """
 
     def __init__(self, max_tokens: int = 10000, threshold: float = 0.5, **kwargs: object) -> None:
-        super().__init__(name="token_cost", threshold=threshold, **kwargs)
+        super().__init__(name="token_cost", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
         self.max_tokens = max_tokens
 
     def measure(self, eval_case: EvalCase) -> Score:

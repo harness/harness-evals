@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -57,7 +57,7 @@ class RubricJudgeMetric(BaseMetric):
         threshold: float = 0.6,
         **kwargs: object,
     ) -> None:
-        super().__init__(name="rubric_judge", threshold=threshold, **kwargs)
+        super().__init__(name="rubric_judge", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         self.llm = llm
         if rubric is not None and not rubric:
             raise ValueError("rubric must be a non-empty dict mapping int levels to descriptions")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -12,7 +12,7 @@ class CostEfficiencyMetric(BaseMetric):
     """
 
     def __init__(self, max_cost_usd: float = 0.10, threshold: float = 0.5, **kwargs: object) -> None:
-        super().__init__(name="cost_efficiency", threshold=threshold, **kwargs)
+        super().__init__(name="cost_efficiency", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
         self.max_cost_usd = max_cost_usd
 
     def measure(self, eval_case: EvalCase) -> Score:

@@ -1,5 +1,6 @@
 """harness-evals: Open-source AI evaluation framework."""
 
+from harness_evals.catalog import CatalogEntry, catalog
 from harness_evals.baseline import (
     BaselineResult,
     BaselineStore,
@@ -9,7 +10,7 @@ from harness_evals.baseline import (
 )
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
-from harness_evals.core.metric import BaseMetric, ReliabilityMetric, SafetyMetric
+from harness_evals.core.metric import BaseMetric, Dimension, ReliabilityMetric, SafetyMetric
 from harness_evals.core.runner import (
     a_evaluate,
     assert_test,
@@ -33,6 +34,9 @@ __all__ = [
     "EvalCase",
     "Score",
     "BaseMetric",
+    "CatalogEntry",
+    "Dimension",
+    "catalog",
     "ReliabilityMetric",
     "SafetyMetric",
     "BaseSink",

@@ -27,7 +27,21 @@ class MyMetric(BaseMetric):
 
 ## Step by Step
 
-### 1. Choose the Category
+### 1. Choose the Dimension
+
+Every metric belongs to exactly one dimension ([ADR-009](adr/009-five-dimensions.md)):
+
+| Dimension | When to use |
+|-----------|------------|
+| `CORRECTNESS` | Metric compares output to expected answer or evaluates task completion |
+| `GROUNDEDNESS` | Metric checks if output is supported by provided context/evidence |
+| `SAFETY` | Metric detects policy violations (PII, toxicity, injection, unauthorized actions) |
+| `TRAJECTORY` | Metric evaluates the path taken (tool selection, plan quality, step efficiency) |
+| `PERFORMANCE` | Metric measures operational cost (latency, tokens, dollars, retries) |
+
+If your metric doesn't clearly fit one dimension, it may be compound — consider splitting it.
+
+### 2. Choose the Category
 
 | Category | When to Use | Base Class |
 |----------|------------|-----------|
@@ -43,13 +57,13 @@ class MyMetric(BaseMetric):
 | `conversation/` | Multi-turn coherence, resolution | `BaseMetric` |
 | `mcp/` | Tool selection, trace completeness | `BaseMetric` |
 
-### 2. Create the File
+### 3. Create the File
 
 ```
 src/harness_evals/metrics/<category>/<metric_name>.py
 ```
 
-### 3. Implement the Class
+### 4. Implement the Class
 
 #### Deterministic Metric Template
 
@@ -186,7 +200,7 @@ class MyEmbeddingMetric(BaseMetric):
         )
 ```
 
-### 4. Export the Metric
+### 5. Export the Metric
 
 Add to `src/harness_evals/metrics/<category>/__init__.py`:
 
@@ -200,7 +214,7 @@ Add to `src/harness_evals/metrics/__init__.py`:
 from harness_evals.metrics.<category> import MyMetric
 ```
 
-### 5. Write Tests
+### 6. Write Tests
 
 Create `tests/metrics/test_<metric_name>.py`:
 
@@ -230,7 +244,7 @@ class TestMyMetric:
         assert isinstance(score.value, float)
 ```
 
-### 6. Run Tests
+### 7. Run Tests
 
 ```bash
 ruff check src/ tests/          # lint
@@ -241,10 +255,11 @@ pytest tests/ -v                # test
 ## Rules
 
 1. **One metric per file** — keeps PRs small and reviewable.
-2. **Score is always [0.0, 1.0]** — normalize whatever you compute. Put raw values in `Score.metadata`.
-3. **Never raise from `measure()`** — return a failing Score with a `reason` instead. If you do raise, `evaluate()` catches it, but explicit is better.
-4. **Handle missing data gracefully** — operational metrics should check typed fields and return a failing Score with a clear reason if None.
-5. **No global state** — all configuration goes in `__init__()`. Metrics are reusable across eval cases.
-6. **No cross-metric imports** — metrics should not import from other metrics.
-7. **Safety metrics are hard constraints** — see [ADR-003](adr/003-safety-never-averaged.md).
-8. **Don't set `passed` manually** — `Score` auto-computes `passed = value >= threshold` in `__post_init__`.
+2. **One dimension per metric** — every metric belongs to exactly one of: Correctness, Groundedness, Safety, Trajectory, Performance. See [ADR-009](adr/009-five-dimensions.md).
+3. **Score is always [0.0, 1.0]** — normalize whatever you compute. Put raw values in `Score.metadata`.
+4. **Never raise from `measure()`** — return a failing Score with a `reason` instead. If you do raise, `evaluate()` catches it, but explicit is better.
+5. **Handle missing data gracefully** — operational metrics should check typed fields and return a failing Score with a clear reason if None.
+6. **No global state** — all configuration goes in `__init__()`. Metrics are reusable across eval cases.
+7. **No cross-metric imports** — metrics should not import from other metrics.
+8. **Safety metrics are hard constraints** — see [ADR-003](adr/003-safety-never-averaged.md).
+9. **Don't set `passed` manually** — `Score` auto-computes `passed = value >= threshold` in `__post_init__`.

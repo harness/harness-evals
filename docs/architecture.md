@@ -112,6 +112,30 @@ Pluggable storage for score baselines. `JsonBaselineStore` uses local files. Ent
 
 Produce semantically equivalent input variants. Deterministic generators (JsonFieldReorder, SchemaVariation, TypoInjection) and LLM-based PromptRephrase are shipped.
 
+## Five Dimensions
+
+Every metric belongs to exactly one of five evaluation dimensions. Dimensions answer "where is my agent strong?" and power the radar chart visualization.
+
+```
+                    Correctness
+                        ╱╲
+                       ╱  ╲
+            Performance ╱    ╲ Groundedness
+                      ╲    ╱
+                       ╲  ╱
+              Trajectory ╲╱ Safety
+```
+
+| Dimension | Question | Remediation |
+|-----------|----------|-------------|
+| **Correctness** | Is it right? | Better data, prompts, model |
+| **Groundedness** | Is it supported by evidence? | Better retrieval, citation enforcement |
+| **Safety** | Did it violate policy? | Guardrails, output filtering |
+| **Trajectory** | Did it take a good path? | Better planning, tool docs |
+| **Performance** | Was it fast and cheap? | Caching, model downgrade |
+
+Dimensions are set by the metric author at definition time — not user-configured. See [ADR-009](adr/009-five-dimensions.md).
+
 ## Design Decisions
 
 See [docs/adr/](adr/) for Architecture Decision Records explaining key choices:
@@ -123,6 +147,8 @@ See [docs/adr/](adr/) for Architecture Decision Records explaining key choices:
 - ADR-005: Why `list[EvalCase]` instead of a Dataset class
 - ADR-006: Why sync `measure()` with async `a_measure()` for LLM providers
 - ADR-007: Why Golden and EvalCase are separate types
+- ADR-008: Why `measure_dataset` instead of `evaluate_batch`
+- ADR-009: Why every metric belongs to exactly one of five dimensions
 
 ## Module Dependency Graph
 

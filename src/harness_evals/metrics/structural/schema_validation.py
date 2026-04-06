@@ -5,7 +5,7 @@ import json
 import jsonschema
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 
 
@@ -18,7 +18,7 @@ class SchemaValidationMetric(BaseMetric):
     """
 
     def __init__(self, schema: dict | str, threshold: float = 1.0, **kwargs: object) -> None:
-        super().__init__(name="schema_validation", threshold=threshold, **kwargs)
+        super().__init__(name="schema_validation", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)
         if isinstance(schema, str):
             schema = json.loads(schema)
         self.schema = schema

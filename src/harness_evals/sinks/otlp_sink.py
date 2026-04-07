@@ -102,11 +102,11 @@ def _load_http_exporters(
 class OtlpSink(BaseSink):
     """Export eval scores as OpenTelemetry metrics and traces to an OTLP endpoint.
 
-    **Metrics**: Each ``Score`` becomes a gauge observation on ``eval.score``.
+    **Metrics**: Each ``Score`` becomes a gauge observation on ``evals.score``.
     ``EvalCase`` runtime fields (latency, tokens, cost) are recorded as histograms.
 
     **Traces**: A root ``eval-run`` span contains child ``eval-item`` spans
-    (one per ``write()`` call), each with ``eval.score`` events per metric.
+    (one per ``write()`` call), each with ``evals.score`` events per metric.
 
     Deployment-specific attributes (environment, team, project) are injected by the
     caller via ``resource_attributes`` and ``extra_attributes`` — the sink itself
@@ -171,22 +171,22 @@ class OtlpSink(BaseSink):
         meter = self._meter_provider.get_meter(service_name)
 
         self._score_gauge = meter.create_gauge(
-            name="eval.score",
+            name="evals.score",
             description="Evaluation metric score",
             unit="ratio",
         )
         self._latency_hist = meter.create_histogram(
-            name="eval.item.latency",
+            name="evals.item.latency",
             description="Target invocation latency per eval item",
             unit="ms",
         )
         self._token_hist = meter.create_histogram(
-            name="eval.item.tokens",
+            name="evals.item.tokens",
             description="Token count per eval item",
             unit="tokens",
         )
         self._cost_hist = meter.create_histogram(
-            name="eval.item.cost",
+            name="evals.item.cost",
             description="Cost per eval item",
             unit="usd",
         )

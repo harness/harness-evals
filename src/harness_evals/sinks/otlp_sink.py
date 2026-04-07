@@ -28,6 +28,10 @@ from harness_evals.core.sink import BaseSink
 _MAX_ATTR_LEN = 1000
 _VALID_PROTOCOLS = {"grpc", "http"}
 
+# Harness Observe / GenAI pipeline conventions (per-span; set after extra_attributes merge)
+_HARNESS_SPAN_TYPE_EVAL_RUN = "eval_run"
+_HARNESS_SPAN_TYPE_EVAL_ITEM = "eval_item"
+
 
 def _truncate(value: Any, max_len: int = _MAX_ATTR_LEN) -> str:
     """Convert value to string and truncate to max_len."""
@@ -105,8 +109,9 @@ class OtlpSink(BaseSink):
     **Metrics**: Each ``Score`` becomes a gauge observation on ``evals.score``.
     ``EvalCase`` runtime fields (latency, tokens, cost) are recorded as histograms.
 
-    **Traces**: A root ``eval-run`` span contains child ``eval-item`` spans
-    (one per ``write()`` call), each with ``evals.score`` events per metric.
+    **Traces**: A root ``eval-run`` span (``harness.span.type`` = ``eval_run``)
+    contains child ``eval-item`` spans (``harness.span.type`` = ``eval_item``;
+    one per ``write()`` call), each with ``evals.score`` events per metric.
 
     Deployment-specific attributes (environment, team, project) are injected by the
     caller via ``resource_attributes`` and ``extra_attributes`` — the sink itself
@@ -213,6 +218,7 @@ class OtlpSink(BaseSink):
         root_attrs: dict[str, Any] = {
             "eval.run_id": self._run_id,
             **self._extra_attributes,
+            "harness.span.type": _HARNESS_SPAN_TYPE_EVAL_RUN,
         }
         if self._model:
             root_attrs["model"] = self._model
@@ -277,6 +283,7 @@ class OtlpSink(BaseSink):
             "eval.item.index": item_index,
             "eval.item.passed": all_passed,
             **self._extra_attributes,
+            "harness.span.type": _HARNESS_SPAN_TYPE_EVAL_ITEM,
         }
         # Propagate generic score metadata to span (first score as representative)
         if scores:

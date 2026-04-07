@@ -35,17 +35,20 @@ class HarnessSink(BaseSink):
         run_id: str,
         org: str,
         project: str,
+        account_id: str,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._run_id = run_id
         self._org = org
         self._project = project
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {api_key}",
+            "Harness-Account": account_id,
+            "Content-Type": "application/json",
+        }
         self._client = httpx.Client(
             base_url=self._base_url,
-            headers={
-                "x-api-key": api_key,
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             timeout=60.0,
         )
         self._items_buffer: list[dict[str, Any]] = []

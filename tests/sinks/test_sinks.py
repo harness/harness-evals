@@ -678,7 +678,11 @@ class TestOtlpSinkTraces:
         with patch("harness_evals.sinks.otlp_sink._load_http_exporters") as mock_http:
             mock_http.return_value = (MagicMock(), MagicMock())
             OtlpSink(protocol="http", endpoint="http://collector:4318")
-            mock_http.assert_called_once_with("http://collector:4318", headers=None)
+            mock_http.assert_called_once_with(
+                "http://collector:4318/v1/traces",
+                "http://collector:4318/v1/metrics",
+                headers=None,
+            )
 
     def test_http_insecure_false_warns(self, otlp_mocks):
         OtlpSink, _mocks = otlp_mocks
@@ -689,6 +693,39 @@ class TestOtlpSinkTraces:
                 OtlpSink(protocol="http", insecure=False)
                 assert len(w) == 1
                 assert "insecure=False has no effect" in str(w[0].message)
+
+
+@pytest.mark.unit
+class TestHttpOtlpEndpoints:
+    """Tests for _http_otlp_endpoints URL normalization."""
+
+    def test_base_without_trailing_slash(self):
+        from harness_evals.sinks.otlp_sink import _http_otlp_endpoints
+
+        t, m = _http_otlp_endpoints("http://collector:4318")
+        assert t == "http://collector:4318/v1/traces"
+        assert m == "http://collector:4318/v1/metrics"
+
+    def test_base_with_trailing_slash(self):
+        from harness_evals.sinks.otlp_sink import _http_otlp_endpoints
+
+        t, m = _http_otlp_endpoints("https://example.com/agenttrace/otlp/")
+        assert t == "https://example.com/agenttrace/otlp/v1/traces"
+        assert m == "https://example.com/agenttrace/otlp/v1/metrics"
+
+    def test_already_trace_suffix(self):
+        from harness_evals.sinks.otlp_sink import _http_otlp_endpoints
+
+        t, m = _http_otlp_endpoints("https://harness.example/otel/v1/traces")
+        assert t == "https://harness.example/otel/v1/traces"
+        assert m == "https://harness.example/otel/v1/metrics"
+
+    def test_already_metrics_suffix(self):
+        from harness_evals.sinks.otlp_sink import _http_otlp_endpoints
+
+        t, m = _http_otlp_endpoints("https://harness.example/otel/v1/metrics")
+        assert t == "https://harness.example/otel/v1/traces"
+        assert m == "https://harness.example/otel/v1/metrics"
 
 
 @pytest.mark.unit

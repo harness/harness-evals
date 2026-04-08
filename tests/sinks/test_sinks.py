@@ -599,6 +599,39 @@ class TestOtlpSinkTraces:
         assert attrs["eval.item.latency_ms"] == 200.0
         assert attrs["eval.item.token_count"] == 150
 
+    def test_item_span_attributes_override_root(self, otlp_mocks):
+        """Verify that item_span_attributes override/extend extra_attributes for item spans."""
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(
+            run_id="run-x",
+            extra_attributes={
+                "span.type": "eval_run",
+                "eval.suite_id": "suite-1",
+                "env": "prod",
+            },
+            item_span_attributes={
+                "span.type": "eval_item",  # override root span.type
+                "custom.item_field": "item_only",  # add new attribute
+            },
+        )
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
+
+        calls = mocks["tracer"].start_span.call_args_list
+        # Root span: has all extra_attributes
+        root_attrs = calls[0][1]["attributes"]
+        assert root_attrs["span.type"] == "eval_run"
+        assert root_attrs["eval.suite_id"] == "suite-1"
+        assert root_attrs["env"] == "prod"
+        assert "custom.item_field" not in root_attrs
+
+        # Item span: inherits extra_attributes but with item_span_attributes overrides
+        item_call = [c for c in calls if c[0][0] == "eval-item"][0]
+        item_attrs = item_call[1]["attributes"]
+        assert item_attrs["span.type"] == "eval_item"  # overridden
+        assert item_attrs["eval.suite_id"] == "suite-1"  # inherited
+        assert item_attrs["env"] == "prod"  # inherited
+        assert item_attrs["custom.item_field"] == "item_only"  # from item_span_attributes
+
     def test_score_events_on_child_span(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks
         sink = OtlpSink(run_id="run-1")

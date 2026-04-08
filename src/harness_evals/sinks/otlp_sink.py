@@ -110,7 +110,8 @@ class OtlpSink(BaseSink):
 
     Deployment-specific attributes (environment, team, project) are injected by the
     caller via ``resource_attributes`` and ``extra_attributes`` — the sink itself
-    uses only generic ``eval.*`` attribute names.
+    uses only generic ``eval.*`` attribute names. Use ``item_span_attributes`` to
+    override or add attributes specific to item spans (e.g., ``span.type: eval_item``).
 
     Call ``finalize()`` after all writes to end the root span and flush data.
     ``shutdown()`` calls ``finalize()`` if it hasn't been called, then releases
@@ -138,6 +139,7 @@ class OtlpSink(BaseSink):
         model: str | None = None,
         resource_attributes: dict[str, str] | None = None,
         extra_attributes: dict[str, str] | None = None,
+        item_span_attributes: dict[str, str] | None = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")
@@ -147,6 +149,7 @@ class OtlpSink(BaseSink):
         self._run_id = run_id or str(uuid.uuid4())
         self._model = model
         self._extra_attributes = extra_attributes or {}
+        self._item_span_attributes = item_span_attributes or {}
         self._finalized = False
 
         # --- Resource (shared by metrics + traces) ---
@@ -277,6 +280,7 @@ class OtlpSink(BaseSink):
             "eval.item.index": item_index,
             "eval.item.passed": all_passed,
             **self._extra_attributes,
+            **self._item_span_attributes,  # overrides for item span
         }
         # Propagate generic score metadata to span (first score as representative)
         if scores:

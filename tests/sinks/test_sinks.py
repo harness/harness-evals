@@ -574,7 +574,6 @@ class TestOtlpSinkTraces:
         calls = mocks["tracer"].start_span.call_args_list
         assert calls[0][0][0] == "eval-run"
         assert calls[0][1]["attributes"]["eval.run_id"] == "run-abc"
-        assert calls[0][1]["attributes"]["harness.span.type"] == "eval_run"
 
     def test_child_span_per_write(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks
@@ -594,30 +593,39 @@ class TestOtlpSinkTraces:
 
         child_call = [c for c in mocks["tracer"].start_span.call_args_list if c[0][0] == "eval-item"][0]
         attrs = child_call[1]["attributes"]
-        assert attrs["harness.span.type"] == "eval_item"
         assert attrs["eval.item.input"] == "question"
         assert attrs["eval.item.output"] == "answer"
         assert attrs["eval.item.expected"] == "answer"
         assert attrs["eval.item.latency_ms"] == 200.0
         assert attrs["eval.item.token_count"] == 150
 
-    def test_harness_span_type_overrides_extra_attributes(self, otlp_mocks):
-        """harness.span.type must be eval_run / eval_item even if extra_attributes set it."""
+    def test_extra_attributes_propagated_to_spans(self, otlp_mocks):
+        """Verify that extra_attributes are propagated to both root and item spans."""
         OtlpSink, mocks = otlp_mocks
         sink = OtlpSink(
             run_id="run-x",
-            extra_attributes={"harness.span.type": "wrong", "eval.suite_id": "s1"},
+            extra_attributes={
+                "span.type": "eval_run",
+                "eval.suite_id": "suite-1",
+                "deployment.environment": "prod",
+            },
         )
         sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
 
         calls = mocks["tracer"].start_span.call_args_list
+        # Root span should have all extra_attributes
         root_attrs = calls[0][1]["attributes"]
-        assert root_attrs["harness.span.type"] == "eval_run"
-        assert root_attrs["eval.suite_id"] == "s1"
+        assert root_attrs["span.type"] == "eval_run"
+        assert root_attrs["eval.suite_id"] == "suite-1"
+        assert root_attrs["deployment.environment"] == "prod"
 
-        item_attrs = calls[1][1]["attributes"]
-        assert item_attrs["harness.span.type"] == "eval_item"
-        assert item_attrs["eval.suite_id"] == "s1"
+        # Item span should inherit extra_attributes but have derived span.type
+        # Using convention: "eval_run" -> "eval_item"
+        item_call = [c for c in calls if c[0][0] == "eval-item"][0]
+        item_attrs = item_call[1]["attributes"]
+        assert item_attrs["span.type"] == "eval_item"  # derived from "eval_run"
+        assert item_attrs["eval.suite_id"] == "suite-1"
+        assert item_attrs["deployment.environment"] == "prod"
 
     def test_score_events_on_child_span(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks

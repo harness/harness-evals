@@ -28,10 +28,6 @@ from harness_evals.core.sink import BaseSink
 _MAX_ATTR_LEN = 1000
 _VALID_PROTOCOLS = {"grpc", "http"}
 
-# Harness Observe / GenAI pipeline conventions (per-span; set after extra_attributes merge)
-_HARNESS_SPAN_TYPE_EVAL_RUN = "eval_run"
-_HARNESS_SPAN_TYPE_EVAL_ITEM = "eval_item"
-
 
 def _truncate(value: Any, max_len: int = _MAX_ATTR_LEN) -> str:
     """Convert value to string and truncate to max_len."""
@@ -109,9 +105,8 @@ class OtlpSink(BaseSink):
     **Metrics**: Each ``Score`` becomes a gauge observation on ``evals.score``.
     ``EvalCase`` runtime fields (latency, tokens, cost) are recorded as histograms.
 
-    **Traces**: A root ``eval-run`` span (``harness.span.type`` = ``eval_run``)
-    contains child ``eval-item`` spans (``harness.span.type`` = ``eval_item``;
-    one per ``write()`` call), each with ``evals.score`` events per metric.
+    **Traces**: A root ``eval-run`` span contains child ``eval-item`` spans
+    (one per ``write()`` call), each with ``evals.score`` events per metric.
 
     Deployment-specific attributes (environment, team, project) are injected by the
     caller via ``resource_attributes`` and ``extra_attributes`` — the sink itself
@@ -204,6 +199,7 @@ class OtlpSink(BaseSink):
         # Root span is created lazily on first write() so that its start time
         # aligns with actual evaluation start, not sink construction.
         self._root_span = None
+        self._item_span_type: str | None = None
 
         # --- Summary accumulators (for finalize) ---
         self._lock = threading.Lock()
@@ -218,10 +214,18 @@ class OtlpSink(BaseSink):
         root_attrs: dict[str, Any] = {
             "eval.run_id": self._run_id,
             **self._extra_attributes,
-            "harness.span.type": _HARNESS_SPAN_TYPE_EVAL_RUN,
         }
         if self._model:
             root_attrs["model"] = self._model
+        # If caller provided span.type for root, derive item span type using a convention:
+        # "eval_run" -> "eval_item", "foo_run" -> "foo_item", etc.
+        if "span.type" in root_attrs:
+            root_type = root_attrs["span.type"]
+            if root_type.endswith("_run"):
+                self._item_span_type = root_type[:-4] + "_item"
+            else:
+                # Fallback: append ".item" suffix if pattern doesn't match
+                self._item_span_type = f"{root_type}.item"
         self._root_span = self._tracer.start_span(
             "eval-run",
             attributes=root_attrs,
@@ -283,8 +287,10 @@ class OtlpSink(BaseSink):
             "eval.item.index": item_index,
             "eval.item.passed": all_passed,
             **self._extra_attributes,
-            "harness.span.type": _HARNESS_SPAN_TYPE_EVAL_ITEM,
         }
+        # Override span.type for item spans if one was derived from root
+        if self._item_span_type:
+            item_attrs["span.type"] = self._item_span_type
         # Propagate generic score metadata to span (first score as representative)
         if scores:
             span_meta = scores[0].metadata or {}

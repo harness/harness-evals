@@ -101,6 +101,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         BLEUMetric,
         BrierScoreMetric,
         CalibrationMetric,
+        CompositeMetric,
         ContainsMetric,
         ContextEntityRecallMetric,
         ContextPrecisionMetric,
@@ -142,6 +143,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         RubricJudgeMetric,
         SchemaValidationMetric,
         StepEfficiencyMetric,
+        StructuralSimilarityMetric,
         SummarizationMetric,
         TaskCompletionMetric,
         TokenCostMetric,
@@ -165,6 +167,8 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         # Structural
         "json_diff": JsonDiffMetric,
         "schema_validation": SchemaValidationMetric,
+        "structural_similarity": StructuralSimilarityMetric,
+        "composite": CompositeMetric,
         # Similarity
         "levenshtein": LevenshteinMetric,
         "bleu": BLEUMetric,

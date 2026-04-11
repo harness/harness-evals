@@ -78,6 +78,8 @@ from harness_evals.metrics.similarity.embedding_similarity import EmbeddingSimil
 from harness_evals.metrics.similarity.levenshtein import LevenshteinMetric
 from harness_evals.metrics.structural.json_diff import JsonDiffMetric
 from harness_evals.metrics.structural.schema_validation import SchemaValidationMetric
+from harness_evals.metrics.structural.structural_similarity import StructuralSimilarityMetric
+from harness_evals.metrics.composite.composite import CompositeMetric
 
 __all__ = [
     "ExactMatchMetric",
@@ -86,6 +88,8 @@ __all__ = [
     "NumericDiffMetric",
     "JsonDiffMetric",
     "SchemaValidationMetric",
+    "StructuralSimilarityMetric",
+    "CompositeMetric",
     "LatencyMetric",
     "TokenCostMetric",
     "CostEfficiencyMetric",

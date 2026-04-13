@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from harness_evals.llm.harness_ai import HarnessAILLM, _extract_json, _generate_jwt
@@ -23,7 +24,7 @@ class TestGenerateJwt:
         token = _generate_jwt(b"my-secret")
         payload = jwt.decode(token, b"my-secret", algorithms=["HS256"])
         assert payload["iss"] == "Harness Inc"
-        assert payload["sub"] == "STO"
+        assert payload["sub"] == "harness-evals"
         assert payload["type"] == "SERVICE"
 
     def test_custom_service_name(self):
@@ -86,6 +87,20 @@ class TestHarnessAILLMInit:
         assert llm.model == "gpt-4.1"
         assert llm.provider == "openai"
 
+    def test_service_name_default(self):
+        llm = HarnessAILLM(secret="test")
+        assert llm.service_name == "harness-evals"
+
+    def test_service_name_custom(self):
+        llm = HarnessAILLM(secret="test", service_name="my-app")
+        assert llm.service_name == "my-app"
+
+
+def _mock_httpx_response(payload: dict, status_code: int = 200) -> httpx.Response:
+    """Build a mock httpx.Response with a canned JSON body."""
+    content = json.dumps(payload).encode()
+    return httpx.Response(status_code=status_code, content=content)
+
 
 @pytest.mark.unit
 class TestHarnessAILLMGenerate:
@@ -94,60 +109,101 @@ class TestHarnessAILLMGenerate:
 
     async def test_generate_success(self):
         llm = self._make_llm()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"text": "Hello world", "blocked": False}
+        resp = _mock_httpx_response({"text": "Hello world", "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
 
-        with patch("requests.post", return_value=mock_resp):
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await llm.generate("Say hello")
         assert result == "Hello world"
 
     async def test_generate_json_success(self):
         llm = self._make_llm()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"text": '{"reasoning": "good", "score": 9}', "blocked": False}
+        resp = _mock_httpx_response({"text": '{"reasoning": "good", "score": 9}', "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
 
-        with patch("requests.post", return_value=mock_resp):
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await llm.generate_json("Rate this", schema={})
         assert result == {"reasoning": "good", "score": 9}
 
+    async def test_generate_json_appends_schema(self):
+        llm = self._make_llm()
+        resp = _mock_httpx_response({"text": '{"reasoning": "ok", "score": 5}', "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+
+        schema = {"type": "object", "properties": {"score": {"type": "integer"}}}
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            await llm.generate_json("Rate this", schema=schema)
+
+        sent_body = mock_client.post.call_args[1]["json"]
+        assert "schema" in sent_body["message"].lower()
+
+    async def test_generate_json_empty_schema_no_append(self):
+        llm = self._make_llm()
+        resp = _mock_httpx_response({"text": '{"reasoning": "ok", "score": 5}', "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            await llm.generate_json("Rate this", schema={})
+
+        sent_body = mock_client.post.call_args[1]["json"]
+        assert sent_body["message"] == "Rate this"
+
     async def test_generate_json_markdown_fence(self):
         llm = self._make_llm()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "text": '```json\n{"reasoning": "fenced", "score": 7}\n```',
-            "blocked": False,
-        }
+        resp = _mock_httpx_response({"text": '```json\n{"reasoning": "fenced", "score": 7}\n```', "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
 
-        with patch("requests.post", return_value=mock_resp):
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await llm.generate_json("Rate this", schema={})
         assert result == {"reasoning": "fenced", "score": 7}
 
     async def test_generate_json_malformed_raises(self):
         llm = self._make_llm()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"text": "I cannot evaluate this.", "blocked": False}
+        resp = _mock_httpx_response({"text": "I cannot evaluate this.", "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
 
-        with patch("requests.post", return_value=mock_resp), pytest.raises(json.JSONDecodeError):
-            await llm.generate_json("Rate this", schema={})
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(json.JSONDecodeError):
+                await llm.generate_json("Rate this", schema={})
 
     async def test_http_error_raises(self):
         llm = self._make_llm()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Internal Server Error"
+        resp = _mock_httpx_response({"error": "fail"}, status_code=500)
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
 
-        with patch("requests.post", return_value=mock_resp), pytest.raises(RuntimeError, match="500"):
-            await llm.generate("test")
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(RuntimeError, match="500"):
+                await llm.generate("test")
 
     async def test_blocked_response_raises(self):
         llm = self._make_llm()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"text": "", "blocked": True}
+        resp = _mock_httpx_response({"text": "", "blocked": True})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
 
-        with patch("requests.post", return_value=mock_resp), pytest.raises(RuntimeError, match="blocked"):
-            await llm.generate("test")
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(RuntimeError, match="blocked"):
+                await llm.generate("test")

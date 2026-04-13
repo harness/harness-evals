@@ -12,6 +12,7 @@ pip install harness-evals[llm]       # + LLM-judged metrics (OpenAI, Anthropic)
 pip install harness-evals[otlp]      # + OTLP metrics & traces export
 pip install harness-evals[langfuse]  # + Langfuse source/sink
 pip install harness-evals[similarity]# + BLEU metric (nltk)
+pip install harness-evals[harness]   # + Harness AI Service LLM provider
 pip install harness-evals[all]       # everything
 ```
 
@@ -285,6 +286,7 @@ for name, m in summary.by_metric.items():
 | **Safety** | PII, Toxicity, PromptInjection, Hallucination | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
 | **Agent** | ToolCorrectness, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, task completion, argument validation, plan quality/adherence, step efficiency (requires `[llm]`) |
 | **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |
+| **Security** | VulnerabilityCorrectness, SecurityCompleteness, CodeSafety, CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability | LLM-as-Judge metrics for AI-generated security vulnerability remediations, with composite Remediation Quality Index (requires `[llm]`) |
 
 ## EvalCase Fields
 

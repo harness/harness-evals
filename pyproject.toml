@@ -34,6 +34,7 @@ otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 similarity = ["nltk>=3.8"]
+harness = ["PyJWT>=2.8", "requests>=2.31"]
 langfuse = ["langfuse>=2.0"]
 dev = [
     "pytest>=8.0",
@@ -42,7 +43,7 @@ dev = [
     "ruff>=0.4",
     "pre-commit>=3.5",
 ]
-all = ["harness-evals[llm,otlp,similarity,langfuse]"]
+all = ["harness-evals[llm,otlp,similarity,langfuse,harness]"]
 
 [project.urls]
 Homepage = "https://github.com/harness/harness-evals"

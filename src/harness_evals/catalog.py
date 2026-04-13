@@ -154,6 +154,15 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         TurnEfficiencyMetric,
         TurnRelevancyMetric,
     )
+    from harness_evals.metrics.security import (
+        ActionabilityMetric,
+        CodeQualityMetric,
+        CodeSafetyMetric,
+        ExplanationQualityMetric,
+        RootCauseAnalysisMetric,
+        SecurityCompletenessMetric,
+        VulnerabilityCorrectnessMetric,
+    )
 
     return {
         # Deterministic
@@ -227,6 +236,14 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "prompt_robustness": PromptRobustnessMetric,
         "environment_robustness": EnvironmentRobustnessMetric,
         "fault_robustness": FaultRobustnessMetric,
+        # Security Remediation
+        "vulnerability_correctness": VulnerabilityCorrectnessMetric,
+        "security_completeness": SecurityCompletenessMetric,
+        "code_safety": CodeSafetyMetric,
+        "code_quality": CodeQualityMetric,
+        "explanation_quality": ExplanationQualityMetric,
+        "root_cause_analysis": RootCauseAnalysisMetric,
+        "actionability": ActionabilityMetric,
     }
 
 

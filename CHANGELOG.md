@@ -5,6 +5,18 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Security Remediation metrics** — 7 LLM-as-Judge metrics for evaluating AI-generated vulnerability remediations:
+  VulnerabilityCorrectness, SecurityCompleteness, CodeSafety, CodeQuality,
+  ExplanationQuality, RootCauseAnalysis, Actionability (all in `harness_evals.metrics.security`)
+- `remediation_quality_index()` — weighted composite scoring (Remediation Quality Index) for security metrics
+- `HarnessAILLM` provider — routes LLM calls through the Harness AI Service gateway (`harness_evals.llm.harness_ai`)
+- `[harness]` optional dependency group (PyJWT, requests)
+- 78 new tests (62 security metric unit + structural + prompt + pipeline, 16 HarnessAILLM + JSON extraction)
+
 ## [0.2.0] - 2026-03-16
 
 ### Added
@@ -77,12 +89,7 @@ ec = EvalCase.from_dict({"input": "q", "actual_output": "a", "expected_output": 
 - 42 passing tests covering all metrics and core functions
 - Example: `examples/basic_eval.py`
 
-## [Unreleased]
-
 ### Planned
 
-- Phase 2: Datasets, LLM abstraction, GEval, RAG metrics, predictability metrics, registry + YAML config
-- Phase 3: Safety metrics, agent metrics, robustness metrics, JUnit/CSV sinks, baseline comparison
-- Phase 4: Conversation metrics, MCP metrics, trajectory consistency, fault robustness
 - Phase 5: Synthesizer, perturbation generators
 - Phase 6: Harness AI Evals integration

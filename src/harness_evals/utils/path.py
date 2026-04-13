@@ -7,7 +7,7 @@ import jsonpath_ng.ext
 
 def get_by_path(obj: Any, path: str) -> Any:
     """Get value at dot-separated path. Supports array indices including negative.
-    
+
     This is the fast-path implementation for simple dot paths.
     """
     for part in path.split("."):
@@ -26,13 +26,13 @@ def get_by_path(obj: Any, path: str) -> Any:
 
 def extract_path(obj: Any, path: str) -> Any:
     """Extract value using either fast dot-path or JSONPath.
-    
+
     Falls back to JSONPath if the expression contains JSONPath-specific syntax
     like wildcards (*), filters (?()), or starts with '$'.
     """
     if not path:
         return obj
-        
+
     # If it looks like JSONPath, use jsonpath-ng
     if path.startswith("$") or "[" in path or "*" in path or "?" in path:
         try:

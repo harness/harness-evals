@@ -130,7 +130,7 @@ class CompositeMetric(BaseMetric):
                     "status": "error",
                     "reason": f"Unexpected error: {e}",
                 }
-            
+
             active_weight_sum += weight
 
         final_score = 0.0

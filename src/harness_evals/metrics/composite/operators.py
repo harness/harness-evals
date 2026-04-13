@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
-from deepdiff import DeepDiff
 import jsonschema
+from deepdiff import DeepDiff
 
 from harness_evals.utils.path import extract_path
 
@@ -51,7 +50,7 @@ def _json_schema_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]
     val = res.get("field")
     if val is None:
         raise OperatorError("Missing field for json_schema")
-        
+
     schema = config.get("schema")
     if not schema:
         raise OperatorError("Missing 'schema' in config")
@@ -71,11 +70,8 @@ def _field_exists_operator(eval_case_dict: dict[str, Any], config: dict[str, Any
 def _equals_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]) -> float:
     res = _resolve_paths(eval_case_dict, config, ["field", "expected_field"])
     actual = res.get("field")
-    
-    if "value" in config:
-        expected = config["value"]
-    else:
-        expected = res.get("expected_field")
+
+    expected = config["value"] if "value" in config else res.get("expected_field")
 
     return 1.0 if actual == expected else 0.0
 
@@ -118,11 +114,11 @@ def _count_match_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]
         len_expected = len(expected) if expected is not None else 0
         if len_expected == 0:
             return 1.0 if len_actual == 0 else 0.0
-            
+
         ratio = min(len_actual, len_expected) / max(len_actual, len_expected)
         return float(ratio)
-    except TypeError:
-        raise OperatorError("Field is not a collection with length")
+    except TypeError as err:
+        raise OperatorError("Field is not a collection with length") from err
 
 
 def _list_field_match_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]) -> float:
@@ -136,7 +132,7 @@ def _list_field_match_operator(eval_case_dict: dict[str, Any], config: dict[str,
     if not expected:
         return 1.0 if not actual else 0.0
 
-    matches = sum(1 for a, e in zip(actual, expected) if a == e)
+    matches = sum(1 for a, e in zip(actual, expected, strict=False) if a == e)
     return matches / len(expected)
 
 
@@ -155,8 +151,8 @@ def _unique_ratio_operator(eval_case_dict: dict[str, Any], config: dict[str, Any
         ratio = unique_count / len(actual)
         min_ratio = config.get("min_ratio", 0.0)
         return 1.0 if ratio >= min_ratio else (ratio / min_ratio)  # Partial score if below min
-    except TypeError:
-        raise OperatorError("List items are unhashable")
+    except TypeError as err:
+        raise OperatorError("List items are unhashable") from err
 
 
 def _regex_match_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]) -> float:
@@ -170,7 +166,7 @@ def _regex_match_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]
     try:
         return 1.0 if re.search(pattern, actual) else 0.0
     except re.error as e:
-        raise OperatorError(f"Invalid regex pattern: {e}")
+        raise OperatorError(f"Invalid regex pattern: {e}") from e
 
 
 def _range_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]) -> float:

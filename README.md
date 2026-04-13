@@ -282,6 +282,43 @@ sink = OtlpSink(
 scores = evaluate(ec, metrics=[...], sinks=[sink])
 ```
 
+### Evaluate security remediations
+
+```python
+from harness_evals import EvalCase, evaluate
+from harness_evals.llm.openai import OpenAILLM  # or AnthropicLLM, HarnessAILLM
+from harness_evals.metrics.security import (
+    VulnerabilityCorrectnessMetric,
+    SecurityCompletenessMetric,
+    CodeSafetyMetric,
+    CodeQualityMetric,
+    ExplanationQualityMetric,
+    RootCauseAnalysisMetric,
+    ActionabilityMetric,
+    remediation_quality_index,
+)
+
+llm = OpenAILLM()  # uses OPENAI_API_KEY env var
+
+ec = EvalCase(
+    input="CWE-79: Reflected XSS in user_profile.py line 42. User input rendered without escaping.",
+    output="## Fix\n```python\nfrom markupsafe import escape\nname = escape(request.args.get('name', ''))\n```",
+)
+
+scores = evaluate(ec, metrics=[
+    VulnerabilityCorrectnessMetric(llm=llm, threshold=0.5),
+    SecurityCompletenessMetric(llm=llm, threshold=0.5),
+    CodeSafetyMetric(llm=llm, threshold=0.5),
+    CodeQualityMetric(llm=llm, threshold=0.5),
+    ExplanationQualityMetric(llm=llm, threshold=0.5),
+    RootCauseAnalysisMetric(llm=llm, threshold=0.5),
+    ActionabilityMetric(llm=llm, threshold=0.5),
+])
+
+rqi = remediation_quality_index(scores)
+print(f"RQI: {rqi.value:.3f} ({'PASS' if rqi.passed else 'FAIL'})")
+```
+
 ### Summarize results across a dataset
 
 ```python

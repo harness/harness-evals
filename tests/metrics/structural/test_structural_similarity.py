@@ -26,13 +26,13 @@ def test_structural_similarity_structural_yaml():
         extra_keys="penalize",
         threshold=0.8,
     )
-    
+
     expected = "id: 123\nname: test\nvalue: 100"
     actual = "id: 456\nname: changed\nvalue: 100\nextra: 50"
-    
+
     ec = EvalCase(input="", expected=expected, output=actual)
     score = metric.measure(ec)
-    
+
     # "id" and "name" are ignored, so they match perfectly.
     # But there's an extra key ("extra"), and extra_keys="penalize".
     # Expected penalty is 0.8 * deep_distance match.
@@ -55,13 +55,13 @@ def test_structural_similarity_schema_json():
         schema_validator={"type": "json_schema", "schema": schema},
         threshold=0.9,
     )
-    
+
     # Valid schema, perfectly matches expected
     ec1 = EvalCase(input="", expected={"name": "test"}, output={"name": "test"})
     score1 = metric.measure(ec1)
     assert score1.passed
     assert score1.value == 1.0
-    
+
     # Invalid schema (missing 'name')
     ec2 = EvalCase(input="", expected={"name": "test"}, output={"value": 100})
     score2 = metric.measure(ec2)
@@ -72,7 +72,7 @@ def test_structural_similarity_schema_json():
 
 @pytest.mark.unit
 def test_structural_similarity_online_mode_fallback():
-    # In online mode, the output field might resolve to null because it's a string, 
+    # In online mode, the output field might resolve to null because it's a string,
     # but it should fall back to the raw string.
     metric = StructuralSimilarityMetric(
         format="yaml",
@@ -80,13 +80,13 @@ def test_structural_similarity_online_mode_fallback():
         expected_field="$.expected.yaml",
         output_field="$.output.yaml",
     )
-    
+
     ec = EvalCase(
         input="",
         expected={"yaml": "key: val"},
-        output="key: val"  # Missing {"yaml": ...} wrapper like online mode
+        output="key: val",  # Missing {"yaml": ...} wrapper like online mode
     )
-    
+
     score = metric.measure(ec)
     assert score.passed
     assert score.value == 1.0

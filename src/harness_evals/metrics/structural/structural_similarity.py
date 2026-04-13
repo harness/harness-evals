@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import logging
-import importlib.metadata
 from typing import Any
 
+import jsonschema
 import yaml
 from deepdiff import DeepDiff
-import jsonschema
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
@@ -36,10 +36,10 @@ class StructuralSimilarityMetric(BaseMetric):
         self,
         threshold: float = 0.85,
         format: str = "yaml",  # yaml | json
-        level: str = "raw",    # raw | structural | schema_validated
+        level: str = "raw",  # raw | structural | schema_validated
         ignore_keys: list[str] | None = None,
         required_fields: dict[str, Any] | None = None,
-        extra_keys: str = "ignore", # ignore | penalize
+        extra_keys: str = "ignore",  # ignore | penalize
         extra_keys_penalty: float = 0.8,  # multiplier when extra_keys=penalize
         schema_validator: dict[str, Any] | None = None,
         expected_field: str | None = None,
@@ -60,7 +60,7 @@ class StructuralSimilarityMetric(BaseMetric):
     def _parse(self, value: Any) -> Any:
         if not isinstance(value, str):
             return value
-            
+
         try:
             if self.format == "json":
                 return json.loads(value)
@@ -74,21 +74,21 @@ class StructuralSimilarityMetric(BaseMetric):
 
     def _get_field(self, eval_case: EvalCase, field_path: str | None, default_field: str) -> Any:
         """Extract field from EvalCase.
-        
+
         If field_path resolves to None but the default field (output or expected)
         is a non-null string, fall back to the string (handles online mode).
         """
         raw_val = getattr(eval_case, default_field, None)
-        
+
         if not field_path:
             return raw_val
-            
+
         case_dict = eval_case.to_dict()
         extracted = extract_path(case_dict, field_path)
-        
+
         if extracted is None and isinstance(raw_val, str):
             return raw_val
-            
+
         return extracted
 
     def _validate_schema(self, value: Any, raw_string: str) -> tuple[bool, str | None]:
@@ -97,7 +97,7 @@ class StructuralSimilarityMetric(BaseMetric):
             return True, None
 
         val_type = self.schema_validator.get("type")
-        
+
         if val_type == "json_schema":
             schema = self.schema_validator.get("schema")
             if not schema:
@@ -107,7 +107,7 @@ class StructuralSimilarityMetric(BaseMetric):
                 return True, None
             except jsonschema.exceptions.ValidationError as e:
                 return False, f"Schema validation failed: {e.message}"
-                
+
         elif val_type == "entry_point":
             name = self.schema_validator.get("name")
             if not name:
@@ -141,7 +141,7 @@ class StructuralSimilarityMetric(BaseMetric):
         if self.level == "schema_validated":
             is_valid, err = self._validate_schema(
                 self._parse(raw_actual) if isinstance(raw_actual, str) else raw_actual,
-                raw_actual if isinstance(raw_actual, str) else json.dumps(raw_actual)
+                raw_actual if isinstance(raw_actual, str) else json.dumps(raw_actual),
             )
             if not is_valid:
                 return Score(
@@ -166,13 +166,12 @@ class StructuralSimilarityMetric(BaseMetric):
 
         # 3. Level: structural (ignore keys, check required fields)
         exclude_paths = None
-        if self.level in ("structural", "schema_validated"):
-            if self.ignore_keys:
-                # convert to deepdiff exclude_paths (e.g. root['name'])
-                # This is simplified; true implementation might use regex or deeper paths
-                exclude_paths = [f"root['{k}']" for k in self.ignore_keys] + [
-                    f"root{path}" for path in self.ignore_keys if path.startswith("[")
-                ]
+        if self.level in ("structural", "schema_validated") and self.ignore_keys:
+            # convert to deepdiff exclude_paths (e.g. root['name'])
+            # This is simplified; true implementation might use regex or deeper paths
+            exclude_paths = [f"root['{k}']" for k in self.ignore_keys] + [
+                f"root{path}" for path in self.ignore_keys if path.startswith("[")
+            ]
 
         # 4. DeepDiff
         diff = DeepDiff(
@@ -188,9 +187,12 @@ class StructuralSimilarityMetric(BaseMetric):
         value = max(0.0, min(1.0, 1.0 - distance))
 
         # Handle extra keys penalization
-        if self.level in ("structural", "schema_validated") and self.extra_keys == "penalize":
-            if "dictionary_item_added" in diff:
-                value *= self.extra_keys_penalty
+        if (
+            self.level in ("structural", "schema_validated")
+            and self.extra_keys == "penalize"
+            and "dictionary_item_added" in diff
+        ):
+            value *= self.extra_keys_penalty
 
         reason = None
         if diff:

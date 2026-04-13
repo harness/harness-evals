@@ -65,9 +65,7 @@ class InputGenerator:
             A ``Dataset`` (``list[Golden]``).
         """
         if strategy not in _STRATEGIES:
-            raise ValueError(
-                f"Unknown strategy {strategy!r}. Choose from: {', '.join(sorted(_STRATEGIES))}"
-            )
+            raise ValueError(f"Unknown strategy {strategy!r}. Choose from: {', '.join(sorted(_STRATEGIES))}")
 
         impl = _STRATEGIES[strategy](self.llm, batch_size=self.batch_size)
         return await impl.generate(
@@ -86,9 +84,7 @@ class InputGenerator:
         **kwargs,
     ) -> Dataset:
         """Synchronous wrapper around :meth:`generate`."""
-        return _run_async(
-            self.generate(strategy, count, description, seed_inputs, **kwargs)
-        )
+        return _run_async(self.generate(strategy, count, description, seed_inputs, **kwargs))
 
 
 __all__ = [

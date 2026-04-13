@@ -245,6 +245,8 @@ scores = evaluate(ec, metrics=[...], sinks=[
 
 ### Export to an OTLP-compatible backend
 
+For `protocol="http"` (the default in some integrations is `grpc`), set `endpoint` to the OTLP HTTP **base** URL; `OtlpSink` appends `/v1/traces` and `/v1/metrics` for the exporters. Use `protocol="grpc"` with a `host:port` endpoint for gRPC OTLP.
+
 ```python
 from harness_evals.sinks.otlp_sink import OtlpSink  # requires pip install harness-evals[otlp]
 

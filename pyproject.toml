@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "harness-evals"
-version = "0.3.1"
+version = "0.4.2"
 description = "Open-source AI evaluation framework for LLM agents, prompts, and structured outputs"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "deepdiff>=7.0",
     "jsonschema>=4.0",
+    "jsonpath-ng>=1.6",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +36,7 @@ otlp = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 similarity = ["nltk>=3.8"]
-harness = ["PyJWT>=2.8", "requests>=2.31"]
+harness = ["httpx>=0.27", "PyJWT>=2.0", "requests>=2.28"]
 langfuse = ["langfuse>=2.0"]
 dev = [
     "pytest>=8.0",

@@ -33,7 +33,12 @@ class JsonDiffMetric(BaseMetric):
 
     def _parse(self, value: Any) -> Any:
         if isinstance(value, str):
-            return json.loads(value)
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                import yaml
+
+                return yaml.safe_load(value)
         return value
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -46,6 +51,22 @@ class JsonDiffMetric(BaseMetric):
                 value=0.0,
                 threshold=self.threshold,
                 reason=f"JSON parse error: {e}",
+            )
+
+        # If a string input still parses to a plain string, it failed to produce structure
+        if isinstance(eval_case.output, str) and isinstance(actual, str):
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason="JSON parse error: output is not valid JSON or YAML",
+            )
+        if isinstance(eval_case.expected, str) and isinstance(expected, str):
+            return Score(
+                name=self.name,
+                value=0.0,
+                threshold=self.threshold,
+                reason="JSON parse error: expected is not valid JSON or YAML",
             )
 
         diff = DeepDiff(

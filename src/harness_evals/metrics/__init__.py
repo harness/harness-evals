@@ -9,6 +9,7 @@ from harness_evals.metrics.agent.plan_quality import PlanQualityMetric
 from harness_evals.metrics.agent.step_efficiency import StepEfficiencyMetric
 from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
+from harness_evals.metrics.composite.composite import CompositeMetric
 from harness_evals.metrics.conversation.coherence import ConversationCoherenceMetric
 from harness_evals.metrics.conversation.conversation_completeness import (
     ConversationCompletenessMetric,
@@ -89,6 +90,7 @@ from harness_evals.metrics.similarity.embedding_similarity import EmbeddingSimil
 from harness_evals.metrics.similarity.levenshtein import LevenshteinMetric
 from harness_evals.metrics.structural.json_diff import JsonDiffMetric
 from harness_evals.metrics.structural.schema_validation import SchemaValidationMetric
+from harness_evals.metrics.structural.structural_similarity import StructuralSimilarityMetric
 
 __all__ = [
     "ExactMatchMetric",
@@ -97,6 +99,8 @@ __all__ = [
     "NumericDiffMetric",
     "JsonDiffMetric",
     "SchemaValidationMetric",
+    "StructuralSimilarityMetric",
+    "CompositeMetric",
     "LatencyMetric",
     "TokenCostMetric",
     "CostEfficiencyMetric",

@@ -35,6 +35,31 @@ def _truncate(value: Any, max_len: int = _MAX_ATTR_LEN) -> str:
     return s[:max_len] if len(s) > max_len else s
 
 
+def _http_otlp_endpoints(endpoint: str) -> tuple[str, str]:
+    """Return (trace_url, metrics_url) for OTLP HTTP/protobuf exporters.
+
+    OpenTelemetry HTTP exporters use the constructor ``endpoint`` verbatim; they do
+    not append ``/v1/traces`` or ``/v1/metrics`` when ``endpoint`` is set explicitly.
+
+    * If ``endpoint`` already ends with ``/v1/traces`` or ``/v1/metrics``, the sibling
+      signal URL is derived from the same prefix.
+    * Otherwise ``endpoint`` is treated as a base URL and the standard paths are
+      appended (after stripping a trailing slash).
+    """
+    base = endpoint.rstrip("/")
+    suffix_traces = "/v1/traces"
+    suffix_metrics = "/v1/metrics"
+    if base.endswith(suffix_traces):
+        trace_url = base
+        metrics_url = base[: -len(suffix_traces)] + suffix_metrics
+        return trace_url, metrics_url
+    if base.endswith(suffix_metrics):
+        metrics_url = base
+        trace_url = base[: -len(suffix_metrics)] + suffix_traces
+        return trace_url, metrics_url
+    return f"{base}{suffix_traces}", f"{base}{suffix_metrics}"
+
+
 def _load_grpc_exporters(endpoint: str, insecure: bool, *, headers: dict[str, str] | None = None) -> tuple[Any, Any]:
     """Import and instantiate gRPC metric + span exporters."""
     try:
@@ -51,8 +76,13 @@ def _load_grpc_exporters(endpoint: str, insecure: bool, *, headers: dict[str, st
     return OTLPMetricExporter(**kwargs), OTLPSpanExporter(**kwargs)
 
 
-def _load_http_exporters(endpoint: str, *, headers: dict[str, str] | None = None) -> tuple[Any, Any]:
-    """Import and instantiate HTTP metric + span exporters."""
+def _load_http_exporters(
+    trace_endpoint: str,
+    metrics_endpoint: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> tuple[Any, Any]:
+    """Import and instantiate HTTP metric + span exporters (distinct OTLP URLs)."""
     try:
         from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -61,24 +91,27 @@ def _load_http_exporters(endpoint: str, *, headers: dict[str, str] | None = None
             "HTTP exporters require opentelemetry-exporter-otlp-proto-http. "
             "Install with: pip install harness-evals[otlp]"
         ) from exc
-    kwargs: dict[str, Any] = {"endpoint": endpoint}
+    m_kwargs: dict[str, Any] = {"endpoint": metrics_endpoint}
+    t_kwargs: dict[str, Any] = {"endpoint": trace_endpoint}
     if headers:
-        kwargs["headers"] = headers
-    return OTLPMetricExporter(**kwargs), OTLPSpanExporter(**kwargs)
+        m_kwargs["headers"] = headers
+        t_kwargs["headers"] = headers
+    return OTLPMetricExporter(**m_kwargs), OTLPSpanExporter(**t_kwargs)
 
 
 class OtlpSink(BaseSink):
     """Export eval scores as OpenTelemetry metrics and traces to an OTLP endpoint.
 
-    **Metrics**: Each ``Score`` becomes a gauge observation on ``eval.score``.
+    **Metrics**: Each ``Score`` becomes a gauge observation on ``evals.score``.
     ``EvalCase`` runtime fields (latency, tokens, cost) are recorded as histograms.
 
     **Traces**: A root ``eval-run`` span contains child ``eval-item`` spans
-    (one per ``write()`` call), each with ``eval.score`` events per metric.
+    (one per ``write()`` call), each with ``evals.score`` events per metric.
 
     Deployment-specific attributes (environment, team, project) are injected by the
     caller via ``resource_attributes`` and ``extra_attributes`` — the sink itself
-    uses only generic ``eval.*`` attribute names.
+    uses only generic ``eval.*`` attribute names. Use ``item_span_attributes`` to
+    override or add attributes specific to item spans (e.g., ``span.type: eval_item``).
 
     Call ``finalize()`` after all writes to end the root span and flush data.
     ``shutdown()`` calls ``finalize()`` if it hasn't been called, then releases
@@ -87,7 +120,9 @@ class OtlpSink(BaseSink):
 
     The ``insecure`` parameter controls TLS for ``protocol="grpc"`` only.
     For ``protocol="http"``, TLS is determined by the URL scheme (``https://``
-    vs ``http://``).
+    vs ``http://``). For HTTP, ``endpoint`` is the OTLP **base** URL: ``/v1/traces``
+    and ``/v1/metrics`` are appended unless the URL already ends with one of those
+    paths (the sibling signal URL is derived automatically).
 
     Requires ``pip install harness-evals[otlp]``.
     """
@@ -104,6 +139,7 @@ class OtlpSink(BaseSink):
         model: str | None = None,
         resource_attributes: dict[str, str] | None = None,
         extra_attributes: dict[str, str] | None = None,
+        item_span_attributes: dict[str, str] | None = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")
@@ -113,12 +149,12 @@ class OtlpSink(BaseSink):
         self._run_id = run_id or str(uuid.uuid4())
         self._model = model
         self._extra_attributes = extra_attributes or {}
+        self._item_span_attributes = item_span_attributes or {}
         self._finalized = False
 
         # --- Resource (shared by metrics + traces) ---
         res_attrs = {"service.name": service_name, **(resource_attributes or {})}
         resource = Resource.create(res_attrs)
-
         # --- Exporters ---
         if protocol == "http":
             if not insecure:
@@ -127,7 +163,8 @@ class OtlpSink(BaseSink):
                     "TLS is controlled by the URL scheme (https:// vs http://).",
                     stacklevel=2,
                 )
-            metric_exporter, span_exporter = _load_http_exporters(endpoint, headers=headers)
+            trace_url, metrics_url = _http_otlp_endpoints(endpoint)
+            metric_exporter, span_exporter = _load_http_exporters(trace_url, metrics_url, headers=headers)
         else:
             metric_exporter, span_exporter = _load_grpc_exporters(endpoint, insecure, headers=headers)
 
@@ -137,22 +174,22 @@ class OtlpSink(BaseSink):
         meter = self._meter_provider.get_meter(service_name)
 
         self._score_gauge = meter.create_gauge(
-            name="eval.score",
+            name="evals.score",
             description="Evaluation metric score",
             unit="ratio",
         )
         self._latency_hist = meter.create_histogram(
-            name="eval.item.latency",
+            name="evals.item.latency",
             description="Target invocation latency per eval item",
             unit="ms",
         )
         self._token_hist = meter.create_histogram(
-            name="eval.item.tokens",
+            name="evals.item.tokens",
             description="Token count per eval item",
             unit="tokens",
         )
         self._cost_hist = meter.create_histogram(
-            name="eval.item.cost",
+            name="evals.item.cost",
             description="Cost per eval item",
             unit="usd",
         )
@@ -243,6 +280,7 @@ class OtlpSink(BaseSink):
             "eval.item.index": item_index,
             "eval.item.passed": all_passed,
             **self._extra_attributes,
+            **self._item_span_attributes,  # overrides for item span
         }
         # Propagate generic score metadata to span (first score as representative)
         if scores:

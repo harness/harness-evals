@@ -8,4 +8,5 @@ __all__ = ["BaseLLM", "BaseEmbedding"]
 # Provider imports are deferred to avoid hard dependency on openai/anthropic.
 # Use: from harness_evals.llm.openai import OpenAILLM
 # Use: from harness_evals.llm.anthropic import AnthropicLLM
+# Use: from harness_evals.llm.harness_ai import HarnessAILLM
 # Use: from harness_evals.llm.openai_embedding import OpenAIEmbedding

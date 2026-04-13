@@ -75,6 +75,17 @@ from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
 from harness_evals.metrics.safety.toxicity import ToxicityMetric
+from harness_evals.metrics.security.actionability import ActionabilityMetric
+from harness_evals.metrics.security.code_quality import CodeQualityMetric
+from harness_evals.metrics.security.code_safety import CodeSafetyMetric
+from harness_evals.metrics.security.explanation_quality import ExplanationQualityMetric
+from harness_evals.metrics.security.root_cause_analysis import RootCauseAnalysisMetric
+from harness_evals.metrics.security.security_completeness import (
+    SecurityCompletenessMetric,
+)
+from harness_evals.metrics.security.vulnerability_correctness import (
+    VulnerabilityCorrectnessMetric,
+)
 from harness_evals.metrics.similarity.bleu import BLEUMetric
 from harness_evals.metrics.similarity.embedding_similarity import EmbeddingSimilarityMetric
 from harness_evals.metrics.similarity.levenshtein import LevenshteinMetric
@@ -151,4 +162,11 @@ __all__ = [
     "SummarizationMetric",
     "PromptAlignmentMetric",
     "BiasMetric",
+    "VulnerabilityCorrectnessMetric",
+    "SecurityCompletenessMetric",
+    "CodeSafetyMetric",
+    "CodeQualityMetric",
+    "ExplanationQualityMetric",
+    "RootCauseAnalysisMetric",
+    "ActionabilityMetric",
 ]

@@ -3,7 +3,7 @@
 Routes LLM calls through the Harness AI Service gateway, which proxies to
 OpenAI/Anthropic/etc with a unified API. Auth via HS256 JWT.
 
-Requires ``PyJWT`` and ``requests``::
+Requires ``httpx`` and ``PyJWT``::
 
     pip install harness-evals[harness]
 
@@ -14,7 +14,6 @@ Environment variables:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
@@ -23,7 +22,7 @@ import time
 from harness_evals.llm.base import BaseLLM
 
 
-def _generate_jwt(secret: bytes, *, service_name: str = "STO") -> str:
+def _generate_jwt(secret: bytes, *, service_name: str = "harness-evals") -> str:
     """Generate a Harness AI service JWT (HS256).
 
     ``service_name`` sets both the ``sub`` and ``name`` claims. The Harness AI
@@ -69,6 +68,11 @@ def _extract_json(text: str) -> dict:
 class HarnessAILLM(BaseLLM):
     """LLM backed by the Harness AI chat gateway.
 
+    The gateway does not support structured-output / ``json_schema`` response
+    format. When ``generate_json`` is called, the JSON schema is appended to
+    the prompt so the model sees the expected shape, and the response is
+    parsed with ``_extract_json`` which handles markdown fences.
+
     API key resolution: constructor ``secret`` > ``HARNESS_AI_SERVICE_SECRET`` env var.
     URL resolution: constructor ``base_url`` > ``HARNESS_AI_SERVICE_URL`` env var.
     """
@@ -81,10 +85,11 @@ class HarnessAILLM(BaseLLM):
         provider: str = "openai",
         temperature: float = 0.2,
         max_output_tokens: int = 4096,
+        service_name: str = "harness-evals",
     ) -> None:
         try:
+            import httpx  # noqa: F401
             import jwt  # noqa: F401
-            import requests  # noqa: F401
         except ImportError as e:
             raise ImportError("Install dependencies: pip install harness-evals[harness]") from e
 
@@ -97,32 +102,31 @@ class HarnessAILLM(BaseLLM):
         self.provider = provider
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
+        self.service_name = service_name
 
-    def _call_chat(self, prompt: str) -> dict:
+    async def _call_chat(self, prompt: str) -> dict:
         """Send a chat request to the Harness AI gateway and return the parsed response."""
-        import requests
+        import httpx
 
-        token = _generate_jwt(self.secret)
-        resp = requests.post(
-            f"{self.base_url}/chat",
-            json={
-                "provider": self.provider,
-                "model_name": self.model,
-                "message": prompt,
-                "model_parameters": {
-                    "temperature": self.temperature,
-                    "max_output_tokens": self.max_output_tokens,
-                    "top_p": 0,
-                    "top_k": 0,
+        token = _generate_jwt(self.secret, service_name=self.service_name)
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat",
+                json={
+                    "provider": self.provider,
+                    "model_name": self.model,
+                    "message": prompt,
+                    "model_parameters": {
+                        "temperature": self.temperature,
+                        "max_output_tokens": self.max_output_tokens,
+                    },
+                    "examples": [],
                 },
-                "examples": [],
-            },
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            timeout=120,
-        )
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
 
         if resp.status_code != 200:
             raise RuntimeError(f"Harness AI Service returned {resp.status_code}: {resp.text[:300]}")
@@ -134,10 +138,12 @@ class HarnessAILLM(BaseLLM):
         return data
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
-        data = await asyncio.to_thread(self._call_chat, prompt)
+        data = await self._call_chat(prompt)
         return data.get("text", "")
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
-        data = await asyncio.to_thread(self._call_chat, prompt)
+        if schema:
+            prompt = f"{prompt}\n\nRespond with JSON matching this schema:\n{json.dumps(schema, indent=2)}"
+        data = await self._call_chat(prompt)
         text = data.get("text", "{}")
         return _extract_json(text)

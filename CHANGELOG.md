@@ -14,7 +14,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ExplanationQuality, RootCauseAnalysis, Actionability (all in `harness_evals.metrics.security`)
 - `remediation_quality_index()` — weighted composite scoring (Remediation Quality Index) for security metrics
 - `HarnessAILLM` provider — routes LLM calls through the Harness AI Service gateway (`harness_evals.llm.harness_ai`)
-- `[harness]` optional dependency group (PyJWT, requests)
+- `[harness]` optional dependency group (httpx, PyJWT)
 - 78 new tests (62 security metric unit + structural + prompt + pipeline, 16 HarnessAILLM + JSON extraction)
 
 ## [0.2.0] - 2026-03-16

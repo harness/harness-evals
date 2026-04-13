@@ -33,7 +33,12 @@ class JsonDiffMetric(BaseMetric):
 
     def _parse(self, value: Any) -> Any:
         if isinstance(value, str):
-            return json.loads(value)
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                import yaml
+
+                return yaml.safe_load(value)
         return value
 
     def measure(self, eval_case: EvalCase) -> Score:

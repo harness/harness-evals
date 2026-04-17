@@ -608,7 +608,10 @@ Safety metrics are **reported separately, never averaged** into an overall score
 | # | Metric | What It Does | LLM? |
 |---|--------|-------------|------|
 | 25 | **ToolCorrectnessMetric** | Compares `metadata["tools_called"]` against expected tool sequence. Supports exact match and subset modes. | No |
+| 25b | **ToolArgumentMatchMetric** | Deterministic comparison of tool-call arguments against `eval_case.expected_tool_calls`. Companion to `ToolCorrectnessMetric`. Supports `pair=exact|subset`, `arg_match=exact|subset`, `ignore_keys`, and a wildcard value. | No |
 | 26 | **TaskCompletionMetric** | LLM judges whether the agent completed the requested task, considering partial completion. | Yes |
+
+> **Data model note:** `Golden` and `EvalCase` carry an additive optional field `expected_tool_calls: list[ToolCall] | None` (defaults to `None`, fully backward-compatible) so deterministic argument expectations can be authored alongside `expected_tools`. See [docs/adr/010-tool-argument-match-separate-metric.md](docs/adr/010-tool-argument-match-separate-metric.md).
 
 #### Robustness Metrics (+2, from Rabanser et al.)
 
@@ -935,6 +938,7 @@ Phase 1 has two dependencies. LLM providers are optional. No heavy ML libraries.
 | 23 | PromptInjectionMetric | Safety | 3 | Yes |
 | 24 | HallucinationMetric | Safety | 3 | Yes |
 | 25 | ToolCorrectnessMetric | Agent | 3 | No |
+| 25b | ToolArgumentMatchMetric | Agent | 3 | No |
 | 26 | TaskCompletionMetric | Agent | 3 | Yes |
 | 27 | PromptRobustnessMetric | Reliability/Robustness | 3 | No |
 | 28 | EnvironmentRobustnessMetric | Reliability/Robustness | 3 | No |

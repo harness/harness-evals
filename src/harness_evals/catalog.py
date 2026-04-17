@@ -1,6 +1,6 @@
 """Built-in metric catalog — introspects all shipped metrics and returns their metadata.
 
-Platform services (e.g., ai-evals) call ``catalog()`` at startup to discover
+Platform services call ``catalog()`` at startup to discover
 available metrics and sync them into their persistence layer.
 """
 
@@ -86,7 +86,6 @@ def _get_default_threshold(cls: type) -> float:
 
 # ---------------------------------------------------------------------------
 # Registry: kind → metric class
-# Mirrors the ai-evals HEURISTIC_METRIC_REGISTRY but is the canonical source.
 # ---------------------------------------------------------------------------
 
 
@@ -147,6 +146,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         SummarizationMetric,
         TaskCompletionMetric,
         TokenCostMetric,
+        ToolArgumentMatchMetric,
         ToolCorrectnessMetric,
         ToolSelectionAccuracyMetric,
         ToolUseMetric,
@@ -204,6 +204,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "task_completion": TaskCompletionMetric,
         "tool_correctness": ToolCorrectnessMetric,
         "argument_correctness": ArgumentCorrectnessMetric,
+        "tool_argument_match": ToolArgumentMatchMetric,
         "plan_adherence": PlanAdherenceMetric,
         "plan_quality": PlanQualityMetric,
         "step_efficiency": StepEfficiencyMetric,

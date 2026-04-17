@@ -9,6 +9,7 @@ from harness_evals.metrics.agent.plan_adherence import PlanAdherenceMetric
 from harness_evals.metrics.agent.plan_quality import PlanQualityMetric
 from harness_evals.metrics.agent.step_efficiency import StepEfficiencyMetric
 from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
+from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from tests.conftest import MockLLM
 
@@ -190,6 +191,231 @@ class TestToolCorrectnessSubset:
     def test_invalid_mode_raises(self):
         with pytest.raises(ValueError, match="mode must be"):
             ToolCorrectnessMetric(mode="invalid")
+
+
+# ---------------------------------------------------------------------------
+# ToolArgumentMatchMetric
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestToolArgumentMatch:
+    def test_exact_pair_all_args_match(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.passed
+        assert score.value == 1.0
+        assert score.metadata["matches"] == 2
+        assert score.metadata["n_pairs"] == 2
+
+    def test_exact_pair_one_arg_value_wrong(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "dogs"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 0.5
+        first = score.metadata["details"][0]
+        assert not first["matched"]
+        assert first["value_mismatches"] == [{"key": "q", "expected": "dogs", "actual": "cats"}]
+
+    def test_exact_pair_name_mismatch_zero_for_pair(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="other", input={"q": "cats"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 0.0
+        assert score.metadata["details"][0]["reason"] == "name_mismatch"
+
+    def test_subset_pair_reordered_calls(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="respond", input={"text": "ok"}),
+                ToolCall(name="search", input={"q": "cats"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric(pair="subset").measure(ec)
+        assert score.value == 1.0
+        assert score.passed
+
+    def test_arg_match_subset_ignores_extra_keys(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="search", input={"q": "cats", "limit": 10}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric(arg_match="subset").measure(ec)
+        assert score.value == 1.0
+
+    def test_arg_match_exact_penalises_extra_keys(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="search", input={"q": "cats", "limit": 10}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric(arg_match="exact").measure(ec)
+        assert score.value == 0.0
+        assert score.metadata["details"][0]["extra_keys"] == ["limit"]
+
+    def test_ignore_keys_hides_differences(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="search", input={"q": "cats", "timestamp": 999}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats", "timestamp": 1}),
+            ],
+        )
+        score = ToolArgumentMatchMetric(ignore_keys={"timestamp"}).measure(ec)
+        assert score.value == 1.0
+
+    def test_wildcard_value_matches_anything(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="book", input={"flight_id": "FL-12345"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="book", input={"flight_id": "*"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 1.0
+
+    def test_missing_expected_tool_calls(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[ToolCall(name="search", input={"q": "cats"})],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 0.0
+        assert "expected_tool_calls" in score.reason
+
+    def test_missing_tool_calls(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            expected_tool_calls=[ToolCall(name="search", input={"q": "cats"})],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 0.0
+        assert "tool_calls" in score.reason
+
+    def test_both_empty_passes(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[],
+            expected_tool_calls=[],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 1.0
+        assert score.passed
+
+    def test_expected_empty_actual_nonempty_fails(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[ToolCall(name="search", input={"q": "cats"})],
+            expected_tool_calls=[],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 0.0
+
+    def test_exact_pair_length_mismatch_extra_actual(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+                ToolCall(name="extra", input={}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="search", input={"q": "cats"}),
+                ToolCall(name="respond", input={"text": "ok"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert abs(score.value - 2 / 3) < 1e-9
+        assert score.metadata["n_pairs"] == 3
+
+    def test_missing_input_dicts_treated_as_empty(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[ToolCall(name="search")],
+            expected_tool_calls=[ToolCall(name="search")],
+        )
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 1.0
+
+    def test_invalid_pair_raises(self):
+        with pytest.raises(ValueError, match="pair must be"):
+            ToolArgumentMatchMetric(pair="invalid")
+
+    def test_invalid_arg_match_raises(self):
+        with pytest.raises(ValueError, match="arg_match must be"):
+            ToolArgumentMatchMetric(arg_match="invalid")
+
+    def test_from_dict_round_trip_rehydrates_expected_tool_calls(self):
+        ec = EvalCase.from_dict(
+            {
+                "input": "task",
+                "output": "result",
+                "tool_calls": [{"name": "search", "input": {"q": "cats"}}],
+                "expected_tool_calls": [{"name": "search", "input": {"q": "cats"}}],
+            }
+        )
+        assert isinstance(ec.expected_tool_calls[0], ToolCall)
+        score = ToolArgumentMatchMetric().measure(ec)
+        assert score.value == 1.0
 
 
 # ---------------------------------------------------------------------------

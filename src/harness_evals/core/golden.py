@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from harness_evals.core.types import ToolCall
+
 
 @dataclass
 class Golden:
@@ -16,6 +18,7 @@ class Golden:
     expected: str | dict | list | None = None
     context: list[str] | None = None
     expected_tools: list[str] | None = None
+    expected_tool_calls: list[ToolCall] | None = None
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
 
@@ -32,6 +35,11 @@ class Golden:
         mapped = dict(data)
         if "expected_output" in mapped and "expected" not in mapped:
             mapped["expected"] = mapped.pop("expected_output")
+
+        if "expected_tool_calls" in mapped and mapped["expected_tool_calls"] is not None:
+            mapped["expected_tool_calls"] = [
+                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc) for tc in mapped["expected_tool_calls"]
+            ]
 
         known = {f.name for f in cls.__dataclass_fields__.values()}
         return cls(**{k: v for k, v in mapped.items() if k in known})

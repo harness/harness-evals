@@ -168,6 +168,28 @@ ec = EvalCase(
 scores = evaluate(ec, metrics=[ToolCorrectnessMetric()])
 ```
 
+For deterministic argument checks, pair `ToolCorrectnessMetric` with `ToolArgumentMatchMetric`:
+
+```python
+from harness_evals import EvalCase, ToolCall, evaluate
+from harness_evals.metrics import ToolArgumentMatchMetric, ToolCorrectnessMetric
+
+ec = EvalCase(
+    input="Check weather in Paris",
+    output="It's 18C and sunny",
+    tool_calls=[ToolCall(name="get_weather", input={"city": "Paris", "units": "C"})],
+    expected_tools=["get_weather"],
+    expected_tool_calls=[ToolCall(name="get_weather", input={"city": "Paris"})],
+)
+scores = evaluate(
+    ec,
+    metrics=[
+        ToolCorrectnessMetric(mode="exact"),
+        ToolArgumentMatchMetric(arg_match="subset", ignore_keys={"trace_id"}),
+    ],
+)
+```
+
 ### Evaluate conversation messages
 
 ```python
@@ -285,7 +307,7 @@ for name, m in summary.by_metric.items():
 | **LLM-Judged** | GEval, RubricJudge, Pairwise | LLM scores output against criteria, rubric, or A/B comparison (requires `[llm]`) |
 | **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, AnswerCorrectness, AnswerSimilarity, ContextEntityRecall, ContextRelevancy | Retrieval-augmented generation quality (requires `[llm]`) |
 | **Safety** | PII, Toxicity, PromptInjection, Hallucination | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
-| **Agent** | ToolCorrectness, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, task completion, argument validation, plan quality/adherence, step efficiency (requires `[llm]`) |
+| **Agent** | ToolCorrectness, ToolArgumentMatch, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, deterministic argument match, task completion, LLM-judged argument validation, plan quality/adherence, step efficiency (some require `[llm]`) |
 | **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |
 
 ## EvalCase Fields

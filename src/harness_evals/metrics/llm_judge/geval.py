@@ -43,47 +43,45 @@ from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.llm_judge.types import RubricLevel
 
+# Prompt sections have NO leading/trailing blank lines; sections are joined
+# with "\n\n" for exactly one blank line between them (no triple newlines).
+
 _PROMPT_HEADER = """You are an expert evaluator. Score the following output against the given criteria.
 
 Evaluate ONLY based on the input and output provided below. Do not infer or assume
 information that is not explicitly present. If the output lacks a particular element,
 treat it as absent rather than inferring it.
 
-**Criteria**: {criteria}
-"""
+**Criteria**: {criteria}"""
 
-_STEPS_SECTION = """
-**Evaluation steps** (follow each step in order):
-{steps}
-"""
+_STEPS_SECTION = """**Evaluation steps** (follow each step in order):
+{steps}"""
 
-_RUBRIC_SECTION = """
-**Rubric** (use these ranges to assign your final score):
-{rubric}
-"""
+_RUBRIC_SECTION = """**Rubric** (use these ranges to assign your final score):
+{rubric}"""
 
-_IO_SECTION = """
-**Input**: {input}
+_IO_SECTION_WITHOUT_EXPECTED = """**Input**: {input}
+
+**Output**: {output}"""
+
+_IO_SECTION_WITH_EXPECTED = """**Input**: {input}
 
 **Output**: {output}
 
-{expected_section}
-"""
+**Expected output**: {expected}"""
 
 _FLOAT_SCORING_INSTRUCTION = """First, reason step-by-step about how well the output meets the criteria.
 Then provide your score.
 
 Respond with JSON:
-{"reasoning": "your chain-of-thought reasoning", "score": <float between 0.0 and 1.0>}
-"""
+{"reasoning": "your chain-of-thought reasoning", "score": <float between 0.0 and 1.0>}"""
 
 _INT_SCORING_INSTRUCTION = """First, reason step-by-step through each evaluation step above.
 Then assign an integer score from {min_score} to {max_score} based on the rubric. The rubric is the
 sole authority for mapping your observations to a numeric score.
 
 Respond with JSON:
-{{"reasoning": "your chain-of-thought reasoning", "score": <integer {min_score}-{max_score}>}}
-"""
+{{"reasoning": "your chain-of-thought reasoning", "score": <integer {min_score}-{max_score}>}}"""
 
 _FLOAT_SCHEMA = {
     "type": "object",
@@ -138,8 +136,10 @@ class GEvalMetric(BaseMetric):
             if criteria is not None
             else (self.__class__.criteria or "Is the response accurate, relevant, and complete?")
         )
-        resolved_steps = evaluation_steps if evaluation_steps is not None else list(self.__class__.evaluation_steps)
-        resolved_rubric = rubric if rubric is not None else list(self.__class__.rubric)
+        # Always copy so neither the caller's list nor the class-level default can be mutated
+        # through the instance (and vice versa).
+        resolved_steps = list(evaluation_steps if evaluation_steps is not None else self.__class__.evaluation_steps)
+        resolved_rubric = list(rubric if rubric is not None else self.__class__.rubric)
         resolved_name = (
             name if name is not None else ("geval" if type(self) is GEvalMetric else self.__class__.__name__)
         )
@@ -166,14 +166,21 @@ class GEvalMetric(BaseMetric):
             rubric_text = "\n".join(f"  {r.min_score}-{r.max_score}: {r.description}" for r in self.rubric)
             parts.append(_RUBRIC_SECTION.format(rubric=rubric_text))
 
-        expected_section = f"**Expected output**: {eval_case.expected}" if eval_case.expected else ""
-        parts.append(
-            _IO_SECTION.format(
-                input=eval_case.input,
-                output=eval_case.output,
-                expected_section=expected_section,
+        if eval_case.expected is not None:
+            parts.append(
+                _IO_SECTION_WITH_EXPECTED.format(
+                    input=eval_case.input,
+                    output=eval_case.output,
+                    expected=eval_case.expected,
+                )
             )
-        )
+        else:
+            parts.append(
+                _IO_SECTION_WITHOUT_EXPECTED.format(
+                    input=eval_case.input,
+                    output=eval_case.output,
+                )
+            )
 
         if self.rubric:
             min_score = min(r.min_score for r in self.rubric)
@@ -182,7 +189,7 @@ class GEvalMetric(BaseMetric):
         else:
             parts.append(_FLOAT_SCORING_INSTRUCTION)
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

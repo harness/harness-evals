@@ -24,33 +24,35 @@ _DEFAULT_RUBRIC = {
     1: "Very poor — mostly wrong, off-topic, or barely addresses the task.",
 }
 
+# Prompt sections have NO leading/trailing blank lines; sections are joined
+# with "\n\n" for exactly one blank line between them (no triple newlines).
+
 _PROMPT_HEADER = """You are an expert evaluator. Score the following output using the rubric below.
 
 Evaluate ONLY based on the input and output provided below. Do not infer or assume
 information that is not explicitly present. If the output lacks a particular element,
-treat it as absent rather than inferring it.
-"""
+treat it as absent rather than inferring it."""
 
-_STEPS_SECTION = """
-**Evaluation steps** (follow each step in order):
-{steps}
-"""
+_STEPS_SECTION = """**Evaluation steps** (follow each step in order):
+{steps}"""
 
-_IO_SECTION = """
-**Input**: {input}
+_IO_SECTION_WITHOUT_EXPECTED = """**Input**: {input}
+
+**Output**: {output}"""
+
+_IO_SECTION_WITH_EXPECTED = """**Input**: {input}
 
 **Output**: {output}
 
-{expected_section}
+**Expected output**: {expected}"""
 
-**Rubric** (score {min_level}-{max_level}):
+_RUBRIC_AND_INSTRUCTION = """**Rubric** (score {min_level}-{max_level}):
 {rubric_text}
 
 Evaluate the output and select the rubric level that best matches.
 
 Respond with JSON:
-{{"reasoning": "your evaluation reasoning", "level": <integer {min_level}-{max_level}>}}
-"""
+{{"reasoning": "your evaluation reasoning", "level": <integer {min_level}-{max_level}>}}"""
 
 _RESPONSE_SCHEMA = {
     "type": "object",
@@ -85,7 +87,9 @@ class RubricJudgeMetric(BaseMetric):
         self.llm = llm
         if rubric is not None and not rubric:
             raise ValueError("rubric must be a non-empty dict mapping int levels to descriptions")
-        self.rubric = rubric or _DEFAULT_RUBRIC
+        # Copy so neither the caller's dict nor the module-level default can be mutated
+        # through the instance (and vice versa).
+        self.rubric = dict(rubric) if rubric else dict(_DEFAULT_RUBRIC)
         self.evaluation_steps = list(evaluation_steps) if evaluation_steps else []
 
     def _build_prompt(self, eval_case: EvalCase) -> str:
@@ -93,23 +97,34 @@ class RubricJudgeMetric(BaseMetric):
         min_level, max_level = levels[0], levels[-1]
 
         rubric_text = "\n".join(f"  {k}: {v}" for k, v in sorted(self.rubric.items(), reverse=True))
-        expected_section = f"**Expected output**: {eval_case.expected}" if eval_case.expected else ""
 
         parts = [_PROMPT_HEADER]
         if self.evaluation_steps:
             steps_text = "\n".join(f"  {i + 1}. {step}" for i, step in enumerate(self.evaluation_steps))
             parts.append(_STEPS_SECTION.format(steps=steps_text))
+        if eval_case.expected is not None:
+            parts.append(
+                _IO_SECTION_WITH_EXPECTED.format(
+                    input=eval_case.input,
+                    output=eval_case.output,
+                    expected=eval_case.expected,
+                )
+            )
+        else:
+            parts.append(
+                _IO_SECTION_WITHOUT_EXPECTED.format(
+                    input=eval_case.input,
+                    output=eval_case.output,
+                )
+            )
         parts.append(
-            _IO_SECTION.format(
-                input=eval_case.input,
-                output=eval_case.output,
-                expected_section=expected_section,
+            _RUBRIC_AND_INSTRUCTION.format(
                 rubric_text=rubric_text,
                 min_level=min_level,
                 max_level=max_level,
             )
         )
-        return "\n".join(parts)
+        return "\n\n".join(parts)
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

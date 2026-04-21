@@ -329,3 +329,219 @@ class TestRubricJudgeMetricEvaluationSteps:
         await metric.a_measure(EvalCase(input="q", output="a"))
         assert "Evaluate ONLY" in llm.last_prompt
         assert "Do not infer or assume" in llm.last_prompt
+
+
+# ---------------------------------------------------------------------------
+# Mutable-state isolation: no aliasing across instances / caller / class attrs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMutableStateIsolation:
+    def test_geval_sibling_instances_have_independent_lists(self):
+        llm = MockLLM({"reasoning": "x", "score": 0})
+        a = GEvalMetric(llm=llm, criteria="x", evaluation_steps=["s"], rubric=[RubricLevel(0, 5, "d")])
+        b = GEvalMetric(llm=llm, criteria="x", evaluation_steps=["s"], rubric=[RubricLevel(0, 5, "d")])
+        assert a.evaluation_steps is not b.evaluation_steps
+        assert a.rubric is not b.rubric
+        a.evaluation_steps.append("leaked")
+        a.rubric.append(RubricLevel(0, 0, "leaked"))
+        assert "leaked" not in b.evaluation_steps
+        assert not any(r.description == "leaked" for r in b.rubric)
+
+    def test_geval_caller_list_not_aliased(self):
+        llm = MockLLM({"reasoning": "x", "score": 0})
+        caller_steps = ["a"]
+        caller_rubric = [RubricLevel(0, 5, "d")]
+        metric = GEvalMetric(llm=llm, criteria="x", evaluation_steps=caller_steps, rubric=caller_rubric)
+        assert metric.evaluation_steps is not caller_steps
+        assert metric.rubric is not caller_rubric
+        caller_steps.append("mutated")
+        caller_rubric.append(RubricLevel(0, 0, "mutated"))
+        assert "mutated" not in metric.evaluation_steps
+        assert not any(r.description == "mutated" for r in metric.rubric)
+
+    def test_geval_class_default_not_aliased(self):
+        class WithDefaults(GEvalMetric):
+            criteria = "x"
+            evaluation_steps = ["default"]
+            rubric = [RubricLevel(0, 5, "default")]
+
+        llm = MockLLM({"reasoning": "x", "score": 0})
+        m1 = WithDefaults(llm=llm)
+        m2 = WithDefaults(llm=llm)
+        assert m1.evaluation_steps is not WithDefaults.evaluation_steps
+        assert m1.rubric is not WithDefaults.rubric
+        assert m1.evaluation_steps is not m2.evaluation_steps
+        m1.evaluation_steps.append("added")
+        m1.rubric.append(RubricLevel(0, 0, "added"))
+        assert "added" not in m2.evaluation_steps
+        assert "added" not in WithDefaults.evaluation_steps
+        assert not any(r.description == "added" for r in m2.rubric)
+        assert not any(r.description == "added" for r in WithDefaults.rubric)
+
+    def test_rubric_judge_dict_not_aliased(self):
+        llm = MockLLM({"reasoning": "x", "level": 1})
+        caller_dict = {1: "Poor", 2: "OK", 3: "Great"}
+        metric = RubricJudgeMetric(llm=llm, rubric=caller_dict)
+        assert metric.rubric is not caller_dict
+        caller_dict[4] = "Excellent"
+        assert 4 not in metric.rubric
+
+    def test_rubric_judge_default_rubric_not_aliased(self):
+        llm = MockLLM({"reasoning": "x", "level": 1})
+        m1 = RubricJudgeMetric(llm=llm)
+        m2 = RubricJudgeMetric(llm=llm)
+        assert m1.rubric is not m2.rubric
+        m1.rubric[99] = "injected"
+        assert 99 not in m2.rubric
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: degenerate rubrics, empty lists, format-unsafe inputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestGEvalMetricEdgeCases:
+    async def test_single_band_rubric_span_zero(self):
+        """Rubric with one level where min==max: normalized value is 1.0."""
+        llm = MockLLM({"reasoning": "x", "score": 5})
+        metric = GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(5, 5, "only")])
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert s.value == 1.0
+        assert s.metadata["raw_score"] == 5
+        assert s.metadata["min_score"] == 5
+        assert s.metadata["max_score"] == 5
+
+    async def test_rubric_not_starting_at_zero(self):
+        """1-5 rubric normalizes (3-1)/(5-1) = 0.5."""
+        llm = MockLLM({"reasoning": "x", "score": 3})
+        metric = GEvalMetric(
+            llm=llm,
+            criteria="x",
+            rubric=[RubricLevel(1, 2, "low"), RubricLevel(3, 4, "mid"), RubricLevel(5, 5, "high")],
+        )
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert abs(s.value - 0.5) < 1e-9
+        assert "from 1 to 5" in llm.last_prompt
+        assert "integer 1-5" in llm.last_prompt
+
+    async def test_non_contiguous_rubric_with_gaps(self):
+        """Gaps between bands are allowed; LLM can still score in the full range."""
+        llm = MockLLM({"reasoning": "x", "score": 6})
+        metric = GEvalMetric(
+            llm=llm,
+            criteria="x",
+            rubric=[RubricLevel(0, 3, "low"), RubricLevel(8, 10, "high")],
+        )
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert abs(s.value - 0.6) < 1e-9
+        assert "0-3: low" in llm.last_prompt
+        assert "8-10: high" in llm.last_prompt
+
+    async def test_empty_evaluation_steps_omits_section(self):
+        llm = MockLLM({"reasoning": "x", "score": 0.5})
+        metric = GEvalMetric(llm=llm, criteria="x", evaluation_steps=[])
+        await metric.a_measure(EvalCase(input="q", output="a"))
+        assert "Evaluation steps" not in llm.last_prompt
+
+    async def test_empty_rubric_list_uses_float_path(self):
+        llm = MockLLM({"reasoning": "x", "score": 0.7})
+        metric = GEvalMetric(llm=llm, criteria="x", rubric=[])
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert s.value == 0.7
+        assert s.metadata is None
+
+    async def test_float_score_with_rubric_truncated_to_int(self):
+        """LLM disobeys 'integer' -> int() truncates for metadata and normalization."""
+        llm = MockLLM({"reasoning": "x", "score": 5.7})
+        metric = GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(0, 10, "d")])
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert abs(s.value - 0.5) < 1e-9
+        assert s.metadata["raw_score"] == 5
+
+    async def test_none_score_returns_zero(self):
+        llm = MockLLM({"reasoning": "x", "score": None})
+        metric = GEvalMetric(llm=llm, criteria="x")
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert s.value == 0.0
+
+    async def test_none_score_with_rubric_returns_zero(self):
+        llm = MockLLM({"reasoning": "x", "score": None})
+        metric = GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(0, 10, "d")])
+        s = await metric.a_measure(EvalCase(input="q", output="a"))
+        assert s.value == 0.0
+
+    async def test_braces_in_input_output_dont_break_format(self):
+        """Curly braces in user-supplied text must not trigger .format() errors."""
+        ec = EvalCase(
+            input="Test {foo} {bar} {{nested}}",
+            output='```json\n{"key": {"nested": "value"}}\n```',
+            expected="{a: 1}",
+        )
+        llm = MockLLM({"reasoning": "x", "score": 0.9})
+        metric = GEvalMetric(llm=llm, criteria="x")
+        s = await metric.a_measure(ec)
+        assert s.value == 0.9
+        assert '{"key"' in llm.last_prompt
+        assert "{foo}" in llm.last_prompt
+
+    async def test_schema_selection_integer_vs_number(self):
+        llm = MockLLM({"reasoning": "x", "score": 5})
+        metric = GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(0, 10, "d")])
+        await metric.a_measure(EvalCase(input="q", output="a"))
+        assert llm.last_schema["properties"]["score"]["type"] == "integer"
+
+        llm = MockLLM({"reasoning": "x", "score": 0.5})
+        metric = GEvalMetric(llm=llm, criteria="x")
+        await metric.a_measure(EvalCase(input="q", output="a"))
+        assert llm.last_schema["properties"]["score"]["type"] == "number"
+
+
+# ---------------------------------------------------------------------------
+# Prompt formatting invariants: no triple newlines, no unsubstituted fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestPromptFormattingInvariants:
+    """Guard against regressions in prompt assembly."""
+
+    def _cases(self):
+        return [
+            EvalCase(input="q", output="a"),
+            EvalCase(input="q", output="a", expected="ref"),
+            EvalCase(input="q with {braces}", output='{"json": 1}'),
+        ]
+
+    def test_geval_no_triple_newlines(self):
+        llm = MockLLM({"reasoning": "x", "score": 0.5})
+        for ec in self._cases():
+            for metric in [
+                GEvalMetric(llm=llm, criteria="x"),
+                GEvalMetric(llm=llm, criteria="x", evaluation_steps=["s"]),
+                GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(0, 10, "d")]),
+                GEvalMetric(
+                    llm=llm,
+                    criteria="x",
+                    evaluation_steps=["s1", "s2"],
+                    rubric=[RubricLevel(0, 10, "d")],
+                ),
+            ]:
+                p = metric._build_prompt(ec)
+                assert "\n\n\n" not in p, f"triple newline in {type(metric).__name__} prompt"
+                assert "{{" not in p and "}}" not in p, "unresolved brace escape"
+
+    def test_rubric_judge_no_triple_newlines(self):
+        llm = MockLLM({"reasoning": "x", "level": 3})
+        for ec in self._cases():
+            for metric in [
+                RubricJudgeMetric(llm=llm),
+                RubricJudgeMetric(llm=llm, evaluation_steps=["a", "b"]),
+                RubricJudgeMetric(llm=llm, rubric={0: "bad", 1: "ok", 2: "good"}),
+            ]:
+                p = metric._build_prompt(ec)
+                assert "\n\n\n" not in p, "triple newline in rubric_judge prompt"
+                assert "{{" not in p and "}}" not in p

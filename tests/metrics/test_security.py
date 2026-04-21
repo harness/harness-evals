@@ -10,7 +10,7 @@ import pytest
 from harness_evals import EvalCase, a_evaluate, evaluate
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
-from harness_evals.metrics.security._base import SecurityRemediationMetric
+from harness_evals.metrics.llm_judge.geval import GEvalMetric
 from harness_evals.metrics.security.actionability import ActionabilityMetric
 from harness_evals.metrics.security.code_quality import CodeQualityMetric
 from harness_evals.metrics.security.code_safety import CodeSafetyMetric
@@ -405,7 +405,7 @@ class TestPatternConsistency:
     def test_all_extend_base_metric(self):
         for cls in ALL_METRIC_CLASSES:
             assert issubclass(cls, BaseMetric)
-            assert issubclass(cls, SecurityRemediationMetric)
+            assert issubclass(cls, GEvalMetric)
 
     def test_all_require_llm_param(self):
         for cls in ALL_METRIC_CLASSES:
@@ -455,8 +455,8 @@ class TestPromptTemplate:
         assert "Criteria" in prompt
         assert "Evaluation steps" in prompt
         assert "Rubric" in prompt
-        assert "Input (vulnerability context)" in prompt
-        assert "Output (AI-generated remediation)" in prompt
+        assert "Input" in prompt
+        assert "Output" in prompt
         assert '{"reasoning":' in prompt
         assert '"score":' in prompt
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from harness_evals.core.metric import Dimension
 from harness_evals.llm.base import BaseLLM
-from harness_evals.metrics.security._base import RubricLevel, SecurityRemediationMetric
+from harness_evals.metrics.llm_judge.geval import GEvalMetric
+from harness_evals.metrics.llm_judge.types import RubricLevel
 
 
-class CodeSafetyMetric(SecurityRemediationMetric):
+class CodeSafetyMetric(GEvalMetric):
     """Evaluates whether the fix avoids introducing new vulnerabilities or breaking behavior.
 
     Weight in composite RQI: 15%.

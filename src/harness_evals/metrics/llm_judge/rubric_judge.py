@@ -24,9 +24,6 @@ _DEFAULT_RUBRIC = {
     1: "Very poor — mostly wrong, off-topic, or barely addresses the task.",
 }
 
-# Prompt sections have NO leading/trailing blank lines; sections are joined
-# with "\n\n" for exactly one blank line between them (no triple newlines).
-
 _PROMPT_HEADER = """You are an expert evaluator. Score the following output using the rubric below.
 
 Evaluate ONLY based on the input and output provided below. Do not infer or assume
@@ -87,8 +84,6 @@ class RubricJudgeMetric(BaseMetric):
         self.llm = llm
         if rubric is not None and not rubric:
             raise ValueError("rubric must be a non-empty dict mapping int levels to descriptions")
-        # Copy so neither the caller's dict nor the module-level default can be mutated
-        # through the instance (and vice versa).
         self.rubric = dict(rubric) if rubric else dict(_DEFAULT_RUBRIC)
         self.evaluation_steps = list(evaluation_steps) if evaluation_steps else []
 

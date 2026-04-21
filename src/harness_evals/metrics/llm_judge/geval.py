@@ -43,9 +43,6 @@ from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.llm_judge.types import RubricLevel
 
-# Prompt sections have NO leading/trailing blank lines; sections are joined
-# with "\n\n" for exactly one blank line between them (no triple newlines).
-
 _PROMPT_HEADER = """You are an expert evaluator. Score the following output against the given criteria.
 
 Evaluate ONLY based on the input and output provided below. Do not infer or assume
@@ -136,8 +133,6 @@ class GEvalMetric(BaseMetric):
             if criteria is not None
             else (self.__class__.criteria or "Is the response accurate, relevant, and complete?")
         )
-        # Always copy so neither the caller's list nor the class-level default can be mutated
-        # through the instance (and vice versa).
         resolved_steps = list(evaluation_steps if evaluation_steps is not None else self.__class__.evaluation_steps)
         resolved_rubric = list(rubric if rubric is not None else self.__class__.rubric)
         resolved_name = (

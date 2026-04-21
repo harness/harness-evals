@@ -115,7 +115,7 @@ class TestRubricJudgeMetric:
 
 
 # ---------------------------------------------------------------------------
-# RubricLevel dataclass
+# RubricLevel
 # ---------------------------------------------------------------------------
 
 
@@ -146,7 +146,7 @@ class TestRubricLevel:
 
 
 # ---------------------------------------------------------------------------
-# GEvalMetric enrichments: evaluation_steps, rubric, subclassing, name override
+# GEvalMetric
 # ---------------------------------------------------------------------------
 
 
@@ -300,7 +300,7 @@ class TestGEvalMetricGrounding:
 
 
 # ---------------------------------------------------------------------------
-# RubricJudgeMetric enrichments: evaluation_steps
+# RubricJudgeMetric
 # ---------------------------------------------------------------------------
 
 
@@ -332,7 +332,7 @@ class TestRubricJudgeMetricEvaluationSteps:
 
 
 # ---------------------------------------------------------------------------
-# Mutable-state isolation: no aliasing across instances / caller / class attrs
+# Mutable-state isolation
 # ---------------------------------------------------------------------------
 
 
@@ -398,7 +398,7 @@ class TestMutableStateIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Edge cases: degenerate rubrics, empty lists, format-unsafe inputs
+# GEvalMetric edge cases
 # ---------------------------------------------------------------------------
 
 
@@ -406,7 +406,6 @@ class TestMutableStateIsolation:
 @pytest.mark.asyncio
 class TestGEvalMetricEdgeCases:
     async def test_single_band_rubric_span_zero(self):
-        """Rubric with one level where min==max: normalized value is 1.0."""
         llm = MockLLM({"reasoning": "x", "score": 5})
         metric = GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(5, 5, "only")])
         s = await metric.a_measure(EvalCase(input="q", output="a"))
@@ -416,7 +415,6 @@ class TestGEvalMetricEdgeCases:
         assert s.metadata["max_score"] == 5
 
     async def test_rubric_not_starting_at_zero(self):
-        """1-5 rubric normalizes (3-1)/(5-1) = 0.5."""
         llm = MockLLM({"reasoning": "x", "score": 3})
         metric = GEvalMetric(
             llm=llm,
@@ -429,7 +427,6 @@ class TestGEvalMetricEdgeCases:
         assert "integer 1-5" in llm.last_prompt
 
     async def test_non_contiguous_rubric_with_gaps(self):
-        """Gaps between bands are allowed; LLM can still score in the full range."""
         llm = MockLLM({"reasoning": "x", "score": 6})
         metric = GEvalMetric(
             llm=llm,
@@ -455,7 +452,6 @@ class TestGEvalMetricEdgeCases:
         assert s.metadata is None
 
     async def test_float_score_with_rubric_truncated_to_int(self):
-        """LLM disobeys 'integer' -> int() truncates for metadata and normalization."""
         llm = MockLLM({"reasoning": "x", "score": 5.7})
         metric = GEvalMetric(llm=llm, criteria="x", rubric=[RubricLevel(0, 10, "d")])
         s = await metric.a_measure(EvalCase(input="q", output="a"))
@@ -475,7 +471,6 @@ class TestGEvalMetricEdgeCases:
         assert s.value == 0.0
 
     async def test_braces_in_input_output_dont_break_format(self):
-        """Curly braces in user-supplied text must not trigger .format() errors."""
         ec = EvalCase(
             input="Test {foo} {bar} {{nested}}",
             output='```json\n{"key": {"nested": "value"}}\n```',
@@ -501,14 +496,12 @@ class TestGEvalMetricEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Prompt formatting invariants: no triple newlines, no unsubstituted fields
+# Prompt formatting invariants
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestPromptFormattingInvariants:
-    """Guard against regressions in prompt assembly."""
-
     def _cases(self):
         return [
             EvalCase(input="q", output="a"),

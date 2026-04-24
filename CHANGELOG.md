@@ -5,6 +5,43 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`RubricLevel` dataclass** (`harness_evals.metrics.llm_judge.RubricLevel`) — score-band primitive
+  (`min_score`, `max_score`, `description`) for structured integer rubrics.
+- **`GEvalMetric` enrichments** — optional `evaluation_steps: list[str]` (numbered chain-of-thought),
+  optional `rubric: list[RubricLevel]` (integer scoring on the rubric's range, normalized to 0.0-1.0
+  with `raw_score` / `min_score` / `max_score` captured in `Score.metadata`), explicit `name` and
+  `dimension` overrides, and a universal grounding instruction that tells the judge to score only
+  on the provided input/output. Subclasses may declare `criteria`, `evaluation_steps`, `rubric`
+  as class attributes; constructor arguments override them.
+- **`RubricJudgeMetric` enrichments** — optional `evaluation_steps: list[str]` (numbered
+  chain-of-thought), plus the same grounding instruction.
+- **Security Remediation metrics** — 7 LLM-as-Judge metrics for evaluating AI-generated
+  vulnerability remediations: VulnerabilityCorrectness, SecurityCompleteness, CodeSafety,
+  CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability (all in
+  `harness_evals.metrics.security`). Each is a thin `GEvalMetric` subclass declaring its
+  criteria, evaluation steps, and 0-10 score-band rubric as class attributes.
+- `remediation_quality_index()` — weighted composite scoring (Remediation Quality Index) for
+  security metrics.
+- `HarnessAILLM` provider — routes LLM calls through the Harness AI Service gateway
+  (`harness_evals.llm.harness_ai`).
+- `[harness]` optional dependency group (httpx, PyJWT).
+
+### Changed
+
+- `GEvalMetric` / `RubricJudgeMetric` prompts now include an explicit grounding instruction
+  ("Evaluate ONLY based on the input and output provided … Do not infer or assume …"). This is a
+  prompt-only change; the public API remains backward-compatible.
+
+### Notes
+
+- The enriched `GEvalMetric` is the recommended base for any new structured LLM-as-Judge metric.
+  The internal-only `SecurityRemediationMetric` base class that existed during development has
+  been removed in favor of direct `GEvalMetric` subclassing.
+
 ## [0.5.0] - 2026-04-17
 
 ### Added
@@ -93,12 +130,7 @@ ec = EvalCase.from_dict({"input": "q", "actual_output": "a", "expected_output": 
 - 42 passing tests covering all metrics and core functions
 - Example: `examples/basic_eval.py`
 
-## [Unreleased]
-
 ### Planned
 
-- Phase 2: Datasets, LLM abstraction, GEval, RAG metrics, predictability metrics, registry + YAML config
-- Phase 3: Safety metrics, agent metrics, robustness metrics, JUnit/CSV sinks, baseline comparison
-- Phase 4: Conversation metrics, MCP metrics, trajectory consistency, fault robustness
 - Phase 5: Synthesizer, perturbation generators
 - Phase 6: Harness AI Evals integration

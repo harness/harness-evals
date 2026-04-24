@@ -12,6 +12,7 @@ pip install harness-evals[llm]       # + LLM-judged metrics (OpenAI, Anthropic)
 pip install harness-evals[otlp]      # + OTLP metrics & traces export
 pip install harness-evals[langfuse]  # + Langfuse source/sink
 pip install harness-evals[similarity]# + BLEU metric (nltk)
+pip install harness-evals[harness]   # + Harness AI Service LLM provider
 pip install harness-evals[all]       # everything
 ```
 
@@ -281,6 +282,43 @@ sink = OtlpSink(
 scores = evaluate(ec, metrics=[...], sinks=[sink])
 ```
 
+### Evaluate security remediations
+
+```python
+from harness_evals import EvalCase, evaluate
+from harness_evals.llm.openai import OpenAILLM  # or AnthropicLLM, HarnessAILLM
+from harness_evals.metrics.security import (
+    VulnerabilityCorrectnessMetric,
+    SecurityCompletenessMetric,
+    CodeSafetyMetric,
+    CodeQualityMetric,
+    ExplanationQualityMetric,
+    RootCauseAnalysisMetric,
+    ActionabilityMetric,
+    remediation_quality_index,
+)
+
+llm = OpenAILLM()  # uses OPENAI_API_KEY env var
+
+ec = EvalCase(
+    input="CWE-79: Reflected XSS in user_profile.py line 42. User input rendered without escaping.",
+    output="## Fix\n```python\nfrom markupsafe import escape\nname = escape(request.args.get('name', ''))\n```",
+)
+
+scores = evaluate(ec, metrics=[
+    VulnerabilityCorrectnessMetric(llm=llm, threshold=0.5),
+    SecurityCompletenessMetric(llm=llm, threshold=0.5),
+    CodeSafetyMetric(llm=llm, threshold=0.5),
+    CodeQualityMetric(llm=llm, threshold=0.5),
+    ExplanationQualityMetric(llm=llm, threshold=0.5),
+    RootCauseAnalysisMetric(llm=llm, threshold=0.5),
+    ActionabilityMetric(llm=llm, threshold=0.5),
+])
+
+rqi = remediation_quality_index(scores)
+print(f"RQI: {rqi.value:.3f} ({'PASS' if rqi.passed else 'FAIL'})")
+```
+
 ### Summarize results across a dataset
 
 ```python
@@ -304,11 +342,12 @@ for name, m in summary.by_metric.items():
 | **Predictability** | Calibration, Discrimination | Expected calibration error and AUC-ROC over confidence scores |
 | **MCP** | ToolSelectionAccuracy, MCPTraceCompleteness | MCP tool selection accuracy and trace completeness |
 | **Similarity** | Levenshtein, BLEU, EmbeddingSimilarity | String distance, n-gram overlap, and semantic vector similarity |
-| **LLM-Judged** | GEval, RubricJudge, Pairwise | LLM scores output against criteria, rubric, or A/B comparison (requires `[llm]`) |
+| **LLM-Judged** | GEval, RubricJudge, Pairwise | LLM scores output against criteria, rubric, or A/B comparison. `GEval` supports free-form criteria, numbered `evaluation_steps`, and integer score-band rubrics via `list[RubricLevel]`; `RubricJudge` uses a flat level → description rubric. (requires `[llm]`) |
 | **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, AnswerCorrectness, AnswerSimilarity, ContextEntityRecall, ContextRelevancy | Retrieval-augmented generation quality (requires `[llm]`) |
 | **Safety** | PII, Toxicity, PromptInjection, Hallucination | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
 | **Agent** | ToolCorrectness, ToolArgumentMatch, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, deterministic argument match, task completion, LLM-judged argument validation, plan quality/adherence, step efficiency (some require `[llm]`) |
 | **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |
+| **Security** | VulnerabilityCorrectness, SecurityCompleteness, CodeSafety, CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability | LLM-as-Judge metrics for AI-generated security vulnerability remediations, with composite Remediation Quality Index (requires LLM provider: `[llm]` or `[harness]`) |
 
 ## EvalCase Fields
 

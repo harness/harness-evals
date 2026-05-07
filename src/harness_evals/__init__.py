@@ -37,7 +37,7 @@ from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetri
 from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
 from harness_evals.summary import MetricSummary, ScoreSummary, summarize
-from harness_evals.synthesizer import Synthesizer
+from harness_evals.synthesizer import ConversationSynthesizer, ScriptedConversationSynthesizer, Synthesizer
 from harness_evals.testing import Fault, FaultInjector
 
 __all__ = [
@@ -77,6 +77,8 @@ __all__ = [
     "HtmlSink",
     "InputGenerator",
     "Synthesizer",
+    "ConversationSynthesizer",
+    "ScriptedConversationSynthesizer",
     "Message",
     "ToolCall",
     "Fault",

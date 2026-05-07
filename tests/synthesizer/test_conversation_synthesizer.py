@@ -53,12 +53,14 @@ class TestConversationSynthesizer:
         assert goldens[0].expected_outcome == "Agent explains 30-day refund window and process"
         assert goldens[0].user_persona == "Frustrated customer who bought last week"
         assert goldens[0].turns is None  # scenario mode has no turns
+        assert goldens[0].metadata["task_type"] == "conversation"
+        assert goldens[0].metadata["difficulty"] == "mixed"
 
     async def test_respects_n(self):
         llm = MockLLM(default=SCENARIO_RESPONSE)
         synth = ConversationSynthesizer(llm=llm)
         goldens = await synth.generate(["doc"], n=1)
-        assert len(goldens) <= 1
+        assert len(goldens) == 1
 
     async def test_empty_document_returns_empty(self):
         llm = MockLLM(default={"scenarios": []})
@@ -94,6 +96,28 @@ class TestScriptedConversationSynthesizer:
         assert all(isinstance(t, Message) for t in g.turns)
         assert g.turns[0].role == "user"
         assert g.turns[1].role == "assistant"
+        assert g.metadata["task_type"] == "conversation_scripted"
+        assert g.metadata["difficulty"] == "mixed"
+
+    async def test_deduplicates_by_scenario(self):
+        duplicate_response = {
+            "conversations": [
+                {
+                    "scenario": "same",
+                    "expected_outcome": "o1",
+                    "turns": [{"role": "user", "content": "hi"}],
+                },
+                {
+                    "scenario": "same",
+                    "expected_outcome": "o2",
+                    "turns": [{"role": "assistant", "content": "hello"}],
+                },
+            ]
+        }
+        llm = MockLLM(default=duplicate_response)
+        synth = ScriptedConversationSynthesizer(llm=llm)
+        goldens = await synth.generate(["doc"], n=5)
+        assert len(goldens) == 1
 
     async def test_skips_invalid_turns(self):
         response = {

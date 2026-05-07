@@ -97,6 +97,16 @@ _SCRIPTED_SCHEMA: dict = {
 }
 
 
+def _deduplicate_by_scenario(goldens: list) -> list:
+    seen: set[str] = set()
+    result = []
+    for g in goldens:
+        if g.scenario not in seen:
+            seen.add(g.scenario)
+            result.append(g)
+    return result
+
+
 class ConversationSynthesizer(BaseSynthesizer):
     """Generate scenario-based ConversationGolden datasets from source documents."""
 
@@ -137,16 +147,8 @@ class ConversationSynthesizer(BaseSynthesizer):
         return goldens  # type: ignore[return-value]
 
     @staticmethod
-    def _deduplicate(goldens: list[Golden]) -> list[Golden]:  # type: ignore[override]
-        """Remove ConversationGoldens with duplicate ``scenario`` values."""
-        seen: set[str] = set()
-        result: list[Golden] = []
-        for g in goldens:
-            key = g.scenario if isinstance(g, ConversationGolden) else str(g)  # type: ignore[union-attr]
-            if key not in seen:
-                seen.add(key)
-                result.append(g)
-        return result
+    def _deduplicate(goldens: list) -> list:  # type: ignore[override]
+        return _deduplicate_by_scenario(goldens)
 
 
 class ScriptedConversationSynthesizer(BaseSynthesizer):
@@ -196,13 +198,5 @@ class ScriptedConversationSynthesizer(BaseSynthesizer):
         return goldens  # type: ignore[return-value]
 
     @staticmethod
-    def _deduplicate(goldens: list[Golden]) -> list[Golden]:  # type: ignore[override]
-        """Remove ConversationGoldens with duplicate ``scenario`` values."""
-        seen: set[str] = set()
-        result: list[Golden] = []
-        for g in goldens:
-            key = g.scenario if isinstance(g, ConversationGolden) else str(g)  # type: ignore[union-attr]
-            if key not in seen:
-                seen.add(key)
-                result.append(g)
-        return result
+    def _deduplicate(goldens: list) -> list:  # type: ignore[override]
+        return _deduplicate_by_scenario(goldens)

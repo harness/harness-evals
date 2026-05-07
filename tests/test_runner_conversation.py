@@ -6,7 +6,6 @@ from harness_evals.conversation.golden import ConversationGolden
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.runner import evaluate_dataset
-from harness_evals.core.score import Score
 from harness_evals.core.types import Message
 from harness_evals.metrics.deterministic.exact_match import ExactMatchMetric
 from tests.conftest import MockLLM

@@ -1,0 +1,76 @@
+tests/test_runner_conversation.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-87
+src/harness_evals/core/runner.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 5,13-15,192,200,220-235,246-331
+  human 16,236-245
+---
+{
+  "attestations": [
+    {
+      "entries": [
+        {
+          "accepted_lines": 87,
+          "added_lines": 87,
+          "deleted_lines": 10,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-87",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "tests/test_runner_conversation.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 108,
+          "added_lines": 119,
+          "deleted_lines": 16,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "5,13-15,192,200,220-235,246-331",
+          "overridden_lines": 0
+        },
+        {
+          "accepted_lines": 11,
+          "added_lines": 11,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "16,236-245",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/core/runner.py"
+    }
+  ],
+  "base_commit_sha": "67865f1c7269b892c6cfdfb1692d9d2da0ab1e40",
+  "branch": "main",
+  "commit_sha": "0b657170d2712c0140d24de87e3f55d101eb04a3",
+  "commit_time": "2026-05-07T16:48:29-07:00",
+  "commit_type": "direct_commit",
+  "git_ai_version": "1.4.2",
+  "prompts": {
+    "4fda9174-9877-429d-9b01-af7a3dad6d46": {
+      "accepted_lines": 195,
+      "agent_id": {
+        "id": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+        "model": "claude-opus-4-6",
+        "tool": "claude"
+      },
+      "human_author": "Sunil Gattupalle <sunil.gattupalle@harness.io>",
+      "messages": [],
+      "overriden_lines": 0,
+      "total_additions": 206,
+      "total_deletions": 26
+    },
+    "human": {
+      "accepted_lines": 11,
+      "agent_id": null,
+      "human_author": "Sunil Gattupalle <sunil.gattupalle@harness.io>",
+      "messages": [],
+      "overriden_lines": 0,
+      "total_additions": 11,
+      "total_deletions": 0
+    }
+  },
+  "repo": "git@github.com:harness/harness-evals.git",
+  "schema_version": "authorship/3.0.0"
+}

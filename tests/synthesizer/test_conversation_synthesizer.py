@@ -10,7 +10,6 @@ from harness_evals.synthesizer.conversation import (
 )
 from tests.conftest import MockLLM
 
-
 SCENARIO_RESPONSE = {
     "scenarios": [
         {

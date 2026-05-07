@@ -39,11 +39,12 @@ class TurnTokenCostMetric(BaseMetric):
                 reason="no messages provided",
             )
 
-        token_counts = [
-            msg.token_count
-            for msg in messages
-            if msg.role == "assistant" and msg.token_count is not None
-        ]
+        token_counts = []
+        for msg in messages:
+            if msg.role == "assistant" and msg.token_count is not None:
+                if msg.token_count < 0:
+                    continue
+                token_counts.append(msg.token_count)
 
         if not token_counts:
             return Score(
@@ -55,6 +56,7 @@ class TurnTokenCostMetric(BaseMetric):
 
         scores = [max(0.0, 1.0 - tc / self.max_tokens_per_turn) for tc in token_counts]
         mean_score = sum(scores) / len(scores)
+        mean_token_count = sum(token_counts) / len(token_counts)
 
         return Score(
             name=self.name,
@@ -62,7 +64,7 @@ class TurnTokenCostMetric(BaseMetric):
             threshold=self.threshold,
             metadata={
                 "turn_token_counts": token_counts,
-                "total_tokens": sum(token_counts),
+                "mean_token_count": mean_token_count,
                 "max_tokens_per_turn": self.max_tokens_per_turn,
                 "n_turns_scored": len(token_counts),
             },

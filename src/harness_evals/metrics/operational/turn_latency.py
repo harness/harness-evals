@@ -39,11 +39,12 @@ class TurnLatencyMetric(BaseMetric):
                 reason="no messages provided",
             )
 
-        latencies = [
-            msg.latency_ms
-            for msg in messages
-            if msg.role == "assistant" and msg.latency_ms is not None
-        ]
+        latencies = []
+        for msg in messages:
+            if msg.role == "assistant" and msg.latency_ms is not None:
+                if msg.latency_ms < 0:
+                    continue
+                latencies.append(msg.latency_ms)
 
         if not latencies:
             return Score(

@@ -25,16 +25,34 @@ Respond with JSON:
 {{"reasoning": "your analysis of knowledge retention, citing any instances of forgetting or contradiction", "score": <float between 0.0 and 1.0 where 1.0 means perfect retention and 0.0 means complete forgetting>}}
 """
 
+_PER_TURN_PROMPT = """You are an expert evaluator assessing knowledge retention in a single assistant response.
+
+**Conversation context** (prior turns):
+{context}
+
+**Assistant response to evaluate**:
+{response}
+
+Does this response demonstrate retention of facts, preferences, and details from earlier turns?
+Penalize if it asks for already-provided info, contradicts earlier context, or ignores established facts.
+
+Respond with JSON:
+{{"reasoning": "brief analysis of retention in this turn", "score": <float between 0.0 and 1.0 where 1.0 means perfect retention>}}
+"""
+
 
 class KnowledgeRetentionMetric(LLMConversationMetric):
     """LLM-judged evaluation of knowledge retention across conversation turns.
 
     Reads ``eval_case.messages`` and evaluates whether the assistant
-    remembers and uses information from earlier turns. Returns 0.0
+    remembers and uses information from earlier turns. Returns per-turn
+    breakdown in ``score.metadata["turn_scores"]``. Returns 0.0
     if messages is missing or has fewer than 2 turns.
     """
 
     _prompt_template = _PROMPT_TEMPLATE
+    _per_turn = True
+    _per_turn_prompt_template = _PER_TURN_PROMPT
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(

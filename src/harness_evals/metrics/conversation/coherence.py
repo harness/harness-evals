@@ -23,16 +23,35 @@ Respond with JSON:
 {{"reasoning": "your analysis of conversational coherence", "score": <float between 0.0 and 1.0 where 1.0 means perfectly coherent and 0.0 means completely incoherent>}}
 """
 
+_PER_TURN_PROMPT = """You are an expert evaluator assessing the coherence of a single assistant response within a conversation.
+
+**Conversation context** (prior turns):
+{context}
+
+**Assistant response to evaluate**:
+{response}
+
+Is this response coherent with the preceding conversation? Consider:
+- Does it address what was asked?
+- Does it contradict earlier context?
+- Is the topic transition natural?
+
+Respond with JSON:
+{{"reasoning": "brief analysis of coherence for this turn", "score": <float between 0.0 and 1.0 where 1.0 means perfectly coherent>}}
+"""
+
 
 class ConversationCoherenceMetric(LLMConversationMetric):
     """LLM-judged topical coherence across conversation turns.
 
     Reads ``eval_case.messages`` — a list of ``Message`` objects representing
-    ordered turns.  Returns 0.0 if messages is missing or has fewer than
-    2 turns.
+    ordered turns. Returns per-turn breakdown in ``score.metadata["turn_scores"]``.
+    Returns 0.0 if messages is missing or has fewer than 2 turns.
     """
 
     _prompt_template = _PROMPT_TEMPLATE
+    _per_turn = True
+    _per_turn_prompt_template = _PER_TURN_PROMPT
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(

@@ -1,0 +1,13 @@
+---
+{
+  "attestations": [],
+  "base_commit_sha": "c13bf294417a3dc5145ce31a50d551d71b66f03a",
+  "branch": "feat/multi-turn-gaps",
+  "commit_sha": "4b5b72266f185d9513efc585503170a71ab4cd76",
+  "commit_time": "2026-05-09T15:10:58-07:00",
+  "commit_type": "direct_commit",
+  "git_ai_version": "1.4.3",
+  "prompts": {},
+  "repo": "git@github.com:harness/harness-evals.git",
+  "schema_version": "authorship/3.0.0"
+}

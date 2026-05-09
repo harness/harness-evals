@@ -1,0 +1,167 @@
+src/harness_evals/conversation/runner.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-55
+src/harness_evals/metrics/conversation/__init__.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 5-8,23,27
+src/harness_evals/conversation/__init__.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-53
+src/harness_evals/metrics/conversation/knowledge_retention.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 28,30-42,48-49,54-55
+  human 29
+tests/conversation/test_golden.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-138
+src/harness_evals/metrics/conversation/coherence.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 26,28-42,48-49,53-54
+  human 27
+src/harness_evals/metrics/conversation/turn_relevancy.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 29,31-43,49-50,55-56
+  human 30
+---
+{
+  "attestations": [
+    {
+      "entries": [
+        {
+          "accepted_lines": 55,
+          "added_lines": 55,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-55",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/conversation/runner.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 6,
+          "added_lines": 6,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "5-8,23,27",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/metrics/conversation/__init__.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 53,
+          "added_lines": 53,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-53",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/conversation/__init__.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 18,
+          "added_lines": 18,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "28,30-42,48-49,54-55",
+          "overridden_lines": 0
+        },
+        {
+          "accepted_lines": 1,
+          "added_lines": 1,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "29",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/metrics/conversation/knowledge_retention.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 138,
+          "added_lines": 138,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-138",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "tests/conversation/test_golden.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 20,
+          "added_lines": 20,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "26,28-42,48-49,53-54",
+          "overridden_lines": 0
+        },
+        {
+          "accepted_lines": 1,
+          "added_lines": 1,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "27",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/metrics/conversation/coherence.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 18,
+          "added_lines": 18,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "29,31-43,49-50,55-56",
+          "overridden_lines": 0
+        },
+        {
+          "accepted_lines": 1,
+          "added_lines": 1,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "30",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/metrics/conversation/turn_relevancy.py"
+    }
+  ],
+  "base_commit_sha": "c0bd1ecce7164253f92a63789a51562aca42059d",
+  "branch": "feat/multi-turn-gaps",
+  "commit_sha": "c13bf294417a3dc5145ce31a50d551d71b66f03a",
+  "commit_time": "2026-05-09T15:07:30-07:00",
+  "commit_type": "direct_commit",
+  "git_ai_version": "1.4.3",
+  "prompts": {
+    "4fda9174-9877-429d-9b01-af7a3dad6d46": {
+      "accepted_lines": 308,
+      "agent_id": {
+        "id": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+        "model": "claude-opus-4-6",
+        "tool": "claude"
+      },
+      "human_author": "Sunil Gattupalle <sunil.gattupalle@harness.io>",
+      "overriden_lines": 0,
+      "total_additions": 308,
+      "total_deletions": 0
+    },
+    "human": {
+      "accepted_lines": 3,
+      "agent_id": null,
+      "human_author": "Sunil Gattupalle <sunil.gattupalle@harness.io>",
+      "overriden_lines": 0,
+      "total_additions": 3,
+      "total_deletions": 0
+    }
+  },
+  "repo": "git@github.com:harness/harness-evals.git",
+  "schema_version": "authorship/3.0.0"
+}

@@ -45,10 +45,14 @@ class TestTurnLatencyMetric:
         assert "no messages" in score.reason
 
     def test_no_assistant_latency_data(self):
-        ec = EvalCase(input="q", output="a", messages=[
-            Message(role="user", content="q"),
-            Message(role="assistant", content="a"),  # no latency_ms
-        ])
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content="a"),  # no latency_ms
+            ],
+        )
         score = TurnLatencyMetric().measure(ec)
         assert score.value == 0.0
         assert "no latency" in score.reason
@@ -101,10 +105,14 @@ class TestTurnTokenCostMetric:
         assert "no messages" in score.reason
 
     def test_no_token_data(self):
-        ec = EvalCase(input="q", output="a", messages=[
-            Message(role="user", content="q"),
-            Message(role="assistant", content="a"),  # no token_count
-        ])
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content="a"),  # no token_count
+            ],
+        )
         score = TurnTokenCostMetric().measure(ec)
         assert score.value == 0.0
         assert "no token" in score.reason

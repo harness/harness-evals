@@ -129,7 +129,7 @@ class TestMessage:
         msg = Message(role="assistant", content="hi", latency_ms=100.0)
         d = msg.to_dict()
         assert d["latency_ms"] == 100.0
-        assert "token_count" not in d   # None omitted
+        assert "token_count" not in d  # None omitted
 
     def test_message_from_dict_roundtrip_with_operational(self):
         msg = Message(role="assistant", content="resp", latency_ms=55.0, token_count=10, cost_usd=0.001)

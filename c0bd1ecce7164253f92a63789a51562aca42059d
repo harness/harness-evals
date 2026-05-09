@@ -1,0 +1,173 @@
+src/harness_evals/conversation/golden.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-41
+src/harness_evals/conversation/simulator.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-98,101-147
+  human 99-100
+tests/metrics/test_conversational_geval.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-147
+src/harness_evals/metrics/conversation/conversational_geval.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-152
+tests/conversation/test_simulator.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 1-151
+src/harness_evals/metrics/conversation/llm_conversation_metric.py
+  4fda9174-9877-429d-9b01-af7a3dad6d46 26-30,34-35,63-64,80-130
+  human 65,131
+tests/metrics/test_turn_operational.py
+  human 48-55,108-115
+tests/test_types.py
+  human 132
+---
+{
+  "attestations": [
+    {
+      "entries": [
+        {
+          "accepted_lines": 41,
+          "added_lines": 41,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-41",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/conversation/golden.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 145,
+          "added_lines": 145,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-98,101-147",
+          "overridden_lines": 0
+        },
+        {
+          "accepted_lines": 2,
+          "added_lines": 2,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "99-100",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/conversation/simulator.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 147,
+          "added_lines": 147,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-147",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "tests/metrics/test_conversational_geval.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 152,
+          "added_lines": 152,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-152",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/metrics/conversation/conversational_geval.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 151,
+          "added_lines": 151,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "1-151",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "tests/conversation/test_simulator.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 60,
+          "added_lines": 60,
+          "deleted_lines": 0,
+          "hash": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+          "lines": "26-30,34-35,63-64,80-130",
+          "overridden_lines": 2
+        },
+        {
+          "accepted_lines": 2,
+          "added_lines": 2,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "65,131",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "src/harness_evals/metrics/conversation/llm_conversation_metric.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 16,
+          "added_lines": 16,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "48-55,108-115",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "tests/metrics/test_turn_operational.py"
+    },
+    {
+      "entries": [
+        {
+          "accepted_lines": 1,
+          "added_lines": 1,
+          "deleted_lines": 0,
+          "hash": "human",
+          "lines": "132",
+          "overridden_lines": 0
+        }
+      ],
+      "file": "tests/test_types.py"
+    }
+  ],
+  "base_commit_sha": "d192c6d1eebdd2466b8b272ddddef637af9183db",
+  "branch": "feat/multi-turn-gaps",
+  "commit_sha": "c0bd1ecce7164253f92a63789a51562aca42059d",
+  "commit_time": "2026-05-09T15:06:48-07:00",
+  "commit_type": "direct_commit",
+  "git_ai_version": "1.4.3",
+  "prompts": {
+    "4fda9174-9877-429d-9b01-af7a3dad6d46": {
+      "accepted_lines": 696,
+      "agent_id": {
+        "id": "4fda9174-9877-429d-9b01-af7a3dad6d46",
+        "model": "claude-opus-4-6",
+        "tool": "claude"
+      },
+      "human_author": "Sunil Gattupalle <sunil.gattupalle@harness.io>",
+      "overriden_lines": 2,
+      "total_additions": 696,
+      "total_deletions": 0
+    },
+    "human": {
+      "accepted_lines": 21,
+      "agent_id": null,
+      "human_author": "Sunil Gattupalle <sunil.gattupalle@harness.io>",
+      "overriden_lines": 0,
+      "total_additions": 21,
+      "total_deletions": 0
+    }
+  },
+  "repo": "git@github.com:harness/harness-evals.git",
+  "schema_version": "authorship/3.0.0"
+}

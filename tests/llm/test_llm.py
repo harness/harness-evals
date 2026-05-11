@@ -1,5 +1,8 @@
 """Tests for LLM abstraction with mocked providers."""
 
+import sys
+from unittest.mock import MagicMock
+
 import pytest
 
 from harness_evals._async_compat import _run_async
@@ -92,6 +95,139 @@ class TestRunAsync:
 
         with pytest.raises(ValueError, match="test error"):
             _run_async(failing())
+
+
+@pytest.mark.unit
+class TestOpenAILLMParams:
+    """Verify OpenAILLM forwards optional sampling params to the SDK."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_openai(self, monkeypatch):
+        import types
+
+        self.mock_create = MagicMock()
+
+        async def fake_create(**kwargs):
+            self.mock_create(**kwargs)
+            choice = MagicMock()
+            choice.message.content = "ok"
+            resp = MagicMock()
+            resp.choices = [choice]
+            return resp
+
+        mock_openai = MagicMock()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = fake_create
+        mock_openai.AsyncOpenAI.return_value = mock_client
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+
+    def _make(self, **kwargs):
+        from harness_evals.llm.openai import OpenAILLM
+
+        return OpenAILLM(model="gpt-4o", api_key="sk-test", **kwargs)
+
+    async def test_no_optional_params_by_default(self):
+        llm = self._make()
+        await llm.generate("hi")
+        call_kwargs = self.mock_create.call_args[1]
+        assert "top_p" not in call_kwargs
+        assert "frequency_penalty" not in call_kwargs
+        assert "presence_penalty" not in call_kwargs
+
+    async def test_top_p_forwarded(self):
+        llm = self._make(top_p=0.9)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["top_p"] == 0.9
+
+    async def test_frequency_penalty_forwarded(self):
+        llm = self._make(frequency_penalty=0.5)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["frequency_penalty"] == 0.5
+
+    async def test_presence_penalty_forwarded(self):
+        llm = self._make(presence_penalty=0.3)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["presence_penalty"] == 0.3
+
+    async def test_all_optional_params(self):
+        llm = self._make(top_p=0.95, frequency_penalty=0.4, presence_penalty=0.2)
+        await llm.generate("hi")
+        kw = self.mock_create.call_args[1]
+        assert kw["top_p"] == 0.95
+        assert kw["frequency_penalty"] == 0.4
+        assert kw["presence_penalty"] == 0.2
+
+    def test_positional_arg_backward_compat(self):
+        """Existing callers using positional args still work."""
+        from harness_evals.llm.openai import OpenAILLM
+
+        llm = OpenAILLM("gpt-4o", "sk-test", 0.5, 2048)
+        assert llm.model == "gpt-4o"
+        assert llm.temperature == 0.5
+        assert llm.max_tokens == 2048
+        assert llm.top_p is None
+
+
+@pytest.mark.unit
+class TestAnthropicLLMParams:
+    """Verify AnthropicLLM forwards optional sampling params to the SDK."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_anthropic(self, monkeypatch):
+        self.mock_create = MagicMock()
+
+        async def fake_create(**kwargs):
+            self.mock_create(**kwargs)
+            block = MagicMock()
+            block.text = "ok"
+            resp = MagicMock()
+            resp.content = [block]
+            return resp
+
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_client.messages.create = fake_create
+        mock_anthropic.AsyncAnthropic.return_value = mock_client
+        monkeypatch.setitem(sys.modules, "anthropic", mock_anthropic)
+
+    def _make(self, **kwargs):
+        from harness_evals.llm.anthropic import AnthropicLLM
+
+        return AnthropicLLM(model="claude-sonnet-4-20250514", api_key="sk-ant-test", **kwargs)
+
+    async def test_no_optional_params_by_default(self):
+        llm = self._make()
+        await llm.generate("hi")
+        call_kwargs = self.mock_create.call_args[1]
+        assert "top_p" not in call_kwargs
+        assert "top_k" not in call_kwargs
+
+    async def test_top_p_forwarded(self):
+        llm = self._make(top_p=0.9)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["top_p"] == 0.9
+
+    async def test_top_k_forwarded(self):
+        llm = self._make(top_k=40)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["top_k"] == 40
+
+    async def test_both_optional_params(self):
+        llm = self._make(top_p=0.95, top_k=50)
+        await llm.generate("hi")
+        kw = self.mock_create.call_args[1]
+        assert kw["top_p"] == 0.95
+        assert kw["top_k"] == 50
+
+    def test_positional_arg_backward_compat(self):
+        from harness_evals.llm.anthropic import AnthropicLLM
+
+        llm = AnthropicLLM("claude-sonnet-4-20250514", "sk-ant-test", 0.5, 2048)
+        assert llm.model == "claude-sonnet-4-20250514"
+        assert llm.temperature == 0.5
+        assert llm.max_tokens == 2048
+        assert llm.top_p is None
+        assert llm.top_k is None
 
 
 @pytest.mark.unit

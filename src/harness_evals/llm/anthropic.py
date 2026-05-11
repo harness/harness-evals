@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 from harness_evals.llm._schema import ANTHROPIC_UNSUPPORTED, make_strict_schema
 from harness_evals.llm.base import BaseLLM
@@ -21,6 +22,9 @@ class AnthropicLLM(BaseLLM):
         api_key: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        *,
+        top_p: float | None = None,
+        top_k: int | None = None,
     ) -> None:
         try:
             import anthropic  # noqa: F811
@@ -30,10 +34,20 @@ class AnthropicLLM(BaseLLM):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.top_k = top_k
         resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not resolved_key:
             raise ValueError("No API key: pass api_key= or set ANTHROPIC_API_KEY")
         self._client = anthropic.AsyncAnthropic(api_key=resolved_key)
+
+    def _optional_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if self.top_p is not None:
+            params["top_p"] = self.top_p
+        if self.top_k is not None:
+            params["top_k"] = self.top_k
+        return params
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
         response = await self._client.messages.create(
@@ -41,6 +55,7 @@ class AnthropicLLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            **self._optional_params(),
         )
         return response.content[0].text if response.content else ""
 
@@ -51,6 +66,7 @@ class AnthropicLLM(BaseLLM):
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            **self._optional_params(),
             output_config={
                 "format": {
                     "type": "json_schema",

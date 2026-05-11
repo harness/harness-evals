@@ -1,0 +1,101 @@
+pipeline:
+  name: Publish harness-evals
+  identifier: Publish_harness_evals
+  projectIdentifier: Data_Platform
+  orgIdentifier: PROD
+  tags: {}
+  properties:
+    ci:
+      codebase:
+        repoName: harness-evals
+        build: <+input>
+  stages:
+    - stage:
+        name: Publish Pip Package
+        identifier: Publish_Pip_Package
+        description: "Publish harness-evals to harness-pip-internal when pyproject.toml version changes"
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Check Version Change
+                  identifier: Check_Version_Change
+                  spec:
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+
+                      NEW_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+                      echo "Current version: ${NEW_VERSION}"
+
+                      OLD_VERSION=""
+                      if git rev-parse HEAD~1 >/dev/null 2>&1; then
+                        OLD_VERSION=$(git show HEAD~1:pyproject.toml 2>/dev/null | grep '^version' | head -1 | sed 's/.*"\(.*\)"/\1/' || echo "")
+                      fi
+                      echo "Previous version: ${OLD_VERSION:-<none>}"
+
+                      if [ "${OLD_VERSION}" != "${NEW_VERSION}" ]; then
+                        echo "Version changed: ${OLD_VERSION:-<none>} -> ${NEW_VERSION}"
+                        VERSION_CHANGED=true
+                      else
+                        echo "Version unchanged. Publish will be skipped."
+                        VERSION_CHANGED=false
+                      fi
+
+                      VERSION="${NEW_VERSION}"
+                    outputVariables:
+                      - name: VERSION
+                        type: String
+                        value: VERSION
+                      - name: VERSION_CHANGED
+                        type: String
+                        value: VERSION_CHANGED
+              - step:
+                  type: Run
+                  name: Build and Publish
+                  identifier: Build_and_Publish
+                  spec:
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      pip install --upgrade build twine
+
+                      echo "Building harness-evals==${VERSION}..."
+                      python -m build .
+                      ls -la dist/
+
+                      echo "Publishing to harness-pip-internal..."
+                      python -m twine upload \
+                        --repository-url "https://harness0.harness.io/pkg/l7B_kbSEQD2wjrM7PShm5w/harness-pip-internal/python" \
+                        --username "token" \
+                        --password "${HAR_PASSWORD}" \
+                        dist/*
+
+                      echo "Published harness-evals==${VERSION} to harness-pip-internal"
+                    envVariables:
+                      VERSION: <+execution.steps.Check_Version_Change.output.outputVariables.VERSION>
+                      HAR_PASSWORD: <+pipeline.variables.HAR_PASSWORD>
+                  when:
+                    stageStatus: Success
+                    condition: <+execution.steps.Check_Version_Change.output.outputVariables.VERSION_CHANGED> == "true"
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: MarkAsFailure
+  variables:
+    - name: HAR_PASSWORD
+      type: Secret
+      description: "Harness Artifact Registry token for pip publish"
+      required: true
+      value: HAR_PASSWORD

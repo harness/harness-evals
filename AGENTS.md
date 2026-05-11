@@ -52,6 +52,21 @@ ruff check --fix src/ tests/     # Auto-fix lint issues
 
 Ruff handles both formatting and linting (replaces black + flake8 + isort).
 
+## Publishing
+
+The package is published automatically via the Harness CI pipeline (`.harness/publish.yaml`) when a version change is detected on `main`.
+
+**How it works**: The pipeline compares `version` in `pyproject.toml` at `HEAD` vs `HEAD~1`. If the version changed, it builds and publishes to `harness-pip-internal`.
+
+**You MUST bump the version in `pyproject.toml`** whenever your changes should be released. If you don't bump the version, the package will NOT be published — even if code changes are merged.
+
+```bash
+# In pyproject.toml, update:
+version = "X.Y.Z"  # Bump this to trigger a publish
+```
+
+Follow semver: patch for fixes, minor for new metrics/features, major for breaking changes.
+
 ## Git Workflow
 
 - **Branch naming**: `feat/short-description` or `fix/short-description`

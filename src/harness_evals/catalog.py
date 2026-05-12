@@ -109,6 +109,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ConversationCoherenceMetric,
         ConversationCompletenessMetric,
         ConversationResolutionMetric,
+        ConversationalGEvalMetric,
         CostEfficiencyMetric,
         DAGMetric,
         DiscriminationMetric,
@@ -154,7 +155,9 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ToxicityMetric,
         TrajectoryConsistencyMetric,
         TurnEfficiencyMetric,
+        TurnLatencyMetric,
         TurnRelevancyMetric,
+        TurnTokenCostMetric,
     )
     from harness_evals.metrics.security import (
         ActionabilityMetric,
@@ -187,6 +190,8 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "token_cost": TokenCostMetric,
         "cost_efficiency": CostEfficiencyMetric,
         "retry_count": RetryCountMetric,
+        "turn_latency": TurnLatencyMetric,
+        "turn_token_cost": TurnTokenCostMetric,
         # LLM Judge
         "geval": GEvalMetric,
         "rubric_judge": RubricJudgeMetric,
@@ -221,6 +226,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "conversation_coherence": ConversationCoherenceMetric,
         "conversation_completeness": ConversationCompletenessMetric,
         "conversation_resolution": ConversationResolutionMetric,
+        "conversational_geval": ConversationalGEvalMetric,
         "goal_accuracy": GoalAccuracyMetric,
         "knowledge_retention": KnowledgeRetentionMetric,
         "role_adherence": RoleAdherenceMetric,

@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+
+if TYPE_CHECKING:
+    from harness_evals.conversation.golden import ConversationGolden
+    from harness_evals.llm.base import BaseLLM
 
 
 def _enrich_score(score: Score, metric: BaseMetric) -> None:
@@ -184,7 +189,7 @@ def evaluate_batch_metrics(
     return scores
 
 
-async def evaluate_dataset(
+async def _evaluate_dataset_single(
     goldens: list[Golden],
     agent_fn: Callable[[Golden], Awaitable[EvalCase]],
     metrics: list[BaseMetric],
@@ -192,31 +197,7 @@ async def evaluate_dataset(
     *,
     concurrency: int | None = None,
 ) -> list[list[Score]]:
-    """Run an agent on goldens, then evaluate each resulting EvalCase.
-
-    ``agent_fn`` is async because agent calls are I/O-bound. Each golden is
-    passed to ``agent_fn`` to produce an EvalCase, which is then scored
-    with ``a_evaluate()`` (the async runner) to avoid event-loop conflicts.
-
-    The ``concurrency`` semaphore gates ``agent_fn`` calls only; metric
-    evaluation (including LLM-judged metrics) runs without throttling.
-
-    Sink writes happen sequentially after all concurrent work completes
-    to avoid thread-safety issues with file-based sinks.
-
-    Args:
-        goldens: List of Golden instances.
-        agent_fn: Async function that produces an EvalCase from a Golden.
-        metrics: Metrics to evaluate.
-        sinks: Optional output sinks.
-        concurrency: Max concurrent agent calls. ``None`` = unlimited.
-
-    Raises:
-        ValueError: If ``concurrency`` is less than 1.
-    """
-    if concurrency is not None and concurrency < 1:
-        raise ValueError(f"concurrency must be >= 1, got {concurrency}")
-
+    """Internal helper: evaluate a list of single-turn Golden instances."""
     semaphore = asyncio.Semaphore(concurrency) if concurrency is not None else None
 
     async def _run_agent(golden: Golden) -> EvalCase:
@@ -236,3 +217,115 @@ async def evaluate_dataset(
 
     _finalize_sinks(sinks)
     return list(scored)
+
+
+async def _evaluate_dataset_conversation(
+    goldens: list[ConversationGolden],
+    agent_fn: Callable,
+    metrics: list[BaseMetric],
+    sinks: list[BaseSink] | None = None,
+    *,
+    concurrency: int | None = None,
+    simulator_llm: BaseLLM,
+) -> list[list[Score]]:
+    """Internal helper: evaluate a list of ConversationGolden instances."""
+    from harness_evals.conversation.simulator import ConversationSimulator
+
+    simulator = ConversationSimulator(simulator_llm, max_concurrent=concurrency or 10)
+    eval_cases = await simulator.simulate_batch(goldens, agent_fn)
+
+    scored = await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases])
+
+    if sinks:
+        for eval_case, scores in zip(eval_cases, scored, strict=True):
+            for sink in sinks:
+                sink.write(scores, eval_case)
+
+    _finalize_sinks(sinks)
+    return list(scored)
+
+
+async def evaluate_dataset(
+    goldens: list[Golden] | list[ConversationGolden],
+    agent_fn: Callable,
+    metrics: list[BaseMetric],
+    sinks: list[BaseSink] | None = None,
+    *,
+    concurrency: int | None = None,
+    simulator_llm: BaseLLM | None = None,
+) -> list[list[Score]]:
+    """Run an agent on goldens, then evaluate each resulting EvalCase.
+
+    Accepts either a list of :class:`~harness_evals.core.golden.Golden`
+    (single-turn) or a list of
+    :class:`~harness_evals.conversation.golden.ConversationGolden`
+    (multi-turn). Mixed lists raise :exc:`TypeError`.
+
+    For ``ConversationGolden`` inputs, ``simulator_llm`` must be provided;
+    it drives the simulated user turns via
+    :class:`~harness_evals.conversation.simulator.ConversationSimulator`.
+
+    ``agent_fn`` is async because agent calls are I/O-bound. For
+    single-turn goldens it receives a ``Golden`` and returns an
+    ``EvalCase``; for conversation goldens it receives
+    ``list[Message]`` and returns a ``Message``.
+
+    The ``concurrency`` semaphore gates ``agent_fn`` calls only for
+    single-turn mode; for conversation mode it sets ``max_concurrent``
+    on the simulator.
+
+    Args:
+        goldens: List of ``Golden`` or ``ConversationGolden`` instances
+            (must not be mixed).
+        agent_fn: Async callable appropriate to the golden type.
+        metrics: Metrics to evaluate.
+        sinks: Optional output sinks.
+        concurrency: Max concurrent agent calls (single-turn) or
+            conversations (multi-turn). ``None`` = unlimited / default 10.
+        simulator_llm: LLM used to simulate user turns. Required when
+            ``goldens`` contains ``ConversationGolden`` instances.
+
+    Raises:
+        ValueError: If ``concurrency`` is less than 1 or if
+            ``ConversationGolden`` inputs are provided without
+            ``simulator_llm``.
+        TypeError: If ``goldens`` contains a mix of ``Golden`` and
+            ``ConversationGolden`` instances.
+    """
+    if concurrency is not None and concurrency < 1:
+        raise ValueError(f"concurrency must be >= 1, got {concurrency}")
+
+    if not goldens:
+        return []
+
+    from harness_evals.conversation.golden import ConversationGolden as _ConvGolden
+
+    types = {type(g) for g in goldens}
+    if len(types) > 1:
+        raise TypeError(
+            "evaluate_dataset() received a mixed list of Golden and ConversationGolden. "
+            "All goldens must be the same type."
+        )
+
+    if issubclass(next(iter(types)), _ConvGolden):
+        if simulator_llm is None:
+            raise ValueError(
+                "ConversationGolden inputs require a simulator_llm. "
+                "Pass simulator_llm=<BaseLLM instance> to evaluate_dataset()."
+            )
+        return await _evaluate_dataset_conversation(
+            goldens,  # type: ignore[arg-type]
+            agent_fn,
+            metrics,
+            sinks,
+            concurrency=concurrency,
+            simulator_llm=simulator_llm,
+        )
+
+    return await _evaluate_dataset_single(
+        goldens,  # type: ignore[arg-type]
+        agent_fn,
+        metrics,
+        sinks,
+        concurrency=concurrency,
+    )

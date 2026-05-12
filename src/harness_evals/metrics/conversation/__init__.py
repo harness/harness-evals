@@ -2,6 +2,10 @@ from harness_evals.metrics.conversation.coherence import ConversationCoherenceMe
 from harness_evals.metrics.conversation.conversation_completeness import (
     ConversationCompletenessMetric,
 )
+from harness_evals.metrics.conversation.conversational_geval import (
+    ConversationalGEvalMetric,
+    MultiTurnView,
+)
 from harness_evals.metrics.conversation.goal_accuracy import GoalAccuracyMetric
 from harness_evals.metrics.conversation.knowledge_retention import (
     KnowledgeRetentionMetric,
@@ -16,9 +20,11 @@ from harness_evals.metrics.conversation.turn_relevancy import TurnRelevancyMetri
 __all__ = [
     "ConversationCoherenceMetric",
     "ConversationCompletenessMetric",
+    "ConversationalGEvalMetric",
     "ConversationResolutionMetric",
     "GoalAccuracyMetric",
     "KnowledgeRetentionMetric",
+    "MultiTurnView",
     "RoleAdherenceMetric",
     "ToolUseMetric",
     "TopicAdherenceMetric",

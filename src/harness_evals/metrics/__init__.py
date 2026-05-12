@@ -15,6 +15,10 @@ from harness_evals.metrics.conversation.coherence import ConversationCoherenceMe
 from harness_evals.metrics.conversation.conversation_completeness import (
     ConversationCompletenessMetric,
 )
+from harness_evals.metrics.conversation.conversational_geval import (
+    ConversationalGEvalMetric,
+    MultiTurnView,
+)
 from harness_evals.metrics.conversation.goal_accuracy import GoalAccuracyMetric
 from harness_evals.metrics.conversation.knowledge_retention import (
     KnowledgeRetentionMetric,
@@ -49,6 +53,8 @@ from harness_evals.metrics.operational.cost_efficiency import CostEfficiencyMetr
 from harness_evals.metrics.operational.latency import LatencyMetric
 from harness_evals.metrics.operational.retry_count import RetryCountMetric
 from harness_evals.metrics.operational.token_cost import TokenCostMetric
+from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
+from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
 from harness_evals.metrics.rag.answer_correctness import AnswerCorrectnessMetric
 from harness_evals.metrics.rag.answer_relevancy import AnswerRelevancyMetric
 from harness_evals.metrics.rag.answer_similarity import AnswerSimilarityMetric
@@ -106,6 +112,8 @@ __all__ = [
     "TokenCostMetric",
     "CostEfficiencyMetric",
     "RetryCountMetric",
+    "TurnLatencyMetric",
+    "TurnTokenCostMetric",
     "OutcomeConsistencyMetric",
     "ResourceConsistencyMetric",
     "GEvalMetric",
@@ -142,6 +150,8 @@ __all__ = [
     "TopicAdherenceMetric",
     "TurnEfficiencyMetric",
     "TurnRelevancyMetric",
+    "ConversationalGEvalMetric",
+    "MultiTurnView",
     "ToolSelectionAccuracyMetric",
     "MCPTraceCompletenessMetric",
     "ListContainsMetric",

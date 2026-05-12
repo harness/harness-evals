@@ -8,6 +8,14 @@ from harness_evals.baseline import (
     compare_to_baseline,
 )
 from harness_evals.catalog import CatalogEntry, catalog
+from harness_evals.conversation import (
+    ConversationGolden,
+    ConversationSimulator,
+    evaluate_conversation,
+    evaluate_conversations,
+    load_conversation_dataset,
+    save_conversation_dataset,
+)
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric, Dimension, ReliabilityMetric, SafetyMetric
@@ -24,10 +32,12 @@ from harness_evals.core.sink import BaseSink
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.datasets import Dataset, load_dataset, save_dataset
 from harness_evals.input_generator import InputGenerator
+from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
+from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
 from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
 from harness_evals.summary import MetricSummary, ScoreSummary, summarize
-from harness_evals.synthesizer import Synthesizer
+from harness_evals.synthesizer import ConversationSynthesizer, ScriptedConversationSynthesizer, Synthesizer
 from harness_evals.testing import Fault, FaultInjector
 
 __all__ = [
@@ -67,8 +77,18 @@ __all__ = [
     "HtmlSink",
     "InputGenerator",
     "Synthesizer",
+    "ConversationSynthesizer",
+    "ScriptedConversationSynthesizer",
     "Message",
     "ToolCall",
     "Fault",
     "FaultInjector",
+    "TurnLatencyMetric",
+    "TurnTokenCostMetric",
+    "ConversationGolden",
+    "ConversationSimulator",
+    "evaluate_conversation",
+    "evaluate_conversations",
+    "load_conversation_dataset",
+    "save_conversation_dataset",
 ]

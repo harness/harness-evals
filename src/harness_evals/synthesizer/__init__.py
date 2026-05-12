@@ -6,6 +6,7 @@ from harness_evals._async_compat import _run_async
 from harness_evals.datasets import Dataset
 from harness_evals.llm.base import BaseLLM
 from harness_evals.synthesizer.base import BaseSynthesizer
+from harness_evals.synthesizer.conversation import ConversationSynthesizer, ScriptedConversationSynthesizer
 from harness_evals.synthesizer.extraction import ExtractionSynthesizer
 from harness_evals.synthesizer.qa import QASynthesizer
 from harness_evals.synthesizer.structured import StructuredOutputSynthesizer
@@ -16,6 +17,8 @@ _GENERATORS: dict[str, type[BaseSynthesizer]] = {
     "summarization": SummarizationSynthesizer,
     "extraction": ExtractionSynthesizer,
     "structured_output": StructuredOutputSynthesizer,
+    "conversation": ConversationSynthesizer,
+    "conversation_scripted": ScriptedConversationSynthesizer,
 }
 
 
@@ -54,19 +57,23 @@ class Synthesizer:
         n: int = 20,
         task_type: str = "qa",
         difficulty: str = "mixed",
-    ) -> Dataset:
+    ) -> list:
         """Generate *n* goldens from *documents* for the given *task_type*.
 
         Args:
             documents: Source document strings to generate from.
             n: Number of goldens to generate.
             task_type: One of ``"qa"``, ``"summarization"``,
-                ``"extraction"``, ``"structured_output"``.
+                ``"extraction"``, ``"structured_output"``,
+                ``"conversation"``, ``"conversation_scripted"``.
+                Conversation task types return ``list[ConversationGolden]``
+                instead of ``Dataset`` (``list[Golden]``).
             difficulty: One of ``"easy"``, ``"medium"``, ``"hard"``,
                 ``"mixed"``.
 
         Returns:
-            A ``Dataset`` (``list[Golden]``).
+            A ``Dataset`` (``list[Golden]``) for standard task types, or
+            ``list[ConversationGolden]`` for conversation task types.
         """
         if task_type not in _GENERATORS:
             raise ValueError(f"Unknown task_type {task_type!r}. Choose from: {', '.join(sorted(_GENERATORS))}")
@@ -96,4 +103,6 @@ __all__ = [
     "SummarizationSynthesizer",
     "ExtractionSynthesizer",
     "StructuredOutputSynthesizer",
+    "ConversationSynthesizer",
+    "ScriptedConversationSynthesizer",
 ]

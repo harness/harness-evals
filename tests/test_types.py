@@ -112,3 +112,30 @@ class TestMessage:
             tool_calls=[ToolCall(name="search", input={"q": "foo"}, output="bar")],
         )
         assert Message.from_dict(msg.to_dict()) == msg
+
+    def test_message_operational_fields_default_none(self):
+        msg = Message(role="user", content="hi")
+        assert msg.latency_ms is None
+        assert msg.token_count is None
+        assert msg.cost_usd is None
+
+    def test_message_operational_fields_set(self):
+        msg = Message(role="assistant", content="done", latency_ms=120.5, token_count=42, cost_usd=0.0003)
+        assert msg.latency_ms == 120.5
+        assert msg.token_count == 42
+        assert msg.cost_usd == 0.0003
+
+    def test_message_to_dict_includes_operational_when_set(self):
+        msg = Message(role="assistant", content="hi", latency_ms=100.0)
+        d = msg.to_dict()
+        assert d["latency_ms"] == 100.0
+        assert "token_count" not in d  # None omitted
+
+    def test_message_from_dict_roundtrip_with_operational(self):
+        msg = Message(role="assistant", content="resp", latency_ms=55.0, token_count=10, cost_usd=0.001)
+        assert Message.from_dict(msg.to_dict()) == msg
+
+    def test_message_from_dict_backward_compat_no_operational(self):
+        msg = Message.from_dict({"role": "user", "content": "hello"})
+        assert msg.latency_ms is None
+        assert msg.token_count is None

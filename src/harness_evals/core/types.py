@@ -40,6 +40,9 @@ class Message:
     role: str
     content: str | None = None
     tool_calls: list[ToolCall] | None = field(default=None)
+    latency_ms: float | None = None
+    token_count: int | None = None
+    cost_usd: float | None = None
 
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role}
@@ -47,6 +50,12 @@ class Message:
             d["content"] = self.content
         if self.tool_calls is not None:
             d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
+        if self.latency_ms is not None:
+            d["latency_ms"] = self.latency_ms
+        if self.token_count is not None:
+            d["token_count"] = self.token_count
+        if self.cost_usd is not None:
+            d["cost_usd"] = self.cost_usd
         return d
 
     @classmethod
@@ -58,4 +67,7 @@ class Message:
             role=data["role"],
             content=data.get("content"),
             tool_calls=tool_calls,
+            latency_ms=data.get("latency_ms"),
+            token_count=data.get("token_count"),
+            cost_usd=data.get("cost_usd"),
         )

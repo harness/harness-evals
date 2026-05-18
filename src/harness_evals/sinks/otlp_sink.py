@@ -10,6 +10,7 @@ from typing import Any
 
 try:
     from opentelemetry import trace as trace_api
+    from opentelemetry.context import Context
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
     from opentelemetry.sdk.resources import Resource
@@ -113,9 +114,19 @@ class OtlpSink(BaseSink):
     uses only generic ``eval.*`` attribute names. Use ``item_span_attributes`` to
     override or add attributes specific to item spans (e.g., ``span.type: eval_item``).
 
+    **Context propagation**: Pass ``parent_context`` to attach the eval-run span
+    to an existing trace (e.g., an orchestration span from the calling engine).
+    The sink's spans will share the parent's trace ID.
+
+    **Shared providers**: Pass ``tracer_provider`` and/or ``meter_provider`` to
+    reuse an existing export pipeline. The sink will NOT flush or shutdown
+    providers it does not own — the caller retains lifecycle control. When
+    external providers are supplied, ``endpoint``, ``protocol``, ``insecure``,
+    and ``headers`` are ignored for the corresponding signal.
+
     Call ``finalize()`` after all writes to end the root span and flush data.
     ``shutdown()`` calls ``finalize()`` if it hasn't been called, then releases
-    resources. The caller must ensure all ``write()`` calls complete before
+    owned resources. The caller must ensure all ``write()`` calls complete before
     calling ``finalize()`` — concurrent write and finalize is not supported.
 
     The ``insecure`` parameter controls TLS for ``protocol="grpc"`` only.
@@ -140,6 +151,9 @@ class OtlpSink(BaseSink):
         resource_attributes: dict[str, str] | None = None,
         extra_attributes: dict[str, str] | None = None,
         item_span_attributes: dict[str, str] | None = None,
+        parent_context: Context | None = None,
+        tracer_provider: TracerProvider | None = None,
+        meter_provider: MeterProvider | None = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")
@@ -150,27 +164,32 @@ class OtlpSink(BaseSink):
         self._model = model
         self._extra_attributes = extra_attributes or {}
         self._item_span_attributes = item_span_attributes or {}
+        self._parent_context = parent_context
         self._finalized = False
 
-        # --- Resource (shared by metrics + traces) ---
-        res_attrs = {"service.name": service_name, **(resource_attributes or {})}
-        resource = Resource.create(res_attrs)
-        # --- Exporters ---
-        if protocol == "http":
-            if not insecure:
+        self._owns_trace_provider = tracer_provider is None
+        self._owns_meter_provider = meter_provider is None
+
+        # --- Providers (internal or external) ---
+        if tracer_provider is not None or meter_provider is not None:
+            if endpoint != "http://localhost:4317":
                 warnings.warn(
-                    "insecure=False has no effect with protocol='http'. "
-                    "TLS is controlled by the URL scheme (https:// vs http://).",
+                    "endpoint/protocol/insecure/headers are ignored when tracer_provider "
+                    "or meter_provider is supplied. Configure export on the provider you pass in.",
                     stacklevel=2,
                 )
-            trace_url, metrics_url = _http_otlp_endpoints(endpoint)
-            metric_exporter, span_exporter = _load_http_exporters(trace_url, metrics_url, headers=headers)
+
+        if tracer_provider is not None and meter_provider is not None:
+            self._trace_provider = tracer_provider
+            self._meter_provider = meter_provider
         else:
-            metric_exporter, span_exporter = _load_grpc_exporters(endpoint, insecure, headers=headers)
+            tp, mp = self._create_internal_providers(
+                endpoint, service_name, insecure, protocol, headers, resource_attributes,
+            )
+            self._trace_provider = tracer_provider if tracer_provider is not None else tp
+            self._meter_provider = meter_provider if meter_provider is not None else mp
 
         # --- Metrics ---
-        reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=1000)
-        self._meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
         meter = self._meter_provider.get_meter(service_name)
 
         self._score_gauge = meter.create_gauge(
@@ -195,8 +214,6 @@ class OtlpSink(BaseSink):
         )
 
         # --- Traces ---
-        self._trace_provider = TracerProvider(resource=resource)
-        self._trace_provider.add_span_processor(BatchSpanProcessor(span_exporter))
         self._tracer = self._trace_provider.get_tracer(service_name)
 
         # Root span is created lazily on first write() so that its start time
@@ -208,6 +225,39 @@ class OtlpSink(BaseSink):
         self._item_count = 0
         self._items_passed = 0
         self._score_values: dict[str, list[float]] = {}
+
+    @staticmethod
+    def _create_internal_providers(
+        endpoint: str,
+        service_name: str,
+        insecure: bool,
+        protocol: str,
+        headers: dict[str, str] | None,
+        resource_attributes: dict[str, str] | None,
+    ) -> tuple[TracerProvider, MeterProvider]:
+        """Build owned TracerProvider + MeterProvider with exporters."""
+        res_attrs = {"service.name": service_name, **(resource_attributes or {})}
+        resource = Resource.create(res_attrs)
+
+        if protocol == "http":
+            if not insecure:
+                warnings.warn(
+                    "insecure=False has no effect with protocol='http'. "
+                    "TLS is controlled by the URL scheme (https:// vs http://).",
+                    stacklevel=2,
+                )
+            trace_url, metrics_url = _http_otlp_endpoints(endpoint)
+            metric_exporter, span_exporter = _load_http_exporters(trace_url, metrics_url, headers=headers)
+        else:
+            metric_exporter, span_exporter = _load_grpc_exporters(endpoint, insecure, headers=headers)
+
+        reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=1000)
+        mp = MeterProvider(resource=resource, metric_readers=[reader])
+
+        tp = TracerProvider(resource=resource)
+        tp.add_span_processor(BatchSpanProcessor(span_exporter))
+
+        return tp, mp
 
     def _ensure_root_span(self) -> None:
         """Create the root eval-run span on first write (under lock)."""
@@ -221,6 +271,7 @@ class OtlpSink(BaseSink):
             root_attrs["model"] = self._model
         self._root_span = self._tracer.start_span(
             "eval-run",
+            context=self._parent_context,
             attributes=root_attrs,
         )
 
@@ -348,11 +399,15 @@ class OtlpSink(BaseSink):
             root.set_status(StatusCode.OK)
             root.end()
 
-        self._trace_provider.force_flush()
-        self._meter_provider.force_flush()
+        if self._owns_trace_provider:
+            self._trace_provider.force_flush()
+        if self._owns_meter_provider:
+            self._meter_provider.force_flush()
 
     def shutdown(self) -> None:
-        """Finalize (if needed), then release resources for both providers."""
+        """Finalize (if needed), then release resources for owned providers."""
         self.finalize()
-        self._meter_provider.shutdown()
-        self._trace_provider.shutdown()
+        if self._owns_meter_provider:
+            self._meter_provider.shutdown()
+        if self._owns_trace_provider:
+            self._trace_provider.shutdown()

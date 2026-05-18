@@ -799,6 +799,157 @@ class TestOtlpSinkTruncate:
 
 
 # ---------------------------------------------------------------------------
+# OtlpSink — Context Propagation & External Providers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestOtlpSinkContextPropagation:
+    """Tests for parent_context, tracer_provider, and meter_provider injection."""
+
+    def test_parent_context_passed_to_root_span(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        fake_ctx = MagicMock()
+        sink = OtlpSink(run_id="run-ctx", parent_context=fake_ctx)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
+
+        root_call = [c for c in mocks["tracer"].start_span.call_args_list if c[0][0] == "eval-run"][0]
+        assert root_call[1]["context"] is fake_ctx
+
+    def test_parent_context_none_by_default(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-default")
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
+
+        root_call = [c for c in mocks["tracer"].start_span.call_args_list if c[0][0] == "eval-run"][0]
+        assert root_call[1]["context"] is None
+
+    def test_external_tracer_provider_used(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tracer = MagicMock()
+        ext_tp.get_tracer.return_value = ext_tracer
+        ext_root = MagicMock()
+        ext_item = MagicMock()
+        ext_tracer.start_span.side_effect = lambda name, **kw: ext_root if name == "eval-run" else ext_item
+
+        sink = OtlpSink(tracer_provider=ext_tp, run_id="run-ext")
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
+
+        ext_tp.get_tracer.assert_called_once_with("harness-evals")
+        assert ext_tracer.start_span.call_count == 2  # root + item
+
+    def test_external_meter_provider_used(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_mp = MagicMock()
+        ext_meter = MagicMock()
+        ext_mp.get_meter.return_value = ext_meter
+        ext_gauge = MagicMock()
+        ext_meter.create_gauge.return_value = ext_gauge
+        ext_meter.create_histogram.return_value = MagicMock()
+
+        sink = OtlpSink(meter_provider=ext_mp, run_id="run-ext-meter")
+        sink.write([Score(name="m", value=0.9, threshold=0.5)], EvalCase(input="q", output="a"))
+
+        ext_mp.get_meter.assert_called_once_with("harness-evals")
+        ext_gauge.set.assert_called_once()
+
+    def test_shutdown_does_not_shutdown_external_providers(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tp.get_tracer.return_value = mocks["tracer"]
+        ext_mp = MagicMock()
+        ext_mp.get_meter.return_value = mocks["meter"]
+
+        sink = OtlpSink(tracer_provider=ext_tp, meter_provider=ext_mp)
+        sink.shutdown()
+
+        ext_tp.shutdown.assert_not_called()
+        ext_mp.shutdown.assert_not_called()
+
+    def test_finalize_does_not_flush_external_providers(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tp.get_tracer.return_value = mocks["tracer"]
+        ext_mp = MagicMock()
+        ext_mp.get_meter.return_value = mocks["meter"]
+
+        sink = OtlpSink(tracer_provider=ext_tp, meter_provider=ext_mp, run_id="run-1")
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
+        sink.finalize()
+
+        ext_tp.force_flush.assert_not_called()
+        ext_mp.force_flush.assert_not_called()
+
+    def test_shutdown_still_shuts_own_meter_when_only_tracer_external(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tp.get_tracer.return_value = mocks["tracer"]
+
+        sink = OtlpSink(tracer_provider=ext_tp, run_id="run-partial")
+        sink.shutdown()
+
+        ext_tp.shutdown.assert_not_called()
+        mocks["meter_provider"].shutdown.assert_called_once()
+
+    def test_warning_when_endpoint_and_provider_both_set(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tp.get_tracer.return_value = mocks["tracer"]
+        ext_mp = MagicMock()
+        ext_mp.get_meter.return_value = mocks["meter"]
+
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter("always")
+            OtlpSink(
+                endpoint="http://custom-collector:4317",
+                tracer_provider=ext_tp,
+                meter_provider=ext_mp,
+            )
+            assert len(w) == 1
+            assert "endpoint/protocol/insecure/headers are ignored" in str(w[0].message)
+
+    def test_no_warning_when_default_endpoint_and_provider(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tp.get_tracer.return_value = mocks["tracer"]
+        ext_mp = MagicMock()
+        ext_mp.get_meter.return_value = mocks["meter"]
+
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True) as w:
+            _warnings.simplefilter("always")
+            OtlpSink(tracer_provider=ext_tp, meter_provider=ext_mp)
+            assert len(w) == 0
+
+    def test_parent_context_with_external_provider(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        ext_tp = MagicMock()
+        ext_tracer = MagicMock()
+        ext_tp.get_tracer.return_value = ext_tracer
+        ext_root = MagicMock()
+        ext_item = MagicMock()
+        ext_tracer.start_span.side_effect = lambda name, **kw: ext_root if name == "eval-run" else ext_item
+        ext_mp = MagicMock()
+        ext_mp.get_meter.return_value = mocks["meter"]
+
+        fake_ctx = MagicMock()
+        sink = OtlpSink(
+            tracer_provider=ext_tp,
+            meter_provider=ext_mp,
+            parent_context=fake_ctx,
+            run_id="run-both",
+        )
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], EvalCase(input="q", output="a"))
+
+        root_call = [c for c in ext_tracer.start_span.call_args_list if c[0][0] == "eval-run"][0]
+        assert root_call[1]["context"] is fake_ctx
+
+
+# ---------------------------------------------------------------------------
 # LangfuseSink
 # ---------------------------------------------------------------------------
 

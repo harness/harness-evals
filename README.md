@@ -282,6 +282,44 @@ sink = OtlpSink(
 scores = evaluate(ec, metrics=[...], sinks=[sink])
 ```
 
+#### Attach eval spans to an existing trace
+
+If your eval engine already creates OTel spans, pass a `parent_context` so the eval-run span becomes a child (same trace ID, unified view in Jaeger/Tempo):
+
+```python
+from opentelemetry import trace
+from harness_evals.sinks.otlp_sink import OtlpSink
+
+tracer = trace.get_tracer("my-engine")
+with tracer.start_as_current_span("orchestration") as parent:
+    ctx = trace.set_span_in_context(parent)
+    sink = OtlpSink(endpoint="http://collector:4317", parent_context=ctx)
+    evaluate_cases(cases, metrics=[...], sinks=[sink])
+```
+
+#### Share a TracerProvider (single export pipeline)
+
+For full control, pass your own `TracerProvider` and/or `MeterProvider`. The sink won't flush or shutdown providers it doesn't own — you retain lifecycle control:
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from harness_evals.sinks.otlp_sink import OtlpSink
+
+provider = TracerProvider(resource=my_resource)
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint="http://collector:4317")))
+tracer = provider.get_tracer("my-engine")
+
+with tracer.start_as_current_span("orchestration") as parent:
+    ctx = trace.set_span_in_context(parent)
+    sink = OtlpSink(tracer_provider=provider, parent_context=ctx, run_id="run-123")
+    evaluate_cases(cases, metrics=[...], sinks=[sink])
+
+provider.shutdown()  # caller owns lifecycle
+```
+
 ### Evaluate security remediations
 
 ```python

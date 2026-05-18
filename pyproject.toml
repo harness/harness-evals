@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "harness-evals"
-version = "0.7.0"
+version = "0.7.1"
 description = "Open-source AI evaluation framework for LLM agents, prompts, and structured outputs"
 readme = "README.md"
 license = "Apache-2.0"

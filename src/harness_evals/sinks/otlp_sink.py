@@ -118,6 +118,15 @@ class OtlpSink(BaseSink):
     to an existing trace (e.g., an orchestration span from the calling engine).
     The sink's spans will share the parent's trace ID.
 
+    **Engine-owned item spans**: When the engine creates its own item spans
+    (with structured children like target-invoke, scorer), pass ``item_context``
+    to ``write()`` so the sink decorates the engine's span with score events
+    instead of creating a duplicate child span. When using ``item_context``,
+    also pass ``parent_context`` at construction so the sink's root eval-run
+    span (which holds the summary) attaches to the engine's trace tree.
+    Without ``parent_context``, the summary span becomes an orphaned root —
+    still queryable by ``eval.run_id`` but disconnected from the engine's trace.
+
     **Shared providers**: Pass ``tracer_provider`` and/or ``meter_provider`` to
     reuse an existing export pipeline. The sink will NOT flush or shutdown
     providers it does not own — the caller retains lifecycle control. When
@@ -275,7 +284,15 @@ class OtlpSink(BaseSink):
             attributes=root_attrs,
         )
 
-    def write(self, scores: list[Score], eval_case: EvalCase) -> None:
+    def write(self, scores: list[Score], eval_case: EvalCase, *, item_context: Context | None = None) -> None:
+        """Emit scores for a single eval case.
+
+        When ``item_context`` is provided (a Context containing the engine's
+        item span), score events are added to that existing span instead of
+        creating a new child span. The engine owns the span lifecycle — the
+        sink will not end it. Summary accumulators are still updated so
+        ``finalize()`` can emit the root span summary.
+        """
         if not scores:
             return
 
@@ -294,13 +311,10 @@ class OtlpSink(BaseSink):
                 "eval.threshold": str(score.threshold),
                 "eval.passed": str(score.passed),
             }
-            # Propagate generic score.metadata as OTel attributes (prefixed with "eval.meta.")
-            # Callers control what's in metadata — the sink doesn't interpret it.
             meta = score.metadata or {}
             for mk, mv in meta.items():
                 if isinstance(mv, (str, int, float, bool)):
                     metric_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
-            # dimension gets a first-class attribute (generic eval concept)
             if meta.get("dimension"):
                 metric_attrs["eval.dimension"] = meta["dimension"]
             if self._model:
@@ -325,40 +339,8 @@ class OtlpSink(BaseSink):
             for s in scores:
                 self._score_values.setdefault(s.name, []).append(s.value)
 
-        # Build child span attributes
-        item_attrs: dict[str, Any] = {
-            "eval.run_id": self._run_id,
-            "eval.item.index": item_index,
-            "eval.item.passed": all_passed,
-            **self._extra_attributes,
-            **self._item_span_attributes,  # overrides for item span
-        }
-        # Propagate generic score metadata to span (first score as representative)
-        if scores:
-            span_meta = scores[0].metadata or {}
-            for mk, mv in span_meta.items():
-                if isinstance(mv, (str, int, float, bool)):
-                    item_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
-            if self._model:
-                item_attrs["model"] = self._model
-        if eval_case.input is not None:
-            item_attrs["eval.item.input"] = _truncate(eval_case.input)
-        if eval_case.output is not None:
-            item_attrs["eval.item.output"] = _truncate(eval_case.output)
-        if eval_case.expected is not None:
-            item_attrs["eval.item.expected"] = _truncate(eval_case.expected)
-        if eval_case.latency_ms is not None:
-            item_attrs["eval.item.latency_ms"] = eval_case.latency_ms
-        if eval_case.token_count is not None:
-            item_attrs["eval.item.token_count"] = eval_case.token_count
-        if eval_case.cost_usd is not None:
-            item_attrs["eval.item.cost_usd"] = eval_case.cost_usd
-
-        # Create child span under root, add score events, end immediately.
-        # _root_span is safe to read outside the lock: it is set once (write-once
-        # invariant) inside _ensure_root_span and never reassigned after that.
-        ctx = trace_api.set_span_in_context(self._root_span)
-        item_span = self._tracer.start_span("eval-item", context=ctx, attributes=item_attrs)
+        # Build score event attributes (used in both paths)
+        score_events: list[dict[str, Any]] = []
         for score in scores:
             event_attrs: dict[str, Any] = {
                 "eval.metric_name": score.name,
@@ -371,8 +353,49 @@ class OtlpSink(BaseSink):
                 event_attrs["eval.dimension"] = dimension
             if score.reason:
                 event_attrs["eval.score.reason"] = score.reason
-            item_span.add_event("eval.score", attributes=event_attrs)
-        item_span.end()
+            score_events.append(event_attrs)
+
+        if item_context is not None:
+            # Decorate the engine's existing item span with score events.
+            # The engine owns the span — we don't end it.
+            item_span = trace_api.get_current_span(item_context)
+            item_span.set_attribute("eval.item.passed", all_passed)
+            for event_attrs in score_events:
+                item_span.add_event("eval.score", attributes=event_attrs)
+        else:
+            # Create our own child span under root.
+            item_attrs: dict[str, Any] = {
+                "eval.run_id": self._run_id,
+                "eval.item.index": item_index,
+                "eval.item.passed": all_passed,
+                **self._extra_attributes,
+                **self._item_span_attributes,
+            }
+            if scores:
+                span_meta = scores[0].metadata or {}
+                for mk, mv in span_meta.items():
+                    if isinstance(mv, (str, int, float, bool)):
+                        item_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
+                if self._model:
+                    item_attrs["model"] = self._model
+            if eval_case.input is not None:
+                item_attrs["eval.item.input"] = _truncate(eval_case.input)
+            if eval_case.output is not None:
+                item_attrs["eval.item.output"] = _truncate(eval_case.output)
+            if eval_case.expected is not None:
+                item_attrs["eval.item.expected"] = _truncate(eval_case.expected)
+            if eval_case.latency_ms is not None:
+                item_attrs["eval.item.latency_ms"] = eval_case.latency_ms
+            if eval_case.token_count is not None:
+                item_attrs["eval.item.token_count"] = eval_case.token_count
+            if eval_case.cost_usd is not None:
+                item_attrs["eval.item.cost_usd"] = eval_case.cost_usd
+
+            ctx = trace_api.set_span_in_context(self._root_span)
+            item_span = self._tracer.start_span("eval-item", context=ctx, attributes=item_attrs)
+            for event_attrs in score_events:
+                item_span.add_event("eval.score", attributes=event_attrs)
+            item_span.end()
 
     def finalize(self) -> None:
         """End the root span with summary attributes and flush both providers."""

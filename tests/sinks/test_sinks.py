@@ -950,6 +950,149 @@ class TestOtlpSinkContextPropagation:
 
 
 # ---------------------------------------------------------------------------
+# OtlpSink — item_context (engine-owned item spans)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestOtlpSinkItemContext:
+    """Tests for write() with item_context — decorating engine-owned spans."""
+
+    def test_item_context_adds_events_to_existing_span(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+
+        engine_span = MagicMock()
+        fake_item_ctx = MagicMock()
+
+        with patch("harness_evals.sinks.otlp_sink.trace_api.get_current_span", return_value=engine_span):
+            sink.write(
+                [Score(name="accuracy", value=0.9, threshold=0.7, reason="good")],
+                EvalCase(input="q", output="a"),
+                item_context=fake_item_ctx,
+            )
+
+        # Score event added to engine's span
+        engine_span.add_event.assert_called_once()
+        event_call = engine_span.add_event.call_args
+        assert event_call[0][0] == "eval.score"
+        assert event_call[1]["attributes"]["eval.metric_name"] == "accuracy"
+        assert event_call[1]["attributes"]["eval.score.value"] == 0.9
+        assert event_call[1]["attributes"]["eval.score.reason"] == "good"
+
+    def test_item_context_does_not_create_child_span(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+
+        engine_span = MagicMock()
+        fake_item_ctx = MagicMock()
+
+        with patch("harness_evals.sinks.otlp_sink.trace_api.get_current_span", return_value=engine_span):
+            sink.write(
+                [Score(name="m", value=1.0, threshold=0.5)],
+                EvalCase(input="q", output="a"),
+                item_context=fake_item_ctx,
+            )
+
+        # Only root span created, no eval-item child
+        span_calls = [c for c in mocks["tracer"].start_span.call_args_list if c[0][0] == "eval-item"]
+        assert len(span_calls) == 0
+
+    def test_item_context_does_not_end_engine_span(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+
+        engine_span = MagicMock()
+        fake_item_ctx = MagicMock()
+
+        with patch("harness_evals.sinks.otlp_sink.trace_api.get_current_span", return_value=engine_span):
+            sink.write(
+                [Score(name="m", value=1.0, threshold=0.5)],
+                EvalCase(input="q", output="a"),
+                item_context=fake_item_ctx,
+            )
+
+        engine_span.end.assert_not_called()
+
+    def test_item_context_sets_passed_attribute(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+
+        engine_span = MagicMock()
+        fake_item_ctx = MagicMock()
+
+        with patch("harness_evals.sinks.otlp_sink.trace_api.get_current_span", return_value=engine_span):
+            sink.write(
+                [
+                    Score(name="a", value=1.0, threshold=0.5),
+                    Score(name="b", value=0.3, threshold=0.5),
+                ],
+                EvalCase(input="q", output="a"),
+                item_context=fake_item_ctx,
+            )
+
+        engine_span.set_attribute.assert_called_with("eval.item.passed", False)
+
+    def test_item_context_still_accumulates_summary(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+
+        engine_span = MagicMock()
+        fake_item_ctx = MagicMock()
+
+        with patch("harness_evals.sinks.otlp_sink.trace_api.get_current_span", return_value=engine_span):
+            sink.write(
+                [Score(name="m", value=1.0, threshold=0.5)],
+                EvalCase(input="q", output="a"),
+                item_context=fake_item_ctx,
+            )
+            sink.write(
+                [Score(name="m", value=0.6, threshold=0.5)],
+                EvalCase(input="q2", output="a2"),
+                item_context=fake_item_ctx,
+            )
+
+        sink.finalize()
+
+        # Root span gets summary despite item_context usage
+        mocks["root_span"].set_attribute.assert_any_call("eval.summary.items_total", 2)
+        mocks["root_span"].set_attribute.assert_any_call("eval.summary.items_passed", 2)
+
+    def test_item_context_still_emits_metrics(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+
+        engine_span = MagicMock()
+        fake_item_ctx = MagicMock()
+
+        with patch("harness_evals.sinks.otlp_sink.trace_api.get_current_span", return_value=engine_span):
+            sink.write(
+                [Score(name="m", value=0.85, threshold=0.5)],
+                EvalCase(input="q", output="a", latency_ms=200.0),
+                item_context=fake_item_ctx,
+            )
+
+        # Metrics still recorded
+        mocks["gauge"].set.assert_called_once()
+        mocks["latency_hist"].record.assert_called_once_with(200.0, attributes=mocks["latency_hist"].record.call_args[1]["attributes"])
+
+    def test_item_context_none_uses_default_behavior(self, otlp_mocks):
+        """Explicit item_context=None should behave identically to not passing it."""
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+        sink.write(
+            [Score(name="m", value=1.0, threshold=0.5)],
+            EvalCase(input="q", output="a"),
+            item_context=None,
+        )
+
+        # Child span created as usual
+        span_calls = [c for c in mocks["tracer"].start_span.call_args_list if c[0][0] == "eval-item"]
+        assert len(span_calls) == 1
+        mocks["item_span"].end.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # LangfuseSink
 # ---------------------------------------------------------------------------
 

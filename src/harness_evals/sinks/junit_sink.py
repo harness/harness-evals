@@ -32,11 +32,13 @@ class JUnitSink(BaseSink):
         input_preview = str(eval_case.input)[:120]
         for score in scores:
             self._tests += 1
-            tc = Element(
-                "testcase",
-                name=score.name,
-                classname=input_preview,
-            )
+            attrs: dict[str, str] = {
+                "name": score.name,
+                "classname": input_preview,
+            }
+            if score.scoring_duration_ms is not None:
+                attrs["time"] = f"{score.scoring_duration_ms / 1000.0:.3f}"
+            tc = Element("testcase", **attrs)
             if not score.passed:
                 self._failures += 1
                 failure = SubElement(
@@ -51,12 +53,18 @@ class JUnitSink(BaseSink):
     def finalize(self) -> None:
         """Write accumulated test cases to the JUnit XML file."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        suite = Element(
-            "testsuite",
-            name=self.suite_name,
-            tests=str(self._tests),
-            failures=str(self._failures),
+        total_time = sum(
+            float(tc.attrib["time"])
+            for tc in self._testcases
+            if "time" in tc.attrib
         )
+        suite_attrs: dict[str, str] = {
+            "name": self.suite_name,
+            "tests": str(self._tests),
+            "failures": str(self._failures),
+            "time": f"{total_time:.3f}",
+        }
+        suite = Element("testsuite", **suite_attrs)
         for tc in self._testcases:
             suite.append(tc)
 

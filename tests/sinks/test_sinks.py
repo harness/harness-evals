@@ -309,7 +309,7 @@ class TestJUnitSink:
         names = {tc.attrib["name"] for tc in testcases}
         assert names == {"pass_metric", "fail_metric"}
 
-    def test_no_time_attribute_on_testcase(self, tmp_path):
+    def test_no_time_attribute_when_duration_not_set(self, tmp_path):
         path = tmp_path / "results.xml"
         sink = JUnitSink(str(path))
         ec = EvalCase(input="q", output="a")
@@ -319,6 +319,29 @@ class TestJUnitSink:
         tree = ET.parse(path)
         tc = tree.getroot().find("testcase")
         assert "time" not in tc.attrib
+
+    def test_time_attribute_from_scoring_duration_ms(self, tmp_path):
+        path = tmp_path / "results.xml"
+        sink = JUnitSink(str(path))
+        ec = EvalCase(input="q", output="a")
+        sink.write([Score(name="m", value=0.9, threshold=0.5, scoring_duration_ms=1234.0)], ec)
+        sink.finalize()
+
+        tree = ET.parse(path)
+        tc = tree.getroot().find("testcase")
+        assert tc.attrib["time"] == "1.234"
+
+    def test_suite_time_sums_testcases(self, tmp_path):
+        path = tmp_path / "results.xml"
+        sink = JUnitSink(str(path))
+        ec = EvalCase(input="q", output="a")
+        sink.write([Score(name="m1", value=1.0, threshold=0.5, scoring_duration_ms=1500.0)], ec)
+        sink.write([Score(name="m2", value=0.8, threshold=0.5, scoring_duration_ms=2000.0)], ec)
+        sink.finalize()
+
+        tree = ET.parse(path)
+        root = tree.getroot()
+        assert root.attrib["time"] == "3.500"
 
     def test_failure_type_is_metric_failure(self, tmp_path):
         path = tmp_path / "results.xml"

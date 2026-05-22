@@ -19,6 +19,7 @@ class Score:
     passed: bool = field(init=False)
     reason: str | None = None
     metadata: dict[str, Any] | None = field(default=None)
+    scoring_duration_ms: float | None = field(default=None)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     _CLAMP_EPS = 1e-6

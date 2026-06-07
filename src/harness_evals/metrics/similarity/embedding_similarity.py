@@ -29,7 +29,7 @@ class EmbeddingSimilarityMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is None — cannot compute similarity",
+                reason="No expected answer provided to compute similarity against (expected is None)",
             )
 
         vectors = await self.embedding.embed([str(eval_case.output), str(eval_case.expected)])
@@ -40,6 +40,6 @@ class EmbeddingSimilarityMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"cosine similarity = {similarity:.4f}",
+            reason=f"Output is {value * 100:.0f}% semantically similar to the expected answer (cosine similarity = {similarity:.4f})",
             metadata={"cosine_similarity": similarity},
         )

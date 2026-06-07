@@ -44,7 +44,7 @@ class ToolCorrectnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected_tools not provided on EvalCase",
+                reason="Cannot evaluate tool correctness — 'expected_tools' not provided on the eval case",
             )
 
         if eval_case.tool_calls is None:
@@ -52,14 +52,14 @@ class ToolCorrectnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="tool_calls not provided on EvalCase",
+                reason="Cannot evaluate tool correctness — 'tool_calls' not provided on the eval case",
             )
 
         tools_called = [tc.name for tc in eval_case.tool_calls]
 
         if not expected_tools:
             value = 1.0 if not tools_called else 0.0
-            reason = "No tools expected" if value == 1.0 else "Tools called but none expected"
+            reason = "Perfect match — no tools were expected and none were called" if value == 1.0 else "Agent called tools but none were expected"
             return Score(
                 name=self.name,
                 value=value,
@@ -80,7 +80,7 @@ class ToolCorrectnessMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{matches}/{max_len} tools match (exact mode)",
+            reason=f"{matches} of {max_len} tool calls match the expected sequence ({matches}/{max_len}, exact mode)",
             metadata={
                 "mode": "exact",
                 "tools_called": called,
@@ -106,7 +106,7 @@ class ToolCorrectnessMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{found}/{total_expected} expected tools found (subset mode)",
+            reason=f"{found} of {total_expected} expected tools were called ({found}/{total_expected}, subset mode)",
             metadata={
                 "mode": "subset",
                 "tools_called": called,

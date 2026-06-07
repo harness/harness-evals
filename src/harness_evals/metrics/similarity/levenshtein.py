@@ -41,7 +41,7 @@ class LevenshteinMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is None — cannot compare",
+                reason="No expected answer provided to compare against (expected is None)",
             )
 
         output_str = str(eval_case.output)
@@ -58,6 +58,6 @@ class LevenshteinMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"edit distance {dist}/{max_len}",
+            reason=f"Output differs by {dist} characters out of {max_len} from the expected answer (edit distance {dist}/{max_len})",
             metadata={"edit_distance": dist, "max_length": max_len},
         )

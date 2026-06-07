@@ -73,7 +73,7 @@ class ToolArgumentMatchMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected_tool_calls not provided on EvalCase",
+                reason="Cannot evaluate argument match — 'expected_tool_calls' not provided on the eval case",
             )
 
         if eval_case.tool_calls is None:
@@ -81,14 +81,14 @@ class ToolArgumentMatchMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="tool_calls not provided on EvalCase",
+                reason="Cannot evaluate argument match — 'tool_calls' not provided on the eval case",
             )
 
         actual_calls = eval_case.tool_calls
 
         if not expected_calls:
             value = 1.0 if not actual_calls else 0.0
-            reason = "No tool calls expected" if value == 1.0 else "Tool calls made but none expected"
+            reason = "Perfect match — no tool calls were expected and none were made" if value == 1.0 else "Agent made tool calls but none were expected"
             return Score(
                 name=self.name,
                 value=value,
@@ -128,7 +128,7 @@ class ToolArgumentMatchMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{matches}/{denominator} tool calls match args (exact pairing, {self.arg_match} args)",
+            reason=f"{matches} of {denominator} tool calls have matching arguments ({matches}/{denominator}, exact pairing, {self.arg_match} args)",
             metadata={
                 "pair": "exact",
                 "arg_match": self.arg_match,
@@ -176,7 +176,7 @@ class ToolArgumentMatchMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{matches}/{denominator} expected tool calls matched (subset pairing, {self.arg_match} args)",
+            reason=f"{matches} of {denominator} expected tool calls have matching arguments ({matches}/{denominator}, subset pairing, {self.arg_match} args)",
             metadata={
                 "pair": "subset",
                 "arg_match": self.arg_match,

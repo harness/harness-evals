@@ -74,7 +74,7 @@ class PlanAdherenceMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No messages present to evaluate plan adherence",
+                reason="Cannot evaluate plan adherence — no messages present in the eval case",
             )
 
         messages_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)

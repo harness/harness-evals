@@ -58,7 +58,7 @@ class ContextPrecisionMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No context provided",
+                reason="No context provided — cannot evaluate precision without retrieval results",
             )
 
         chunks_text = "\n".join(f"[Chunk {i}]: {chunk}" for i, chunk in enumerate(eval_case.context))
@@ -75,6 +75,6 @@ class ContextPrecisionMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{relevant}/{total} context chunks relevant",
+            reason=f"{relevant} of {total} retrieved context chunks are relevant to the question ({relevant}/{total})",
             metadata={"total_chunks": total, "relevant_chunks": relevant},
         )

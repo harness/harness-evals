@@ -51,6 +51,6 @@ def remediation_quality_index(
         name="RemediationQualityIndex",
         value=value,
         threshold=threshold,
-        reason=f"Weighted composite of {len(matched)}/{len(w)} metrics",
+        reason=f"Composite score computed from {len(matched)} of {len(w)} security metrics ({len(matched)}/{len(w)} available)",
         metadata={"matched_metrics": matched, "weights": w},
     )

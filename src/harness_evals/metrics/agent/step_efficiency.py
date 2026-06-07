@@ -77,7 +77,7 @@ class StepEfficiencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No messages or tool_calls present to evaluate step efficiency",
+                reason="Cannot evaluate step efficiency — no messages or tool_calls present in the eval case",
             )
 
         messages_text = (

@@ -21,7 +21,7 @@ class CostEfficiencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="cost_usd not provided",
+                reason="No cost data provided on this eval case (cost_usd is None)",
             )
 
         cost = float(eval_case.cost_usd)
@@ -30,7 +30,7 @@ class CostEfficiencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid cost_usd: {cost} (must be >= 0)",
+                reason=f"Cost value is invalid — must be non-negative, got ${cost}",
             )
 
         value = max(0.0, 1.0 - cost / self.max_cost_usd)

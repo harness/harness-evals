@@ -61,7 +61,7 @@ class BLEUMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is None — cannot compute BLEU",
+                reason="No expected answer provided to compute BLEU score against (expected is None)",
             )
 
         ref_tokens = str(eval_case.expected).split()
@@ -72,7 +72,7 @@ class BLEUMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is empty — cannot compute BLEU",
+                reason="Expected answer is empty, so BLEU score cannot be computed",
             )
 
         try:
@@ -92,6 +92,6 @@ class BLEUMetric(BaseMetric):
             name=self.name,
             value=float(value),
             threshold=self.threshold,
-            reason=f"BLEU-{self.max_n} = {value:.4f}",
+            reason=f"Output has {value * 100:.0f}% n-gram overlap with expected answer (BLEU-{self.max_n} = {value:.4f})",
             metadata={"max_n": self.max_n},
         )

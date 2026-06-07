@@ -21,7 +21,7 @@ class TokenCostMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="token_count not provided",
+                reason="No token count data provided on this eval case (token_count is None)",
             )
 
         tokens = int(eval_case.token_count)
@@ -30,7 +30,7 @@ class TokenCostMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid token_count: {tokens} (must be >= 0)",
+                reason=f"Token count value is invalid — must be non-negative, got {tokens}",
             )
 
         value = max(0.0, 1.0 - tokens / self.max_tokens)

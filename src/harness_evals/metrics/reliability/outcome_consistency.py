@@ -25,7 +25,7 @@ class OutcomeConsistencyMetric(ReliabilityMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Need at least 2 runs, got {len(runs)}",
+                reason=f"Cannot measure consistency — need at least 2 runs, but only {len(runs)} provided",
             )
 
         outputs = [str(run.output) for run in runs]

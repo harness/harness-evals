@@ -50,7 +50,7 @@ class JsonDiffMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"JSON parse error: {e}",
+                reason=f"Could not parse input as JSON for comparison ({e})",
             )
 
         # If a string input still parses to a plain string, it failed to produce structure
@@ -59,14 +59,14 @@ class JsonDiffMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="JSON parse error: output is not valid JSON or YAML",
+                reason="JSON parse failed — output is not valid JSON or YAML",
             )
         if isinstance(eval_case.expected, str) and isinstance(expected, str):
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="JSON parse error: expected is not valid JSON or YAML",
+                reason="JSON parse failed — expected is not valid JSON or YAML",
             )
 
         diff = DeepDiff(
@@ -85,7 +85,7 @@ class JsonDiffMetric(BaseMetric):
         if diff:
             changes = {k: v for k, v in diff.items() if k != "deep_distance"}
             if changes:
-                reason = f"Differences: {list(changes.keys())}"
+                reason = f"Structural differences found between output and expected ({', '.join(changes.keys())})"
 
         return Score(
             name=self.name,

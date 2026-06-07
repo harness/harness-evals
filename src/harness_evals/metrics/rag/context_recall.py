@@ -60,14 +60,14 @@ class ContextRecallMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No context provided",
+                reason="No context provided — cannot check recall without retrieval results",
             )
         if eval_case.expected is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No expected output provided for recall check",
+                reason="No expected answer provided to check recall against (expected is None)",
             )
 
         context_text = "\n---\n".join(eval_case.context)
@@ -80,7 +80,7 @@ class ContextRecallMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="No statements found in expected output",
+                reason="No factual statements found in the expected output to check",
             )
 
         attributed = sum(1 for s in statements if s.get("attributed", False))
@@ -91,6 +91,6 @@ class ContextRecallMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{attributed}/{total} expected statements attributed to context",
+            reason=f"{attributed} of {total} expected statements are supported by the retrieved context ({attributed}/{total})",
             metadata={"total_statements": total, "attributed_statements": attributed},
         )

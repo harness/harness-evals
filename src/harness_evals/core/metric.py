@@ -101,7 +101,7 @@ class ReliabilityMetric(BaseMetric):
             name=self.name,
             value=0.0,
             threshold=self.threshold,
-            reason=f"No runs provided (expected {self.k})",
+            reason=f"No runs provided — cannot evaluate reliability (expected {self.k} repeated runs)",
         )
 
     async def a_measure(self, eval_case: EvalCase) -> Score | None:
@@ -111,5 +111,5 @@ class ReliabilityMetric(BaseMetric):
             name=self.name,
             value=0.0,
             threshold=self.threshold,
-            reason=f"No runs provided (expected {self.k})",
+            reason=f"No runs provided — cannot evaluate reliability (expected {self.k} repeated runs)",
         )

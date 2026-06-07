@@ -64,7 +64,7 @@ class ArgumentCorrectnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No tool_calls present to evaluate",
+                reason="Cannot evaluate argument correctness — no tool_calls present in the eval case",
             )
 
         tool_calls_text = json.dumps([tc.to_dict() for tc in tool_calls], indent=2)

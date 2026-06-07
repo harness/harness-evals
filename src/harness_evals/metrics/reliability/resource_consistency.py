@@ -45,7 +45,7 @@ class ResourceConsistencyMetric(ReliabilityMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Need at least 2 runs, got {len(runs)}",
+                reason=f"Cannot measure resource consistency — need at least 2 runs, but only {len(runs)} provided",
             )
 
         values: list[float] = []
@@ -59,7 +59,7 @@ class ResourceConsistencyMetric(ReliabilityMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"'{self.resource_key}' found in {len(values)} of {len(runs)} runs",
+                reason=f"Insufficient data — '{self.resource_key}' was only found in {len(values)} of {len(runs)} runs (need at least 2)",
             )
 
         mean = statistics.mean(values)

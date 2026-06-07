@@ -45,14 +45,14 @@ class ContextEntityRecallMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No context provided",
+                reason="No context provided — cannot check entity recall without retrieval results",
             )
         if eval_case.expected is None:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No expected output provided for entity recall",
+                reason="No expected answer provided to extract entities from (expected is None)",
             )
 
         expected_result = await self.llm.generate_json(_EXTRACT_PROMPT.format(text=eval_case.expected), _EXTRACT_SCHEMA)
@@ -63,7 +63,7 @@ class ContextEntityRecallMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="No entities found in expected output",
+                reason="No named entities were identified in the expected output to check",
             )
 
         context_text = "\n---\n".join(eval_case.context)
@@ -79,7 +79,7 @@ class ContextEntityRecallMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{matched}/{total} expected entities found in context",
+            reason=f"{matched} of {total} expected entities were found in the retrieved context ({matched}/{total})",
             metadata={
                 "expected_entities": total,
                 "matched_entities": matched,

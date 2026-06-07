@@ -36,7 +36,7 @@ class TurnLatencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="no messages provided",
+                reason="Cannot measure turn latency — no messages provided in the eval case",
             )
 
         latencies = []
@@ -51,7 +51,7 @@ class TurnLatencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="no latency data on assistant turns",
+                reason="Cannot measure turn latency — no latency data found on any assistant turn",
             )
 
         scores = [max(0.0, 1.0 - lat / self.max_ms_per_turn) for lat in latencies]

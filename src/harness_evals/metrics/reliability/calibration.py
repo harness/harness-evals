@@ -29,7 +29,7 @@ class CalibrationMetric(BaseMetric):
             name=self.name,
             value=0.0,
             threshold=self.threshold,
-            reason="Calibration requires multiple eval cases — use measure_dataset()",
+            reason="Cannot compute calibration on a single case — this metric requires multiple eval cases via measure_dataset()",
         )
 
     def measure_dataset(self, cases: list[EvalCase], outcomes: list[bool]) -> Score:
@@ -44,7 +44,7 @@ class CalibrationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"cases ({len(cases)}) and outcomes ({len(outcomes)}) must have same length",
+                reason=f"Input mismatch — cases ({len(cases)}) and outcomes ({len(outcomes)}) must have the same length",
             )
 
         pairs = []
@@ -58,7 +58,7 @@ class CalibrationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Need at least 2 cases with confidence, got {len(pairs)}",
+                reason=f"Insufficient data — need at least 2 cases with confidence scores, but only found {len(pairs)}",
             )
 
         # Compute ECE
@@ -84,6 +84,6 @@ class CalibrationMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"ECE={ece:.4f} over {total} cases in {self.n_bins} bins",
+            reason=f"Model confidence is {(1 - ece) * 100:.0f}% well-calibrated across {total} cases (ECE = {ece:.4f}, {self.n_bins} bins)",
             metadata={"ece": ece, "n_cases": total, "n_bins": self.n_bins},
         )

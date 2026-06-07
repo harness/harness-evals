@@ -21,7 +21,7 @@ class RetryCountMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="retry_count not provided",
+                reason="No retry count data provided on this eval case (retry_count is None)",
             )
 
         retries = int(eval_case.retry_count)
@@ -30,7 +30,7 @@ class RetryCountMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid retry_count: {retries} (must be >= 0)",
+                reason=f"Retry count value is invalid — must be non-negative, got {retries}",
             )
 
         value = max(0.0, 1.0 - retries / self.max_retries)

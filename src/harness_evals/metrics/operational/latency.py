@@ -21,7 +21,7 @@ class LatencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="latency_ms not provided",
+                reason="Latency data not provided on this eval case (latency_ms is None)",
             )
 
         latency = float(eval_case.latency_ms)
@@ -30,7 +30,7 @@ class LatencyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid latency_ms: {latency} (must be >= 0)",
+                reason=f"Latency value is invalid — must be non-negative, got {latency}ms",
             )
 
         value = max(0.0, 1.0 - latency / self.max_ms)

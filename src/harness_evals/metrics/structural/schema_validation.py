@@ -31,7 +31,7 @@ class SchemaValidationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"JSON parse error: {e}",
+                reason=f"Output could not be parsed as valid JSON ({e})",
             )
 
         try:
@@ -46,12 +46,12 @@ class SchemaValidationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Validation failed: {e.message}",
+                reason=f"Validation failed — output does not conform to the expected schema ({e.message})",
             )
         except jsonschema.SchemaError as e:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid schema: {e.message}",
+                reason=f"The provided JSON Schema itself is invalid ({e.message})",
             )

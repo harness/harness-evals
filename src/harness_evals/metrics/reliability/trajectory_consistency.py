@@ -114,7 +114,7 @@ class TrajectoryConsistencyMetric(ReliabilityMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Need at least 2 runs with trajectories, got {len(trajectories)}",
+                reason=f"Cannot measure trajectory consistency — need at least 2 runs with tool calls, but only {len(trajectories)} provided",
             )
 
         n = len(trajectories)

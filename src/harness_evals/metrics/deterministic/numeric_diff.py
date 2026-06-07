@@ -25,7 +25,7 @@ class NumericDiffMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Cannot parse as numbers: {e}",
+                reason=f"Cannot parse output or expected value as numbers ({e})",
             )
 
         diff = abs(actual - expected)

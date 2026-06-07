@@ -64,7 +64,7 @@ class HallucinationMetric(SafetyMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No context or expected output provided for hallucination check",
+                reason="No context or expected output provided — cannot check for hallucinations without reference material",
             )
 
         reference_parts: list[str] = []

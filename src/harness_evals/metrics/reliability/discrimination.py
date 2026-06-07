@@ -24,7 +24,7 @@ class DiscriminationMetric(BaseMetric):
             name=self.name,
             value=0.0,
             threshold=self.threshold,
-            reason="Discrimination requires multiple eval cases — use measure_dataset()",
+            reason="Cannot compute discrimination on a single case — this metric requires multiple eval cases via measure_dataset()",
         )
 
     def measure_dataset(self, cases: list[EvalCase], outcomes: list[bool]) -> Score:
@@ -39,7 +39,7 @@ class DiscriminationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"cases ({len(cases)}) and outcomes ({len(outcomes)}) must have same length",
+                reason=f"Input mismatch — cases ({len(cases)}) and outcomes ({len(outcomes)}) must have the same length",
             )
 
         pairs = []
@@ -53,7 +53,7 @@ class DiscriminationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Need at least 2 cases with confidence, got {len(pairs)}",
+                reason=f"Insufficient data — need at least 2 cases with confidence scores, but only found {len(pairs)}",
             )
 
         positives = sum(1 for _, o in pairs if o)
@@ -64,7 +64,7 @@ class DiscriminationMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="Need both successes and failures to compute AUC-ROC",
+                reason="Cannot compute discrimination — need both successes and failures to calculate AUC-ROC, but only one outcome type is present",
             )
 
         # Compute AUC-ROC via the Wilcoxon-Mann-Whitney statistic
@@ -95,6 +95,6 @@ class DiscriminationMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"AUC-ROC={value:.4f} over {len(pairs)} cases ({positives} pos, {negatives} neg)",
+            reason=f"Model confidence separates successes from failures with {value * 100:.0f}% discrimination across {len(pairs)} cases (AUC-ROC = {value:.4f}, {positives} successes, {negatives} failures)",
             metadata={"auc_roc": value, "n_cases": len(pairs), "n_positive": positives, "n_negative": negatives},
         )

@@ -33,7 +33,7 @@ class BrierScoreMetric(BaseMetric):
             name=self.name,
             value=0.0,
             threshold=self.threshold,
-            reason="Brier score requires multiple eval cases — use measure_dataset()",
+            reason="Cannot compute Brier score on a single case — this metric requires multiple eval cases via measure_dataset()",
         )
 
     def measure_dataset(self, cases: list[EvalCase], outcomes: list[bool]) -> Score:
@@ -48,7 +48,7 @@ class BrierScoreMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"cases ({len(cases)}) and outcomes ({len(outcomes)}) must have same length",
+                reason=f"Input mismatch — cases ({len(cases)}) and outcomes ({len(outcomes)}) must have the same length",
             )
 
         pairs: list[tuple[float, float]] = []
@@ -62,7 +62,7 @@ class BrierScoreMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Need at least 2 cases with confidence, got {len(pairs)}",
+                reason=f"Insufficient data — need at least 2 cases with confidence scores, but only found {len(pairs)}",
             )
 
         mse = sum((c - y) ** 2 for c, y in pairs) / len(pairs)
@@ -72,6 +72,6 @@ class BrierScoreMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"Brier={value:.4f} (MSE={mse:.4f}) over {len(pairs)} cases",
+            reason=f"Model predictions scored {value * 100:.0f}% on combined calibration and discrimination across {len(pairs)} cases (Brier = {value:.4f}, MSE = {mse:.4f})",
             metadata={"mse": mse, "n_cases": len(pairs)},
         )

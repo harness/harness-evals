@@ -60,7 +60,7 @@ class ContextRelevancyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No context provided",
+                reason="No context provided — cannot evaluate relevancy without retrieval results",
             )
 
         chunks_text = "\n".join(f"[Chunk {i}]: {chunk}" for i, chunk in enumerate(eval_case.context))
@@ -77,6 +77,6 @@ class ContextRelevancyMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{relevant}/{total} context chunks relevant to question",
+            reason=f"{relevant} of {total} retrieved context chunks are relevant to the question ({relevant}/{total})",
             metadata={"total_chunks": total, "relevant_chunks": relevant},
         )

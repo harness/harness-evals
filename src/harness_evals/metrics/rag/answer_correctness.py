@@ -68,7 +68,7 @@ class AnswerCorrectnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is None — cannot compute correctness",
+                reason="No expected answer provided to compute correctness against (expected is None)",
             )
 
         classify_result = await self.llm.generate_json(
@@ -97,7 +97,11 @@ class AnswerCorrectnessMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"F1={f1:.3f} (TP={tp}, FP={fp}, FN={fn}), similarity={similarity:.3f}",
+            reason=(
+                f"Output matched {tp} expected statements, included {fp} incorrect statements, "
+                f"and missed {fn} expected statements "
+                f"(F1={f1:.3f}, semantic similarity={similarity:.3f})"
+            ),
             metadata={
                 "f1": f1,
                 "tp": tp,

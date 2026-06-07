@@ -28,7 +28,7 @@ class ToolSelectionAccuracyMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="tool_calls and expected_tools must both be provided on EvalCase",
+                reason="Cannot evaluate tool selection — both 'tool_calls' and 'expected_tools' must be provided on the eval case",
             )
 
         if not eval_case.expected_tools and not eval_case.tool_calls:
@@ -36,7 +36,7 @@ class ToolSelectionAccuracyMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="No tools expected and none called",
+                reason="Perfect match — no tools were expected and none were called",
             )
 
         actual_names = [tc.name for tc in eval_case.tool_calls]
@@ -49,7 +49,7 @@ class ToolSelectionAccuracyMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="Both sets empty",
+                reason="Perfect match — both tool sets are empty",
             )
 
         intersection = sum(min(actual_counts[t], expected_counts[t]) for t in all_tools)
@@ -61,7 +61,7 @@ class ToolSelectionAccuracyMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"Jaccard similarity: {intersection}/{union}",
+            reason=f"{intersection} of {union} tools overlap between actual and expected sets (Jaccard similarity: {intersection}/{union})",
             metadata={
                 "actual_tools": actual_names,
                 "expected_tools": eval_case.expected_tools,

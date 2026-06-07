@@ -21,7 +21,7 @@ class ContainsMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is None — cannot compare",
+                reason="No expected answer provided to compare against (expected is None)",
             )
 
         actual = str(eval_case.output)

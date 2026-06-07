@@ -134,7 +134,7 @@ class StructuralSimilarityMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="Missing actual or expected output",
+                reason="Cannot compare structures — either the output or expected value is missing",
             )
 
         # 1. Level: schema_validated
@@ -161,7 +161,7 @@ class StructuralSimilarityMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Failed to parse actual output as {self.format}",
+                reason=f"Output could not be parsed as valid {self.format.upper()} for structural comparison",
             )
 
         # 3. Level: structural (ignore keys, check required fields)
@@ -198,7 +198,7 @@ class StructuralSimilarityMetric(BaseMetric):
         if diff:
             changes = {k: v for k, v in diff.items() if k != "deep_distance"}
             if changes:
-                reason = f"Differences: {list(changes.keys())}"
+                reason = f"Structural differences found between output and expected ({', '.join(changes.keys())})"
 
         return Score(
             name=self.name,

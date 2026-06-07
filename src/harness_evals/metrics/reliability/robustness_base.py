@@ -44,7 +44,7 @@ class RobustnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason='metadata must contain "nominal_passed" (bool) and "perturbed_results" (list[bool])',
+                reason="Cannot evaluate robustness — eval case metadata must contain 'nominal_passed' (bool) and 'perturbed_results' (list[bool])",
             )
 
         if not perturbed_results:
@@ -52,7 +52,7 @@ class RobustnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="perturbed_results is empty",
+                reason="Cannot evaluate robustness — perturbed_results is empty (no variants to compare against)",
             )
 
         if not nominal_passed:
@@ -60,7 +60,7 @@ class RobustnessMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="Nominal run failed — degradation not attributable to perturbation",
+                reason="The original (nominal) run already failed, so any degradation cannot be attributed to perturbation",
                 metadata={"nominal_passed": False, "n_perturbed": len(perturbed_results)},
             )
 
@@ -70,7 +70,10 @@ class RobustnessMetric(BaseMetric):
             name=self.name,
             value=min(perturbed_acc, 1.0),
             threshold=self.threshold,
-            reason=(f"{sum(perturbed_results)}/{len(perturbed_results)} perturbed variants passed"),
+            reason=(
+                f"{sum(perturbed_results)} of {len(perturbed_results)} perturbed variants passed "
+                f"({sum(perturbed_results)}/{len(perturbed_results)})"
+            ),
             metadata={
                 "nominal_passed": True,
                 "n_perturbed": len(perturbed_results),
@@ -95,7 +98,8 @@ class RobustnessMetric(BaseMetric):
                 value=0.0,
                 threshold=self.threshold,
                 reason=(
-                    f"nominal ({len(nominal_passed)}) and perturbed ({len(perturbed_passed)}) must have same length"
+                    f"Cannot compute robustness — nominal ({len(nominal_passed)}) and perturbed "
+                    f"({len(perturbed_passed)}) result lists must have the same length"
                 ),
             )
 
@@ -104,7 +108,7 @@ class RobustnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="Empty dataset",
+                reason="Cannot compute robustness — no evaluation cases provided",
             )
 
         acc_nominal = sum(nominal_passed) / len(nominal_passed)
@@ -114,7 +118,7 @@ class RobustnessMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="Nominal accuracy is 0 — degradation not attributable to perturbation",
+                reason="Nominal accuracy is 0% — all original runs failed, so degradation cannot be attributed to perturbation",
                 metadata={"acc_nominal": 0.0, "n_tasks": len(nominal_passed)},
             )
 
@@ -126,7 +130,7 @@ class RobustnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No perturbed results provided",
+                reason="Cannot compute robustness — no perturbed results provided across any task",
             )
 
         acc_perturbed = total_perturbed_passed / total_perturbed
@@ -137,8 +141,8 @@ class RobustnessMetric(BaseMetric):
             value=value,
             threshold=self.threshold,
             reason=(
-                f"Acc(perturbed)={acc_perturbed:.4f} / Acc(nominal)={acc_nominal:.4f} "
-                f"= {value:.4f} over {len(nominal_passed)} tasks"
+                f"Perturbed accuracy is {acc_perturbed * 100:.1f}% vs nominal {acc_nominal * 100:.1f}% "
+                f"across {len(nominal_passed)} tasks (ratio = {value:.4f})"
             ),
             metadata={
                 "acc_nominal": acc_nominal,

@@ -77,7 +77,7 @@ class WebhookMetric(BaseMetric):
 
         if self.use_status_code:
             value = 1.0 if 200 <= response.status_code < 300 else 0.0
-            reason = None if value == 1.0 else f"HTTP {response.status_code}"
+            reason = None if value == 1.0 else f"Webhook returned non-success HTTP status {response.status_code}"
             return Score(name=self.name, value=value, threshold=self.threshold, reason=reason)
 
         try:
@@ -87,7 +87,7 @@ class WebhookMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid response format: {e}",
+                reason=f"Invalid response format — webhook response could not be parsed as JSON ({e})",
             )
 
         if self.response_key is None:
@@ -95,7 +95,7 @@ class WebhookMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No response_key configured",
+                reason="No response key configured to extract the result from the webhook response (response_key is None)",
             )
 
         if self.response_key not in json_data:
@@ -103,7 +103,7 @@ class WebhookMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Response missing key: {self.response_key}",
+                reason=f"Webhook response is missing key '{self.response_key}'",
             )
 
         passed = json_data[self.response_key]
@@ -112,7 +112,7 @@ class WebhookMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Response key {self.response_key} is not boolean",
+                reason=f"Webhook response key '{self.response_key}' is not boolean — expected true/false",
             )
 
         if self.score_key is not None and self.score_key in json_data:
@@ -124,7 +124,7 @@ class WebhookMetric(BaseMetric):
                     name=self.name,
                     value=0.0,
                     threshold=self.threshold,
-                    reason=f"Invalid score value for {self.score_key}",
+                    reason=f"Invalid score value — webhook response key '{self.score_key}' could not be converted to a number",
                 )
         else:
             value = 1.0 if passed else 0.0
@@ -156,7 +156,7 @@ class WebhookMetric(BaseMetric):
                         name=self.name,
                         value=0.0,
                         threshold=self.threshold,
-                        reason=f"HTTP error {response.status_code}",
+                        reason=f"Webhook request failed with HTTP status {response.status_code}",
                     )
 
                 return self._parse_response(response)
@@ -166,12 +166,12 @@ class WebhookMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="Request timed out",
+                reason=f"Webhook request timed out after {self.timeout}s",
             )
         except Exception as e:
             return Score(
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Request failed: {type(e).__name__}: {e}",
+                reason=f"Webhook request failed due to a network or connection error ({type(e).__name__}: {e})",
             )

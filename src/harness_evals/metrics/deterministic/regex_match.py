@@ -22,7 +22,7 @@ class RegexMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="expected is None — no regex pattern provided",
+                reason="No regex pattern provided to match against (expected is None)",
             )
 
         actual = str(eval_case.output)
@@ -35,7 +35,7 @@ class RegexMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason=f"Invalid regex: {e}",
+                reason=f"Invalid regex pattern — could not be compiled ({e})",
             )
 
         value = 1.0 if match else 0.0

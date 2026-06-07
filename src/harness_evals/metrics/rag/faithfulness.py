@@ -76,7 +76,7 @@ class FaithfulnessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="No context provided for faithfulness check",
+                reason="No context provided — cannot verify faithfulness without reference material",
             )
 
         # Step 1: Extract claims from output
@@ -88,7 +88,7 @@ class FaithfulnessMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="No factual claims found in output",
+                reason="No factual claims were identified in the output to verify",
             )
 
         # Step 2: Verify claims against context
@@ -109,6 +109,6 @@ class FaithfulnessMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{supported}/{total} claims supported by context",
+            reason=f"{supported} of {total} claims in the output are supported by the retrieved context ({supported}/{total})",
             metadata={"total_claims": total, "supported_claims": supported},
         )

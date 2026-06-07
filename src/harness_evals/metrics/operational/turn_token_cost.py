@@ -36,7 +36,7 @@ class TurnTokenCostMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="no messages provided",
+                reason="Cannot measure turn token cost — no messages provided in the eval case",
             )
 
         token_counts = []
@@ -51,7 +51,7 @@ class TurnTokenCostMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="no token count data on assistant turns",
+                reason="Cannot measure turn token cost — no token count data found on any assistant turn",
             )
 
         scores = [max(0.0, 1.0 - tc / self.max_tokens_per_turn) for tc in token_counts]

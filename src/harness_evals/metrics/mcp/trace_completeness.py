@@ -34,7 +34,7 @@ class MCPTraceCompletenessMetric(BaseMetric):
                 name=self.name,
                 value=0.0,
                 threshold=self.threshold,
-                reason="tool_calls not provided on EvalCase",
+                reason="Cannot evaluate trace completeness — no tool_calls provided on the eval case",
             )
 
         if not self.expected_trace:
@@ -42,7 +42,7 @@ class MCPTraceCompletenessMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
-                reason="No expected trace entries",
+                reason="No expected trace entries defined — nothing to check against",
             )
 
         used = [False] * len(eval_case.tool_calls)
@@ -65,7 +65,7 @@ class MCPTraceCompletenessMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"{found}/{len(self.expected_trace)} expected operations found",
+            reason=f"{found} of {len(self.expected_trace)} expected operations were executed ({found}/{len(self.expected_trace)})",
             metadata={
                 "found": found,
                 "total_expected": len(self.expected_trace),

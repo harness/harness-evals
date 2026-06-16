@@ -37,8 +37,11 @@ engine.
    at the leaf level behind optional extras. The framework ABCs and registries are
    vendor-neutral. Harness is a reference implementation, not a privileged citizen.
 
-3. **Local-first.** The zero-dependency path (`local://` dataset, `PromptTarget` +
-   any `BaseLLM`, `harness-evals run`) works with no external accounts or extras.
+3. **Local-first.** The zero-*external-account* path (`local://` dataset,
+   `PromptTarget` + any `BaseLLM`, `harness-evals run`) works with no external
+   platform accounts. Deterministic metrics (e.g. `exact_match`, `json_diff`) need
+   no extras at all. LLM-judged metrics (e.g. `geval`) require `[llm]` but no
+   external *account* beyond an API key.
 
 4. **Fail loud at resolve-time.** A `ResourceRef` that references an uninstalled
    adapter raises `MissingAdapterError("<source>", extra="harness-evals[langfuse]")`
@@ -165,23 +168,38 @@ This fires at config-load time — before any network call or golden is fetched.
 
 ## 4. Plugin Registry (`plugins.py`)
 
-Four families, each with its own dict and decorator. One entry-point group per
+Seven families, each with its own dict and decorator. One entry-point group per
 family for auto-discovery of installed packages.
 
 ```python
 # module-level registries
-_DATASET_SOURCES:    dict[str, type[BaseDatasetSource]]    = {}
-_PROMPT_SOURCES:     dict[str, type[BasePromptSource]]     = {}
-_EVAL_CASE_SOURCES:  dict[str, type[BaseEvalCaseSource]]   = {}
+_DATASET_SOURCES:     dict[str, type[BaseDatasetSource]]    = {}
+_PROMPT_SOURCES:      dict[str, type[BasePromptSource]]     = {}
+_EVAL_CASE_SOURCES:   dict[str, type[BaseEvalCaseSource]]   = {}
 _EVAL_CONFIG_SOURCES: dict[str, type[BaseEvalConfigSource]] = {}
-_SINKS:              dict[str, type[BaseSink]]             = {}
+_TARGETS:             dict[str, type[BaseTarget]]           = {}
+_METRICS:             dict[str, type[BaseMetric]]           = {}
+_BASELINE_STORES:     dict[str, type[BaselineStore]]        = {}
+_SINKS:               dict[str, type[BaseSink]]             = {}
 
 def register_dataset_source(name: str): ...
 def register_prompt_source(name: str): ...
 def register_eval_case_source(name: str): ...
 def register_eval_config_source(name: str): ...
+def register_target(name: str): ...
+def register_metric(kind: str): ...
+def register_baseline_store(name: str): ...
 def register_sink(name: str): ...
 ```
+
+`register_metric` makes third-party metrics discoverable via `catalog()` and
+referenceable by `kind:` in YAML — the same mechanism used for built-in metrics.
+
+`register_target` makes custom target types declarable in YAML `target.type:`.
+Example: `target: {type: braintrust, ...}` resolves to `BrainTrustTarget`.
+
+`register_baseline_store` allows platform-backed baseline stores (e.g. S3, Langfuse).
+v1 ships `JsonBaselineStore` as the only built-in; the registration path is open.
 
 Entry-point groups (one per family):
 
@@ -198,6 +216,15 @@ acme = "acme_evals.adapters:AcmeEvalCaseSource"
 [project.entry-points."harness_evals.eval_config_sources"]
 acme = "acme_evals.adapters:AcmeEvalConfigSource"
 
+[project.entry-points."harness_evals.targets"]
+acme = "acme_evals.targets:AcmeTarget"
+
+[project.entry-points."harness_evals.metrics"]
+acme_faithfulness = "acme_evals.metrics:AcmeFaithfulnessMetric"
+
+[project.entry-points."harness_evals.baseline_stores"]
+s3 = "acme_evals.stores:S3BaselineStore"
+
 [project.entry-points."harness_evals.sinks"]
 acme = "acme_evals.sinks:AcmeScoreSink"
 ```
@@ -205,8 +232,8 @@ acme = "acme_evals.sinks:AcmeScoreSink"
 `load_plugins(modules: list[str])` imports explicit modules listed in the YAML
 `plugins:` key, triggering their `@register_*` decorators.
 
-`catalog()` is extended to return a merged view: built-in metrics + any metric
-classes registered via `@register_dataset_source` / plugin discovery.
+`catalog()` is extended to return a merged view: built-in metrics + any metrics
+registered via `@register_metric` or plugin entry-point discovery.
 
 ### Invariant: families never mix
 
@@ -222,20 +249,25 @@ Resolution dispatches on `(family, source_name)` — no collision.
 The table is the canonical answer to "what ships by default vs what requires an
 extra."
 
-| Source | Dataset | Prompt | EvalCase | EvalConfig | Sink | Extra |
-|--------|:-------:|:------:|:--------:|:----------:|:----:|-------|
-| `local` | ✅ | ✅ | — | — | — | none |
-| `http`  | ✅ | ✅ | — | — | — | none |
-| `langfuse` | ✅ | ✅ | ✅ | — | ✅ | `[langfuse]` |
-| `otel`  | — | — | ✅ | — | — | `[otlp]` |
-| `harness` | ✅ | ✅ | — | ✅ | — | `[harness]` |
-| `stdout` | — | — | — | — | ✅ | none |
-| `json`  | — | — | — | — | ✅ | none |
-| `csv`   | — | — | — | — | ✅ | none |
-| `junit` | — | — | — | — | ✅ | none |
-| `otlp`  | — | — | — | — | ✅ | `[otlp]` |
+| Source | Dataset | Prompt | EvalCase | EvalConfig | Target | Metric | Baseline | Sink | Extra |
+|--------|:-------:|:------:|:--------:|:----------:|:------:|:------:|:--------:|:----:|-------|
+| `local` | ✅ | ✅ | — | — | — | — | — | — | none |
+| `http`  | ✅ | ✅ | — | — | ✅ | — | — | — | none |
+| `prompt` | — | — | — | — | ✅ | — | — | — | none |
+| `langfuse` | ✅ | ✅ | ✅ | — | — | — | — | ✅ | `[langfuse]` |
+| `otel`  | — | — | ✅ | — | — | — | — | — | `[otlp]` |
+| `harness` | ✅ | ✅ | — | ✅ | — | — | — | — | `[harness]` |
+| `json`  | — | — | — | — | — | — | ✅ | ✅ | none |
+| `stdout` | — | — | — | — | — | — | — | ✅ | none |
+| `csv`   | — | — | — | — | — | — | — | ✅ | none |
+| `junit` | — | — | — | — | — | — | — | ✅ | none |
+| `otlp`  | — | — | — | — | — | — | — | ✅ | `[otlp]` |
 
-Third parties add a row by publishing a package with the entry-point groups above.
+Built-in metrics (all `kind:` strings in `catalog()`) are pre-registered. Third
+parties add a row by publishing a package with the relevant entry-point groups.
+`Metric` and `Baseline` columns are omitted from rows where the adapter adds no
+built-in implementations — third parties fill them via `@register_metric` /
+`@register_baseline_store`.
 
 ---
 
@@ -370,12 +402,19 @@ class PromptTarget(BaseTarget):
     model: BaseLLM
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
-        rendered = self.prompt.render(input=golden.input, **(golden.metadata or {}))
+        # Golden.input may be str | dict | list; normalise to str for template rendering
+        input_str = golden.input if isinstance(golden.input, str) else json.dumps(golden.input)
+        rendered = self.prompt.render(input=input_str, **(golden.metadata or {}))
         t0 = perf_counter()
         out = await self.model.generate(rendered)
         ms = (perf_counter() - t0) * 1000
         return EvalCase.from_golden(golden, output=out, latency_ms=ms)
 ```
+
+**`Golden.input` serialisation contract:** `str` inputs are passed through as-is.
+`dict` and `list` inputs are serialised with `json.dumps` before template rendering.
+If a caller needs custom serialisation (e.g. a multimodal schema), they should
+pre-process `golden.input` or subclass `PromptTarget`.
 
 `build_target()` in `config/runner.py` resolves a ref string to a `PromptTemplate`
 via the prompt source registry before constructing `PromptTarget`.
@@ -519,8 +558,32 @@ async def _run_config_async(cfg: EvalConfig) -> list[list[Score]]:
 `_async_compat.py` handles active event loops — works inside Jupyter notebooks and
 `pytest-asyncio` with `asyncio_mode = "auto"`.
 
-`build_metric` resolves `kind` via the existing `catalog()` dict, applies
-`threshold` and `params`. Unknown kind → `UnknownMetricError` listing valid kinds.
+`build_metric` resolves `kind` via the merged `catalog()` (built-ins + plugin
+registrations), applies `threshold` and `params`. Unknown kind →
+`UnknownMetricError` listing valid kinds.
+
+### `gate_against_baseline()` contract
+
+```python
+def gate_against_baseline(
+    scores: list[list[Score]],
+    spec: BaselineSpec,
+) -> None:
+    """Compare current scores against stored baseline. Raises BaselineRegressionError
+    if any metric regresses beyond spec.tolerance (default 0.05).
+
+    BaselineSpec fields:
+        store:     str   — baseline store type key (default "json")
+        path:      str   — store-specific location (file path, S3 URI, etc.)
+        tolerance: float — allowed regression before raising (default 0.05)
+        run_id:    str | None — baseline run to compare against (None = latest)
+    """
+```
+
+`BaselineRegressionError` lists each regressed metric with baseline vs. current
+value and delta — the same output as `BaselineResult.summary()` from
+`baseline/compare.py`. The CLI `run` command catches this and exits non-zero.
+`--update-baseline` saves the current run as the new baseline instead of gating.
 
 ---
 
@@ -604,7 +667,9 @@ source name is just a registry key, resolved through the same `resolve()` path.
 
 ## 13. Local-First Developer Loop (Primary Use Case)
 
-The zero-dependency path requires no external accounts, no optional extras:
+The zero-external-account path requires no platform accounts. Deterministic-only
+evals need no extras at all. LLM-judged metrics (`geval`, `rubric_judge`, etc.)
+require `pip install harness-evals[llm]` and an API key but no external platform:
 
 ```bash
 # 1. Author golden dataset
@@ -646,9 +711,12 @@ Each step is an independently shippable PR.
 1. **`refs.py`** — `ResourceRef` + `resolve()` + `MissingAdapterError` + tests.
 2. **`plugins.py`** — four-family registries + `@register_*` decorators + entry-point
    loader + `load_plugins()`. Extend `catalog()` with plugin hook.
-3. **`datasets/`** — refactor `datasets.py` → package; `BaseDatasetSource` +
-   `LocalDatasetSource` (wraps `load_dataset`), `HttpDatasetSource`. Keep
-   `load_dataset`/`save_dataset` as back-compat shims.
+3. **`datasets/`** — migrate `datasets.py` → `datasets/` package **atomically in
+   this same PR** (not a later PR). `datasets/__init__.py` must re-export
+   `load_dataset`, `save_dataset`, and `Dataset` so existing `from harness_evals.datasets
+   import load_dataset` imports continue to work without change. Add
+   `BaseDatasetSource`, `LocalDatasetSource` (wraps `load_dataset`),
+   `HttpDatasetSource`.
 4. **`prompts/`** — `BasePromptSource` + `PromptTemplate` + `LocalPromptSource`,
    `HttpPromptSource`.
 5. **`targets/`** — `BaseTarget`, `AuthConfig` (NoAuth + BearerAuth + ApiKeyAuth +
@@ -682,6 +750,13 @@ vendor integrations.
 | `Dimension` enum | Closed (5 values); external adapters must map into it | Adding a dimension requires an ADR; `CORRECTNESS` is the safe default for external metrics |
 | Sink registration | Added to plugin registry | Most natural third-party extension point (Datadog, custom dashboards, etc.) |
 | Adapter lifecycle | `async close()` + context-manager on all ABCs | `HttpTarget` (OAuth refresh), source clients (SDK sessions) need deterministic cleanup |
+| Target registration | `_TARGETS` registry + `register_target` | Third-party targets (e.g. BrainTrustTarget) must be declarable by name in YAML |
+| Metric registration | `_METRICS` registry + `register_metric` | Third-party metrics must be discoverable via `catalog()` and referenceable by `kind:` |
+| BaselineStore registration | `_BASELINE_STORES` registry + `register_baseline_store` | Platform-backed baselines (S3, Langfuse) need a registration path; v1 ships JSON only |
+| `datasets.py` migration | Atomic with step 3 PR; `__init__.py` re-exports `load_dataset` | Module-to-package rename breaks imports without explicit re-exports |
+| `Golden.input` serialisation | Non-string inputs `json.dumps`-serialised before template rendering | `Golden.input: str \| dict \| list`; `{{var}}` rendering requires a string |
+| `gate_against_baseline()` contract | Raises `BaselineRegressionError` listing regressed metrics; CLI exits non-zero | CI integration requires a defined failure contract, not just a comparison report |
+| "Zero-dependency" scope | Zero *external account* dependency; `[llm]` extra needed for LLM-judged metrics | Deterministic metrics need no extras; LLM-judged metrics need SDK but no platform |
 
 ---
 

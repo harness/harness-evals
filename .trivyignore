@@ -1,0 +1,6 @@
+# nltk: URL-Encoded Path Traversal in nltk.data.load()
+# No upstream fix available as of 2026-06-16. Our usage is limited to
+# similarity metrics on controlled eval data (no untrusted input to nltk.data.load).
+# Re-evaluate when nltk releases a patched version.
+# exp:2026-07-01
+CVE-2026-54293

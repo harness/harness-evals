@@ -259,15 +259,18 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
 
 
 def catalog() -> list[CatalogEntry]:
-    """Return metadata for all built-in metrics.
+    """Return metadata for all built-in and registered plugin metrics.
 
     Each entry includes the metric's kind (string identifier), dimension,
     category, default threshold, and capability requirements (LLM, embedding).
 
     This is the canonical source of truth for the metric catalog. Platform
-    services should call this at startup to sync built-in metrics.
+    services should call this at startup to sync built-in and plugin metrics.
     """
     registry = _build_registry()
+    from harness_evals.plugins import registered_metrics
+
+    registry.update(registered_metrics())
     entries: list[CatalogEntry] = []
 
     for kind, cls in registry.items():

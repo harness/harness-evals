@@ -1,6 +1,6 @@
 """Dataset loading and saving utilities.
 
-A Dataset is just a list[Golden] — no ORM, no versioning.
+A Dataset is just a list[Golden] - no ORM, no versioning.
 The loader and saver are the only conveniences.
 """
 
@@ -28,6 +28,11 @@ def load_dataset(path: str, format: str = "jsonl") -> Dataset:
         A list of Golden instances. Malformed lines are skipped with a warning.
     """
     text = Path(path).read_text(encoding="utf-8")
+    return loads_dataset(text, format=format)
+
+
+def loads_dataset(text: str, format: str = "jsonl") -> Dataset:
+    """Load goldens from an in-memory JSONL or JSON payload."""
 
     if format == "json":
         raw_items = json.loads(text)

@@ -30,7 +30,7 @@ from harness_evals.core.runner import (
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.core.types import Message, ToolCall
-from harness_evals.datasets import Dataset, load_dataset, save_dataset
+from harness_evals.datasets import Dataset, load_dataset, loads_dataset, save_dataset
 from harness_evals.errors import HarnessEvalsError, MissingAdapterError
 from harness_evals.input_generator import InputGenerator
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
@@ -77,6 +77,7 @@ __all__ = [
     "compare_to_baseline",
     "Dataset",
     "load_dataset",
+    "loads_dataset",
     "save_dataset",
     "EvalResult",
     "HtmlReporter",

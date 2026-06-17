@@ -40,9 +40,20 @@ from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
 from harness_evals.summary import MetricSummary, ScoreSummary, summarize
 from harness_evals.synthesizer import ConversationSynthesizer, ScriptedConversationSynthesizer, Synthesizer
+from harness_evals.targets import (
+    ApiKeyAuth,
+    AuthConfig,
+    BaseTarget,
+    BasicAuth,
+    BearerAuth,
+    HttpTarget,
+    NoAuth,
+    PromptTarget,
+)
 from harness_evals.testing import Fault, FaultInjector
 
 __all__ = [
+    # Core types
     "Golden",
     "EvalCase",
     "Score",
@@ -56,6 +67,9 @@ __all__ = [
     "MissingAdapterError",
     "ReliabilityMetric",
     "SafetyMetric",
+    "Message",
+    "ToolCall",
+    # Runner
     "BaseSink",
     "StdoutSink",
     "JsonSink",
@@ -70,28 +84,40 @@ __all__ = [
     "summarize",
     "MetricSummary",
     "ScoreSummary",
+    # Baseline
     "BaselineStore",
     "JsonBaselineStore",
     "BaselineResult",
     "MetricDelta",
     "compare_to_baseline",
+    # Datasets
     "Dataset",
     "load_dataset",
     "loads_dataset",
     "save_dataset",
+    # Targets
+    "BaseTarget",
+    "PromptTarget",
+    "HttpTarget",
+    "AuthConfig",
+    "NoAuth",
+    "BearerAuth",
+    "ApiKeyAuth",
+    "BasicAuth",
+    # Reporting
     "EvalResult",
     "HtmlReporter",
     "HtmlSink",
+    # Synthesis & testing
     "InputGenerator",
     "Synthesizer",
     "ConversationSynthesizer",
     "ScriptedConversationSynthesizer",
-    "Message",
-    "ToolCall",
     "Fault",
     "FaultInjector",
     "TurnLatencyMetric",
     "TurnTokenCostMetric",
+    # Conversation
     "ConversationGolden",
     "ConversationSimulator",
     "evaluate_conversation",

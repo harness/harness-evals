@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 from harness_evals.core.golden import Golden
 from harness_evals.refs import ResourceRef
@@ -31,6 +32,16 @@ class BaseDatasetSource(ABC):
     @abstractmethod
     async def fetch(self, ref: ResourceRef) -> list[Golden]:
         """Return the dataset identified by ``ref``."""
+
+    async def fetch_iter(self, ref: ResourceRef) -> AsyncIterator[Golden]:
+        """Yield goldens lazily. Override for page-at-a-time streaming.
+
+        Default implementation collects from :meth:`fetch`.
+        Streaming-capable adapters (e.g. Langfuse, HTTP chunked) should
+        override this to avoid loading all items into memory at once.
+        """
+        for golden in await self.fetch(ref):
+            yield golden
 
     async def close(self) -> None:
         """Release any adapter-owned resources."""

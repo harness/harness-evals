@@ -12,10 +12,10 @@ try:
     from langfuse import Langfuse
 except ImportError as _err:
     raise ImportError(
-        "LangfuseEvalCaseSource requires the langfuse package. "
-        "Install with: pip install harness-evals[langfuse]"
+        "LangfuseEvalCaseSource requires the langfuse package. Install with: pip install harness-evals[langfuse]"
     ) from _err
 
+from harness_evals._langfuse_compat import flush_langfuse_client
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.importers.base import BaseEvalCaseSource
@@ -61,12 +61,7 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
 
     async def close(self) -> None:
         """Flush the Langfuse client to prevent data loss."""
-        import contextlib
-
-        flush = getattr(self._client, "flush", None)
-        if callable(flush):
-            with contextlib.suppress(Exception):
-                flush()
+        await flush_langfuse_client(self._client)
 
     # ------------------------------------------------------------------
     # BaseEvalCaseSource ABC

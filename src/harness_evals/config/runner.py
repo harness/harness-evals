@@ -290,7 +290,6 @@ def run_config(cfg: EvalConfig, *, baseline: BaselineSpec | None = ...) -> list[
     regressed" from other failures should catch ``BaselineRegressionError``
     specifically.
 
-
     Args:
         baseline: Override baseline spec. Pass ``None`` to disable baseline
             comparison regardless of ``cfg.baseline``. When omitted (default

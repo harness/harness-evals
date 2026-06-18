@@ -2,8 +2,23 @@
 
 import pytest
 
+from harness_evals import plugins
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.llm.base import BaseLLM
+
+
+@pytest.fixture(autouse=True)
+def _restore_plugin_registry() -> None:
+    """Snapshot and restore all plugin registries around every test.
+
+    Prevents adapter registrations that happen inside one test (e.g. importing
+    an optional-extra importer with a fake SDK) from leaking into subsequent
+    tests — particularly ``test_plugins.py`` which asserts that certain names
+    are *not* registered.
+    """
+    snapshot = plugins._snapshot()
+    yield
+    plugins._restore(snapshot)
 
 
 class MockLLM(BaseLLM):

@@ -1,4 +1,4 @@
-"""Tests for LangfuseSource adapter.
+"""Tests for LangfuseEvalCaseSource.
 
 Uses mock objects to avoid requiring the langfuse package at test time.
 """
@@ -13,6 +13,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
+from harness_evals.refs import ResourceRef
 
 
 @dataclass
@@ -42,7 +44,7 @@ class _FakeObservationList:
 
 @pytest.fixture()
 def _langfuse_module():
-    """Inject a fake langfuse module so LangfuseSource can be imported without the real package."""
+    """Inject a fake langfuse module so LangfuseEvalCaseSource can be imported without the real package."""
     fake_mod = ModuleType("langfuse")
     fake_mod.Langfuse = MagicMock
     already = "langfuse" in sys.modules
@@ -57,14 +59,14 @@ def _langfuse_module():
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("_langfuse_module")
-class TestLangfuseSource:
+class TestLangfuseEvalCaseSourceFromTrace:
     def _make_source(self, trace: _FakeTrace, observations: list[_FakeObservation]):
-        from harness_evals.sources.langfuse import LangfuseSource
+        from harness_evals.importers.langfuse import LangfuseEvalCaseSource
 
         client = MagicMock()
         client.api.trace.get.return_value = trace
         client.api.observations.get_many.return_value = _FakeObservationList(data=observations)
-        return LangfuseSource(client)
+        return LangfuseEvalCaseSource(client)
 
     def test_basic_trace(self):
         source = self._make_source(_FakeTrace(), [])
@@ -78,9 +80,7 @@ class TestLangfuseSource:
     def test_generation_observation_creates_messages(self):
         obs = _FakeObservation(
             type="GENERATION",
-            input=[
-                {"role": "user", "content": "What is 2+2?"},
-            ],
+            input=[{"role": "user", "content": "What is 2+2?"}],
             output={"role": "assistant", "content": "4"},
             usage_details={"input": 10, "output": 5},
             total_cost=0.001,
@@ -118,11 +118,7 @@ class TestLangfuseSource:
             output={
                 "role": "assistant",
                 "content": None,
-                "tool_calls": [
-                    {
-                        "function": {"name": "web_search", "arguments": {"q": "cats"}},
-                    }
-                ],
+                "tool_calls": [{"function": {"name": "web_search", "arguments": {"q": "cats"}}}],
             },
             usage_details={"input": 5, "output": 10},
             total_cost=0.002,
@@ -143,10 +139,7 @@ class TestLangfuseSource:
         assert ec.latency_ms is None
 
     def test_string_output_generation(self):
-        obs = _FakeObservation(
-            type="GENERATION",
-            output="Just a string response",
-        )
+        obs = _FakeObservation(type="GENERATION", output="Just a string response")
         source = self._make_source(_FakeTrace(), [obs])
         ec = source.from_trace("t1")
         assert ec.messages is not None
@@ -174,8 +167,6 @@ class TestLangfuseSource:
 
 @dataclass
 class _FakeTraceListItem:
-    """Minimal trace object returned by api.trace.list()."""
-
     id: str = "trace-1"
 
 
@@ -192,14 +183,14 @@ class _FakeTracePage:
 
 @pytest.mark.unit
 @pytest.mark.usefixtures("_langfuse_module")
-class TestLangfuseSourceFromTraces:
+class TestLangfuseEvalCaseSourceFromTraces:
     def _make_source(
         self,
         pages: list[_FakeTracePage],
         trace_map: dict[str, _FakeTrace] | None = None,
         obs_map: dict[str, list[_FakeObservation]] | None = None,
     ):
-        from harness_evals.sources.langfuse import LangfuseSource
+        from harness_evals.importers.langfuse import LangfuseEvalCaseSource
 
         client = MagicMock()
         client.api.trace.list.side_effect = pages
@@ -217,12 +208,10 @@ class TestLangfuseSourceFromTraces:
 
         client.api.trace.get.side_effect = get_trace
         client.api.observations.get_many.side_effect = get_obs
-        return LangfuseSource(client), client
+        return LangfuseEvalCaseSource(client), client
 
     def test_single_page(self):
-        page = _FakeTracePage(
-            data=[_FakeTraceListItem(id="t1"), _FakeTraceListItem(id="t2")],
-        )
+        page = _FakeTracePage(data=[_FakeTraceListItem(id="t1"), _FakeTraceListItem(id="t2")])
         source, client = self._make_source([page])
         cases = source.from_traces(tags=["prod"], limit=10)
         assert len(cases) == 2
@@ -233,22 +222,15 @@ class TestLangfuseSourceFromTraces:
         assert call_kwargs.kwargs.get("tags") == ["prod"] or call_kwargs[1].get("tags") == ["prod"]
 
     def test_pagination(self):
-        page1 = _FakeTracePage(
-            data=[_FakeTraceListItem(id="t1")],
-            meta=_FakePageMeta(next_cursor="cursor_2"),
-        )
-        page2 = _FakeTracePage(
-            data=[_FakeTraceListItem(id="t2")],
-        )
+        page1 = _FakeTracePage(data=[_FakeTraceListItem(id="t1")], meta=_FakePageMeta(next_cursor="cursor_2"))
+        page2 = _FakeTracePage(data=[_FakeTraceListItem(id="t2")])
         source, client = self._make_source([page1, page2])
         cases = source.from_traces(limit=10)
         assert len(cases) == 2
         assert client.api.trace.list.call_count == 2
 
     def test_limit_truncates(self):
-        page = _FakeTracePage(
-            data=[_FakeTraceListItem(id=f"t{i}") for i in range(5)],
-        )
+        page = _FakeTracePage(data=[_FakeTraceListItem(id=f"t{i}") for i in range(5)])
         source, _ = self._make_source([page])
         cases = source.from_traces(limit=3)
         assert len(cases) == 3
@@ -262,12 +244,82 @@ class TestLangfuseSourceFromTraces:
     def test_filter_kwargs_forwarded(self):
         page = _FakeTracePage(data=[])
         source, client = self._make_source([page])
-        source.from_traces(
-            name="my-trace",
-            user_id="u1",
-            session_id="s1",
-        )
+        source.from_traces(name="my-trace", user_id="u1", session_id="s1")
         call_kwargs = client.api.trace.list.call_args[1]
         assert call_kwargs["name"] == "my-trace"
         assert call_kwargs["user_id"] == "u1"
         assert call_kwargs["session_id"] == "s1"
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("_langfuse_module")
+class TestLangfuseEvalCaseSourceFetch:
+    """Tests for the uniform fetch(ref) entry point."""
+
+    def _make_source(self, trace: _FakeTrace | None = None):
+        from harness_evals.importers.langfuse import LangfuseEvalCaseSource
+
+        client = MagicMock()
+        client.api.trace.get.return_value = trace or _FakeTrace()
+        client.api.observations.get_many.return_value = _FakeObservationList(data=[])
+        return LangfuseEvalCaseSource(client), client
+
+    @pytest.mark.asyncio
+    async def test_fetch_single_trace_by_id(self):
+        source, _ = self._make_source()
+        ref = ResourceRef(source="langfuse", id="trace-xyz")
+        cases = await source.fetch(ref)
+        assert len(cases) == 1
+        assert cases[0].metadata["langfuse_trace_id"] == "trace-xyz"
+
+    @pytest.mark.asyncio
+    async def test_fetch_dispatches_to_from_traces_with_filter_keys(self):
+        page = _FakeTracePage(data=[_FakeTraceListItem(id="t1")])
+        from harness_evals.importers.langfuse import LangfuseEvalCaseSource
+
+        client = MagicMock()
+        client.api.trace.list.return_value = page
+        client.api.trace.get.return_value = _FakeTrace()
+        client.api.observations.get_many.return_value = _FakeObservationList(data=[])
+        source = LangfuseEvalCaseSource(client)
+
+        ref = ResourceRef(source="langfuse", id="", extra={"tags": ["prod"], "limit": 5})
+        cases = await source.fetch(ref)
+        assert len(cases) == 1
+        client.api.trace.list.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("_langfuse_module")
+class TestDeprecationWarnings:
+    """Verify that importing from sources/ compat path emits DeprecationWarning."""
+
+    def test_sources_langfuse_getattr_emits_warning(self):
+        import harness_evals.sources.langfuse as compat_mod
+
+        compat_mod.__dict__.pop("LangfuseSource", None)
+
+        with pytest.warns(DeprecationWarning, match="LangfuseSource is deprecated"):
+            _ = compat_mod.LangfuseSource
+
+    def test_sources_init_getattr_emits_warning(self):
+        import harness_evals.sources as sources_pkg
+
+        sources_pkg.__dict__.pop("LangfuseSource", None)
+
+        with pytest.warns(DeprecationWarning, match="LangfuseSource is deprecated"):
+            _ = sources_pkg.LangfuseSource
+
+
+@pytest.mark.unit
+class TestInitSubclassEnforcement:
+    """Verify that __init_subclass__ catches missing name attribute."""
+
+    def test_missing_name_raises_type_error(self):
+        from harness_evals.importers.base import BaseEvalCaseSource
+
+        with pytest.raises(TypeError, match="must define a class-level 'name: str'"):
+
+            class BadSource(BaseEvalCaseSource):
+                async def fetch(self, ref):
+                    return []

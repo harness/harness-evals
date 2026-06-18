@@ -211,12 +211,12 @@ ec = EvalCase(
 ### Evaluate production traces from Langfuse
 
 ```python
-from harness_evals.sources.langfuse import LangfuseSource
+from harness_evals.importers.langfuse import LangfuseEvalCaseSource
 from harness_evals import evaluate
 from harness_evals.metrics import FaithfulnessMetric, LatencyMetric, PIIMetric
 from harness_evals.sinks.langfuse_sink import LangfuseSink
 
-source = LangfuseSource(langfuse_client)
+source = LangfuseEvalCaseSource(langfuse_client)
 ec = source.from_trace("trace-id-123")
 
 scores = evaluate(ec, metrics=[
@@ -229,12 +229,12 @@ scores = evaluate(ec, metrics=[
 ### Batch-evaluate Langfuse traces by filter
 
 ```python
-from harness_evals.sources.langfuse import LangfuseSource
+from harness_evals.importers.langfuse import LangfuseEvalCaseSource
 from harness_evals import evaluate_cases
 from harness_evals.metrics import LatencyMetric, PIIMetric
 from harness_evals.sinks.langfuse_sink import LangfuseSink
 
-source = LangfuseSource(langfuse_client)
+source = LangfuseEvalCaseSource(langfuse_client)
 cases = source.from_traces(tags=["production"], user_id="user_123", limit=50)
 
 all_scores = evaluate_cases(cases, metrics=[
@@ -246,11 +246,15 @@ all_scores = evaluate_cases(cases, metrics=[
 ### Evaluate production traces from OpenTelemetry
 
 ```python
-from harness_evals.sources.otel import OTELSource
+from harness_evals.importers.otel import OTELEvalCaseSource
 
-ec = OTELSource.from_spans(collected_spans)
+ec = OTELEvalCaseSource.from_spans(collected_spans)
 scores = evaluate(ec, metrics=[...])
 ```
+
+> **Note:** The previous import paths (`from harness_evals.sources.langfuse import LangfuseSource`
+> and `from harness_evals.sources.otel import OTELSource`) still work but emit a
+> `DeprecationWarning`. Migrate to the `importers` paths shown above.
 
 ### Write results to a file
 

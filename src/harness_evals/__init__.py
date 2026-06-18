@@ -32,6 +32,7 @@ from harness_evals.core.sink import BaseSink
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.datasets import Dataset, load_dataset, loads_dataset, save_dataset
 from harness_evals.errors import HarnessEvalsError, MissingAdapterError
+from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
 from harness_evals.input_generator import InputGenerator
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
@@ -65,6 +66,9 @@ __all__ = [
     "resolve",
     "HarnessEvalsError",
     "MissingAdapterError",
+    # Importers
+    "BaseEvalCaseSource",
+    "BaseEvalConfigSource",
     "ReliabilityMetric",
     "SafetyMetric",
     "Message",

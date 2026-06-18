@@ -240,3 +240,33 @@ def _discover_entry_points() -> None:
 
 def _install_hint(name: str) -> str:
     return INSTALL_HINTS.get(name, f"harness-evals[{name}]")
+
+
+# ------------------------------------------------------------------
+# Test helpers — snapshot / restore for isolation
+# ------------------------------------------------------------------
+
+
+def _snapshot() -> dict:
+    """Capture the current state of all plugin registries.
+
+    Returns an opaque dict suitable for passing to :func:`_restore`.
+    """
+    return {
+        "registries": {family: registry.copy() for family, registry in _REGISTRIES.items()},
+        "entry_points": {family: discovered.copy() for family, discovered in _ENTRY_POINTS.items()},
+        "discovered": _ENTRY_POINTS_DISCOVERED,
+    }
+
+
+def _restore(snapshot: dict) -> None:
+    """Restore plugin registries from a previous :func:`_snapshot`."""
+    global _ENTRY_POINTS_DISCOVERED
+
+    for family, registry in _REGISTRIES.items():
+        registry.clear()
+        registry.update(snapshot["registries"][family])
+    for family, discovered in _ENTRY_POINTS.items():
+        discovered.clear()
+        discovered.update(snapshot["entry_points"][family])
+    _ENTRY_POINTS_DISCOVERED = snapshot["discovered"]

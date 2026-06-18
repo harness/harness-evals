@@ -18,6 +18,10 @@ class BaseEvalCaseSource(ABC):
     The output is a list of :class:`~harness_evals.core.eval_case.EvalCase` objects that
     are ready to be scored with ``evaluate_cases()``.
 
+    Concrete subclasses **must** define a class-level ``name: str`` attribute (e.g.
+    ``name = "langfuse"``). This is enforced at class-creation time for non-abstract
+    subclasses.
+
     Example::
 
         from harness_evals.importers.langfuse import LangfuseEvalCaseSource
@@ -62,6 +66,10 @@ class BaseEvalConfigSource(ABC):
     The output is an ``EvalConfig`` ready to be executed with ``run_config()``.
     Translation is best-effort; platform metrics with no local catalog equivalent
     raise :class:`~harness_evals.errors.UnmappedMetricError`.
+
+    Concrete subclasses **must** define a class-level ``name: str`` attribute (e.g.
+    ``name = "harness"``). This is enforced at class-creation time for non-abstract
+    subclasses.
 
     Example::
 

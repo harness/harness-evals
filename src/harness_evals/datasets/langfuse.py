@@ -55,11 +55,25 @@ class LangfuseDatasetSource(BaseDatasetSource):
     name = "langfuse"
 
     def __init__(self, client: Langfuse | None = None) -> None:
-        self._client = client or Langfuse()
+        self._client_arg = client
+
+    @property
+    def _client(self) -> Langfuse:
+        if self._client_arg is None:
+            try:
+                self._client_arg = Langfuse()
+            except Exception as exc:
+                raise ImportError(
+                    "No Langfuse client provided and LANGFUSE_PUBLIC_KEY is not set. "
+                    "Either pass a Langfuse() client explicitly or set LANGFUSE_PUBLIC_KEY "
+                    "and LANGFUSE_SECRET_KEY environment variables."
+                ) from exc
+        return self._client_arg
 
     async def close(self) -> None:
         """Flush the Langfuse client to prevent data loss."""
-        await flush_langfuse_client(self._client)
+        if self._client_arg is not None:
+            await flush_langfuse_client(self._client_arg)
 
     async def fetch(self, ref: ResourceRef) -> list[Golden]:
         """Fetch all dataset items into memory. For large datasets, prefer fetch_iter().
@@ -74,6 +88,11 @@ class LangfuseDatasetSource(BaseDatasetSource):
         """Yield goldens page-by-page without loading the full dataset into memory.
 
         Uses the low-level ``dataset_items.list()`` API for pagination.
+
+        Usage (note: no ``await`` — use ``async for`` directly)::
+
+            async for golden in source.fetch_iter(ref):
+                print(golden.input)
         """
         if not ref.id:
             raise ValueError("LangfuseDatasetSource requires a dataset name in ref.id")

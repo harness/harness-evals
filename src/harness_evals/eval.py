@@ -62,6 +62,11 @@ def run_eval(
 
     Returns:
         Per-golden score lists — ``list[list[Score]]``.
+
+    Raises:
+        BaselineRegressionError: If baseline gating is active and scores regress
+            beyond tolerance. No output is printed — callers are responsible for
+            handling and surfacing the error.
     """
 
     if plugins:

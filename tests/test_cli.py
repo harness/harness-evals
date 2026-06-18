@@ -209,7 +209,7 @@ metrics: [exact_match]
         exit_code = main(["discover", str(tmp_path)])
         assert exit_code == 0
         captured = capsys.readouterr()
-        assert "0 eval(s) discovered" in captured.out
+        assert "0 eval(s) discovered" in captured.err
 
     def test_skips_hidden_directories(self, tmp_path, capsys) -> None:
         hidden = tmp_path / ".git" / "hooks"
@@ -223,7 +223,7 @@ metrics: [exact_match]
         captured = capsys.readouterr()
         assert "name=real" in captured.out
         assert "shouldskip" not in captured.out
-        assert "1 eval(s) discovered" in captured.out
+        assert "1 eval(s) discovered" in captured.err
 
     def test_nonexistent_path(self) -> None:
         exit_code = main(["discover", "/nonexistent/path"])

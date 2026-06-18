@@ -39,6 +39,11 @@ class BaseDatasetSource(ABC):
         Default implementation collects from :meth:`fetch`.
         Streaming-capable adapters (e.g. Langfuse, HTTP chunked) should
         override this to avoid loading all items into memory at once.
+
+        This is an async generator — use ``async for`` directly, not ``await``::
+
+            async for golden in source.fetch_iter(ref):
+                ...
         """
         for golden in await self.fetch(ref):
             yield golden

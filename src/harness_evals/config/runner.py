@@ -77,12 +77,28 @@ _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _resolve_env_in_params(params: dict) -> dict:
-    """Resolve ``${VAR}`` references in string values of a params dict."""
+    """Resolve ``${VAR}`` references in string values of a params dict.
+
+    .. note::
+        YAML requires ``${VAR}`` references to be quoted (``"${VAR}"``).
+        An unquoted ``${VAR}`` is parsed as ``null`` by the YAML spec, which
+        means this function will never see the interpolation placeholder.
+    """
 
     resolved = {}
     for key, value in params.items():
         if isinstance(value, str) and "${" in value:
             resolved[key] = _resolve_env_value(value)
+        elif value is None:
+            import warnings
+
+            warnings.warn(
+                f"Parameter {key!r} resolved to None. If you intended environment variable "
+                f"interpolation, ensure the value is quoted in YAML: {key}: \"${{{key.upper()}}}\"",
+                UserWarning,
+                stacklevel=2,
+            )
+            resolved[key] = value
         else:
             resolved[key] = value
     return resolved
@@ -289,6 +305,9 @@ def run_config(cfg: EvalConfig, *, baseline: BaselineSpec | None = ...) -> list[
     ``HarnessEvalsError``). Callers that need to distinguish "eval ran but
     regressed" from other failures should catch ``BaselineRegressionError``
     specifically.
+
+    If ``cfg.baseline`` is set, gating happens automatically inside this call.
+    Pass ``baseline=None`` to suppress it and handle gating yourself.
 
     Args:
         baseline: Override baseline spec. Pass ``None`` to disable baseline

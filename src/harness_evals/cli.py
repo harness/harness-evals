@@ -56,9 +56,6 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_list_metrics()
         if args.command == "discover":
             return _cmd_discover(args)
-    except BaselineRegressionError as exc:
-        print(f"Baseline regression: {exc}", file=sys.stderr)
-        return 1
     except HarnessEvalsError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         if args.verbose:
@@ -269,7 +266,7 @@ def _cmd_discover(args: argparse.Namespace) -> int:
             print(f"  {py_path}  (Python eval file)")
             found += 1
 
-    print(f"\n{found} eval(s) discovered")
+    print(f"\n{found} eval(s) discovered", file=sys.stderr)
     return 0
 
 

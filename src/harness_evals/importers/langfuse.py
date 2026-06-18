@@ -56,8 +56,9 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
 
     name = "langfuse"
 
-    def __init__(self, client: Langfuse) -> None:
+    def __init__(self, client: Langfuse, *, concurrency: int = 10) -> None:
         self._client = client
+        self._CONCURRENCY = concurrency
 
     async def close(self) -> None:
         """Flush the Langfuse client to prevent data loss."""
@@ -100,8 +101,6 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
     # ------------------------------------------------------------------
     # Concurrent fetch
     # ------------------------------------------------------------------
-
-    _CONCURRENCY = 10
 
     async def _fetch_traces_concurrent(self, **kwargs: object) -> list[EvalCase]:
         """List traces with filters, then hydrate each concurrently via threads."""

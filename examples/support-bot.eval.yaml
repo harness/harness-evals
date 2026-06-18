@@ -1,0 +1,31 @@
+# Example: Evaluate a support bot prompt with deterministic + LLM-judged metrics.
+#
+# Run:
+#   harness-evals run examples/support-bot.eval.yaml
+#
+# Requires:
+#   pip install harness-evals[llm]
+#   export OPENAI_API_KEY=...
+#
+# To use separate API keys for the target and judge:
+#   export TARGET_KEY=sk-...
+#   export JUDGE_KEY=sk-...
+#   Then set api_key: "${TARGET_KEY}" in model and api_key: "${JUDGE_KEY}" in judge_llm.
+
+name: support-bot
+
+dataset: ./examples/goldens.jsonl
+
+target:
+  type: prompt
+  prompt: ./examples/prompts/support-bot.txt
+  model: {provider: openai, name: gpt-4o}
+
+metrics:
+  - exact_match
+  - {kind: contains, threshold: 0.8}
+  - {kind: geval, threshold: 0.7, params: {criteria: "Correct and helpful?"}}
+
+judge_llm: {provider: openai, name: gpt-4o}
+
+sinks: [stdout]

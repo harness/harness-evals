@@ -1,0 +1,3 @@
+{"input": "What is your return policy?", "expected": "30-day returns on all items."}
+{"input": "How do I reset my password?", "expected": "Go to Settings > Security > Reset Password."}
+{"input": "What are your business hours?", "expected": "Monday through Friday, 9 AM to 5 PM EST."}

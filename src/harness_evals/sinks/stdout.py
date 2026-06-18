@@ -13,8 +13,9 @@ class StdoutSink(BaseSink):
     statistics (mean, pass rate) per metric after all cases are processed.
     """
 
-    def __init__(self, *, summary: bool = True) -> None:
+    def __init__(self, *, summary: bool = True, label: str | None = None) -> None:
         self._summary = summary
+        self._label = label
         self._all_scores: list[list[Score]] = []
 
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
@@ -33,7 +34,8 @@ class StdoutSink(BaseSink):
             return
 
         result = summarize(self._all_scores)
-        print("\n=== Summary ===")
+        header = f"\n=== Summary: {self._label} ===" if self._label else "\n=== Summary ==="
+        print(header)
         for ms in result.by_metric.values():
             print(f"  {ms.name}: mean={ms.mean:.4f}, pass_rate={ms.pass_rate:.1%} ({ms.passed_count}/{ms.count})")
         print(f"  Overall pass rate: {result.overall_pass_rate:.1%}")

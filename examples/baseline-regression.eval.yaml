@@ -1,0 +1,30 @@
+# Example: CI baseline regression gating.
+#
+# First run (save a baseline):
+#   harness-evals run examples/baseline-regression.eval.yaml --update-baseline
+#
+# Subsequent runs (gate against baseline):
+#   harness-evals run examples/baseline-regression.eval.yaml --baseline
+#
+# Combine with --fail-under for an absolute quality floor:
+#   harness-evals run examples/baseline-regression.eval.yaml --baseline --fail-under 0.8
+
+name: baseline-regression
+
+dataset: ./examples/goldens.jsonl
+
+target:
+  type: prompt
+  prompt: ./examples/prompts/support-bot.txt
+  model: {provider: openai, name: gpt-4o}
+
+metrics:
+  - exact_match
+  - {kind: contains, threshold: 0.8}
+
+sinks: [stdout]
+
+baseline:
+  store: json
+  path: .evals/baselines
+  tolerance: 0.05

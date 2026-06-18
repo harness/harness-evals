@@ -64,11 +64,12 @@ Dimensions are set by the metric author — not user-configured. Any combination
 Golden (authored) + agent output → EvalCase → Score (result)
 Production traces (Langfuse/OTEL) → Importer → EvalCase → Score (result)
 YAML config → run_config() → evaluate_dataset() → Score (result)
+run_eval() one-liner → evaluate_dataset() → Score (result)
 ```
 
-## Quick Start — Config-Driven Eval
+## Quick Start — Local Eval Runner
 
-Define an eval as a YAML config and run it programmatically with `run_config()`:
+The fastest way to run an eval is the CLI with a YAML config:
 
 ```yaml
 # my-eval.eval.yaml
@@ -86,14 +87,29 @@ sinks: [stdout]
 baseline: {store: json, path: .evals/baseline.json}
 ```
 
-```python
-from harness_evals import load_config, run_config
-
-cfg = load_config("my-eval.eval.yaml")
-scores = run_config(cfg)
+```bash
+harness-evals run my-eval.eval.yaml                # run the eval
+harness-evals run my-eval.eval.yaml --baseline     # compare against stored baseline
+harness-evals run my-eval.eval.yaml --fail-under 0.8  # CI gate on absolute score
+harness-evals list-metrics                         # see all available metrics
+harness-evals discover                             # find all *.eval.yaml in cwd
 ```
 
-`run_config()` resolves all refs, builds targets/metrics/sinks, calls `evaluate_dataset()`, and gates against the baseline if configured.
+Or use the code-first `run_eval()` one-liner:
+
+```python
+from harness_evals import Golden, run_eval
+from harness_evals.metrics import ExactMatchMetric
+
+run_eval(
+    "my-eval",
+    data="./goldens.jsonl",             # ref string, ResourceRef, or list[Golden]
+    target=my_agent_function,           # BaseTarget, async callable, or sync callable
+    metrics=[ExactMatchMetric()],
+)
+```
+
+Both the YAML runner and `run_eval()` funnel into `evaluate_dataset()` — the same engine used by the programmatic API below.
 
 Model params support `${VAR}` env-var interpolation, so the target and judge can use separate API keys:
 
@@ -518,6 +534,24 @@ EvalCase(
 ```
 
 `Golden` also supports `expected_tools` for defining expected tool names in datasets.
+
+## CLI Reference
+
+```
+harness-evals run <config.yaml> [--baseline] [--update-baseline] [--fail-under <float>]
+harness-evals import <ref> [-o out.eval.yaml]
+harness-evals list-metrics
+harness-evals discover [path] [--glob pattern]
+```
+
+| Command | Purpose |
+|---------|---------|
+| `run` | Execute a YAML eval config. Exit 0 = pass, 1 = failure/regression, 2 = config error |
+| `import` | Translate a platform eval definition to a local YAML config |
+| `list-metrics` | Print a table of all registered metrics with dimensions and thresholds |
+| `discover` | Find `**/*.eval.yaml` and `**/eval_*.py` files in a directory |
+
+`--fail-under` and `--baseline` are independent checks. `--fail-under` is an absolute quality floor; baseline gating is a relative regression check. Both can fire in the same run.
 
 ## Extending
 

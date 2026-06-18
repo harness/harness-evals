@@ -1,0 +1,26 @@
+# Example: Evaluate a deployed HTTP agent endpoint.
+#
+# Run:
+#   harness-evals run examples/http-agent.eval.yaml
+#
+# Start your agent at http://localhost:8080/run first.
+# The agent should accept {"input": "..."} and return {"output": "..."}.
+
+name: http-agent-eval
+
+dataset: ./examples/goldens.jsonl
+
+target:
+  type: http
+  url: http://localhost:8080/run
+  output_path: $.output
+  timeout_s: 30
+  retries: 2
+
+metrics:
+  - exact_match
+  - {kind: latency, threshold: 0.5, params: {max_ms: 5000}}
+
+sinks:
+  - stdout
+  - {type: json, path: results.jsonl}

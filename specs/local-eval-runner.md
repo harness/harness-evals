@@ -22,7 +22,7 @@ edit prompt → harness-evals run my-eval.yaml → diff scores against baseline
 ```
 
 This spec adds four additive layers — **source adapters**, **targets**, **eval
-importers**, and a **config/CLI runner** — plus a code-first `Eval()` one-liner.
+importers**, and a **config/CLI runner** — plus a code-first `run_eval()` one-liner.
 None of it touches `core/`; the existing `evaluate_dataset()` remains the execution
 engine.
 
@@ -83,7 +83,7 @@ harness_evals/
 │   ├── schema.py          —   EvalConfig dataclass + validation
 │   └── runner.py          —   run_config(cfg) → list[list[Score]]
 ├── cli.py                 ← NEW — harness-evals run|import|list-metrics|discover
-└── eval.py                ← NEW — Eval() one-liner
+└── eval.py                ← NEW — run_eval() one-liner
 ```
 
 **Dependency rule (unchanged from existing architecture.md):**
@@ -103,7 +103,7 @@ files — never inside ABCs, registries, `refs.py`, `plugins.py`, or `config/`.
 ## 2. Data Flow
 
 ```
-EvalConfig (YAML or Eval() kwargs)
+EvalConfig (YAML or run_eval() kwargs)
    │
    ├── dataset ref  ──► DatasetSource.fetch()  ──► list[Golden]
    ├── prompt ref   ──► PromptSource.fetch()   ──► PromptTemplate ─┐
@@ -598,7 +598,7 @@ harness-evals discover [path] [--glob "**/*.eval.yaml"]
 
 - `run` exits non-zero if any metric fails or score falls under `--fail-under` — CI gate.
 - `discover` default globs: `**/*.eval.yaml` and `**/eval_*.py`. `.py` files are
-  imported; module-level `Eval()` calls self-execute. Respects a
+  imported; module-level `run_eval()` calls self-execute. Respects a
   `HARNESS_EVALS_IGNORE` gitignore-style file.
 - `import` writes a translated `EvalConfig` to YAML — auditable and editable before
   running.
@@ -606,15 +606,15 @@ harness-evals discover [path] [--glob "**/*.eval.yaml"]
 
 ---
 
-## 11. Code-First `Eval()` One-Liner
+## 11. Code-First `run_eval()` One-Liner
 
 ```python
-from harness_evals import Eval
+from harness_evals import run_eval
 from harness_evals.metrics import ExactMatchMetric, GEvalMetric
 from harness_evals.targets import PromptTarget
 from harness_evals.llm.openai import OpenAILLM
 
-Eval(
+run_eval(
     "support-bot",
     data="./goldens.jsonl",           # ref string, ResourceRef, or list[Golden]
     target=PromptTarget(
@@ -625,9 +625,9 @@ Eval(
 )
 ```
 
-`Eval()` and `run_config()` both funnel into `evaluate_dataset()`. `data` accepts a
+`run_eval()` and `run_config()` both funnel into `evaluate_dataset()`. `data` accepts a
 ref string, a `ResourceRef`, or a literal `list[Golden]`. `target` accepts any
-`BaseTarget` or a plain callable `async (Golden) -> EvalCase`.
+`BaseTarget` or a plain callable `(Golden) -> EvalCase` (sync or async).
 
 ---
 
@@ -726,7 +726,7 @@ Each step is an independently shippable PR.
    `OTELEvalCaseSource`) with aliases; `HarnessEvalConfigSource` behind `[harness]`.
 7. **`config/`** — `EvalConfig` schema + `run_config()`; wire to `evaluate_dataset`.
 8. **`cli.py`** — `run` / `import` / `list-metrics` / `discover` + poetry script.
-9. **`Eval()`** — one-liner + docs + example `*.eval.yaml` files.
+9. **`run_eval()`** — one-liner + docs + example `*.eval.yaml` files.
 10. **Vendor dataset/prompt adapters** — `LangfuseDatasetSource`,
     `LangfusePromptSource`, `HarnessDatasetSource`, `HarnessPromptSource`.
 

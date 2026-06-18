@@ -280,22 +280,29 @@ def gate_against_baseline(scores: list[list[Score]], spec: BaselineSpec) -> None
         raise BaselineRegressionError(result)
 
 
-def run_config(cfg: EvalConfig) -> list[list[Score]]:
+def run_config(cfg: EvalConfig, *, baseline: BaselineSpec | None = ...) -> list[list[Score]]:  # type: ignore[assignment]
     """Synchronous entry point — load plugins, build objects, run eval.
 
-    Returns the per-golden score lists on success. If ``cfg.baseline`` is
-    set and scores regress beyond tolerance, raises
+    Returns the per-golden score lists on success. If a baseline spec is
+    active and scores regress beyond tolerance, raises
     :class:`~harness_evals.errors.BaselineRegressionError` (a subclass of
     ``HarnessEvalsError``). Callers that need to distinguish "eval ran but
     regressed" from other failures should catch ``BaselineRegressionError``
     specifically.
+
+
+    Args:
+        baseline: Override baseline spec. Pass ``None`` to disable baseline
+            comparison regardless of ``cfg.baseline``. When omitted (default
+            sentinel), uses ``cfg.baseline``.
     """
 
     load_plugins(cfg.plugins)
-    return _run_async(_run_config_async(cfg))
+    effective_baseline = cfg.baseline if baseline is ... else baseline
+    return _run_async(_run_config_async(cfg, baseline=effective_baseline))
 
 
-async def _run_config_async(cfg: EvalConfig) -> list[list[Score]]:
+async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = None) -> list[list[Score]]:
     """Wire specs to live objects and execute via ``evaluate_dataset()``."""
 
     source_cls = lookup_dataset_source(cfg.dataset.source)
@@ -312,8 +319,8 @@ async def _run_config_async(cfg: EvalConfig) -> list[list[Score]]:
     async with target:
         scores = await evaluate_dataset(goldens, target.ainvoke, metrics=metrics, sinks=sinks)
 
-    if cfg.baseline:
-        gate_against_baseline(scores, cfg.baseline)
+    if baseline:
+        gate_against_baseline(scores, baseline)
 
     return scores
 

@@ -8,6 +8,7 @@ from harness_evals.baseline import (
     compare_to_baseline,
 )
 from harness_evals.catalog import CatalogEntry, catalog
+from harness_evals.config import EvalConfig, load_config, loads_config, run_config
 from harness_evals.conversation import (
     ConversationGolden,
     ConversationSimulator,
@@ -32,6 +33,7 @@ from harness_evals.core.sink import BaseSink
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.datasets import Dataset, load_dataset, loads_dataset, save_dataset
 from harness_evals.errors import HarnessEvalsError, MissingAdapterError
+from harness_evals.eval import run_eval
 from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
 from harness_evals.input_generator import InputGenerator
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
@@ -128,4 +130,10 @@ __all__ = [
     "evaluate_conversations",
     "load_conversation_dataset",
     "save_conversation_dataset",
+    # Config & runner
+    "EvalConfig",
+    "load_config",
+    "loads_config",
+    "run_config",
+    "run_eval",
 ]

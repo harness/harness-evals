@@ -23,6 +23,7 @@ packages = [{ include = "harness_evals", from = "src" }]
 
 [tool.poetry.scripts]
 build = "harness_evals._build:main"
+harness-evals = "harness_evals.cli:main"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4"

@@ -20,6 +20,7 @@ _RESPONSE_SCHEMA = {
                 "required": ["text"],
                 "properties": {
                     "text": {"type": "string"},
+                    "expected_output": {"type": "string"},
                 },
             },
         },
@@ -51,8 +52,11 @@ class ComplexityLadderStrategy(BaseInputStrategy):
             "- **expert**: Domain-specific jargon, edge cases, complex constraints, "
             "requires deep understanding\n\n"
             "Each input should be a complete, self-contained user message.\n\n"
+            "For each input, also provide the ideal expected response that a perfect AI "
+            "assistant should give. The response complexity and depth should match the "
+            "input complexity level.\n\n"
             "Respond with JSON:\n"
-            '{"inputs": [{"text": "the user input"}, ...]}\n'
+            '{"inputs": [{"text": "the user input", "expected_output": "the ideal response"}, ...]}\n'
         )
 
     def _response_schema(self) -> dict:
@@ -64,6 +68,7 @@ class ComplexityLadderStrategy(BaseInputStrategy):
         return [
             Golden(
                 input=item["text"],
+                expected=item.get("expected_output"),
                 metadata={
                     "strategy": self.strategy_name,
                     "complexity": level,

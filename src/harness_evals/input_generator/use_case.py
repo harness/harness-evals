@@ -19,6 +19,7 @@ _RESPONSE_SCHEMA = {
                 "properties": {
                     "text": {"type": "string"},
                     "category": {"type": "string"},
+                    "expected_output": {"type": "string"},
                 },
             },
         },
@@ -43,8 +44,12 @@ class UseCaseStrategy(BaseInputStrategy):
             "- Levels of specificity (vague vs detailed)\n"
             "- Common and uncommon scenarios\n\n"
             "Each input should be a complete, self-contained user message.\n\n"
+            "For each input, also provide the ideal expected response that a perfect AI "
+            "assistant should give. The expected output should be a complete, high-quality "
+            "answer that directly addresses the user's input.\n\n"
             "Respond with JSON:\n"
-            '{"inputs": [{"text": "the user input", "category": "aspect being tested"}, ...]}\n'
+            '{"inputs": [{"text": "the user input", "category": "aspect being tested", '
+            '"expected_output": "the ideal response"}, ...]}\n'
         )
 
     def _response_schema(self) -> dict:
@@ -55,6 +60,7 @@ class UseCaseStrategy(BaseInputStrategy):
         return [
             Golden(
                 input=item["text"],
+                expected=item.get("expected_output"),
                 metadata={
                     "strategy": self.strategy_name,
                     "category": item.get("category", ""),

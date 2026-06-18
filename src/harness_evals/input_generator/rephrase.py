@@ -13,7 +13,14 @@ _RESPONSE_SCHEMA = {
     "properties": {
         "rephrasings": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                    "text": {"type": "string"},
+                    "expected_output": {"type": "string"},
+                },
+            },
         },
     },
 }
@@ -36,8 +43,11 @@ class RephraseStrategy(BaseInputStrategy):
             "Distribute rephrasings evenly across all seed inputs. "
             "Each rephrasing must preserve the exact same meaning and intent, "
             "but use different wording, sentence structure, or phrasing.\n\n"
+            "For each rephrasing, also provide the ideal expected response that a perfect "
+            "AI assistant should give to that input.\n\n"
             f"**Seed inputs**:\n{seeds_text}\n\n"
-            'Respond with JSON:\n{"rephrasings": ["rephrasing 1", "rephrasing 2", ...]}\n'
+            "Respond with JSON:\n"
+            '{"rephrasings": [{"text": "rephrased input", "expected_output": "ideal response"}, ...]}\n'
         )
 
     def _response_schema(self) -> dict:
@@ -47,12 +57,13 @@ class RephraseStrategy(BaseInputStrategy):
         rephrasings = response.get("rephrasings", [])
         return [
             Golden(
-                input=text,
+                input=item["text"],
+                expected=item.get("expected_output"),
                 metadata={
                     "strategy": self.strategy_name,
                     "seed_count": len(kwargs.get("seed_inputs") or []),
                 },
             )
-            for text in rephrasings
-            if isinstance(text, str) and text.strip()
+            for item in rephrasings
+            if isinstance(item, dict) and item.get("text", "").strip()
         ]

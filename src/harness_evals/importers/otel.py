@@ -52,6 +52,10 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
 
         ``ref.id`` must be a path to a JSON file containing a list of span dicts
         (OTLP JSON export format). Returns a single-element list.
+
+        Note: the entire file is read into memory. For very large trace exports
+        (hundreds of MB), consider splitting the file or using ``from_span_json``
+        directly with chunked reads.
         """
         path = ref.id
         raw = await asyncio.to_thread(_read_json_file, path)

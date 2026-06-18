@@ -48,14 +48,64 @@ Dimensions are set by the metric author — not user-configured. Any combination
 
 **`assert_test()`** — same as `evaluate()`, but raises `AssertionError` if any metric fails. Drop it into pytest.
 
-**Sources** — adapters that hydrate `EvalCase` from production trace data. `LangfuseSource` and `OTELSource` map traces to typed fields automatically.
+**Datasets** — `load_dataset()` / `save_dataset()` read and write JSONL or JSON golden files. Source adapters (`LocalDatasetSource`, `HttpDatasetSource`) fetch goldens from local files or HTTP endpoints using the `ResourceRef` URI system.
+
+**Prompt templates** — `PromptTemplate` uses `{{var}}` placeholders (not `str.format`). Prompt source adapters fetch templates from local files or HTTP endpoints.
+
+**Targets** — the system under test. `PromptTarget` renders a prompt template through an LLM. `HttpTarget` POSTs to a deployed agent endpoint. Both implement `BaseTarget.ainvoke(golden) -> EvalCase`.
+
+**Importers** — adapters that hydrate `EvalCase` from production trace data. `LangfuseEvalCaseSource` and `OTELEvalCaseSource` map traces to typed fields automatically.
+
+**Baselines** — `JsonBaselineStore` saves score snapshots per run. `compare_to_baseline()` detects regressions, improvements, and unchanged metrics with a configurable tolerance.
 
 ### Data Flow
 
 ```
 Golden (authored) + agent output → EvalCase → Score (result)
-Production traces (Langfuse/OTEL) → Source → EvalCase → Score (result)
+Production traces (Langfuse/OTEL) → Importer → EvalCase → Score (result)
+YAML config → run_config() → evaluate_dataset() → Score (result)
 ```
+
+## Quick Start — Config-Driven Eval
+
+Define an eval as a YAML config and run it programmatically with `run_config()`:
+
+```yaml
+# my-eval.eval.yaml
+name: support-bot
+dataset: ./goldens.jsonl
+target:
+  type: prompt
+  prompt: ./prompts/support-bot.txt
+  model: {provider: openai, name: gpt-4o}
+metrics:
+  - exact_match
+  - {kind: geval, threshold: 0.7, params: {criteria: "Correct and helpful?"}}
+judge_llm: {provider: openai, name: gpt-4o}
+sinks: [stdout]
+baseline: {store: json, path: .evals/baseline.json}
+```
+
+```python
+from harness_evals import load_config, run_config
+
+cfg = load_config("my-eval.eval.yaml")
+scores = run_config(cfg)
+```
+
+`run_config()` resolves all refs, builds targets/metrics/sinks, calls `evaluate_dataset()`, and gates against the baseline if configured.
+
+Model params support `${VAR}` env-var interpolation, so the target and judge can use separate API keys:
+
+```yaml
+target:
+  type: prompt
+  prompt: ./prompt.txt
+  model: {provider: openai, name: gpt-4o, api_key: "${TARGET_KEY}"}
+judge_llm: {provider: openai, name: gpt-4o, api_key: "${JUDGE_KEY}"}
+```
+
+If no `api_key` is specified, the provider falls back to its default env var (e.g. `OPENAI_API_KEY`).
 
 ## Usage
 
@@ -137,6 +187,60 @@ async def run_agent(golden: Golden) -> EvalCase:
     return EvalCase.from_golden(golden, output=result)
 
 results = asyncio.run(evaluate_dataset(goldens, run_agent, metrics=[ExactMatchMetric()]))
+```
+
+### Load and save datasets
+
+```python
+from harness_evals import load_dataset, save_dataset, Golden
+
+# Load goldens from a JSONL file
+goldens = load_dataset("goldens.jsonl")           # JSONL (one JSON object per line)
+goldens = load_dataset("goldens.json", format="json")  # JSON array
+
+# Create and save a dataset
+goldens = [
+    Golden(input="What is 2+2?", expected="4"),
+    Golden(input="Capital of France?", expected="Paris"),
+]
+save_dataset(goldens, "goldens.jsonl")
+```
+
+### Evaluate with an HttpTarget
+
+```python
+import asyncio
+from harness_evals import Golden, evaluate_dataset
+from harness_evals.targets import HttpTarget, BearerAuth
+from harness_evals.metrics import ExactMatchMetric
+
+target = HttpTarget(
+    url="http://localhost:8080/run",
+    auth=BearerAuth(token="${API_TOKEN}"),  # ${VAR} resolved from env
+    output_path="$.answer",
+    timeout_s=30,
+)
+
+goldens = [Golden(input="What is 2+2?", expected="4")]
+scores = asyncio.run(evaluate_dataset(goldens, target.ainvoke, metrics=[ExactMatchMetric()]))
+```
+
+### Compare scores against a baseline
+
+```python
+from harness_evals.baseline import JsonBaselineStore, compare_to_baseline
+from harness_evals.core.score import Score
+
+store = JsonBaselineStore(baseline_dir=".evals/baselines")
+
+# After an eval run, save scores as a baseline
+store.save("run-001", {"exact_match": scores_list})
+
+# Later, compare a new run against the saved baseline
+baseline = store.load()  # loads latest
+result = compare_to_baseline(current_scores, baseline, tolerance=0.05)
+if result.has_regressions:
+    print(result.summary())
 ```
 
 ### Measure reliability across multiple runs
@@ -444,6 +548,35 @@ class MySink(BaseSink):
         for s in scores:
             send_to_my_system(s.name, s.value, s.passed)
 ```
+
+### Plugin registration
+
+Third-party packages can register metrics, sinks, targets, and source adapters via decorators or entry points.
+
+**Decorator (in-process):**
+
+```python
+from harness_evals.plugins import register_metric
+
+@register_metric("my_custom_metric")
+class MyCustomMetric(BaseMetric):
+    ...
+```
+
+**Entry points (distributable packages):**
+
+```toml
+# In your package's pyproject.toml
+[project.entry-points."harness_evals.metrics"]
+my_custom = "my_package.metrics:MyCustomMetric"
+
+[project.entry-points."harness_evals.dataset_sources"]
+my_source = "my_package.sources:MyDatasetSource"
+```
+
+Eight plugin families are supported: `dataset_sources`, `prompt_sources`, `eval_case_sources`, `eval_config_sources`, `targets`, `metrics`, `baseline_stores`, `sinks`.
+
+Registered metrics appear in `catalog()` and are referenceable by `kind:` in YAML configs. Registered targets are declarable by `type:` in YAML target blocks.
 
 ## Documentation
 

@@ -34,5 +34,6 @@ def __getattr__(name: str) -> object:
             DeprecationWarning,
             stacklevel=2,
         )
+        globals()[name] = cls
         return cls
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

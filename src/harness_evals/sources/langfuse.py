@@ -10,7 +10,7 @@ def __getattr__(name: str) -> object:
         from harness_evals.importers.langfuse import LangfuseEvalCaseSource
 
         warnings.warn(
-            "LangfuseSource is deprecated — "
+            "harness_evals.sources.langfuse.LangfuseSource is deprecated — "
             "use harness_evals.importers.langfuse.LangfuseEvalCaseSource instead.",
             DeprecationWarning,
             stacklevel=2,

@@ -59,6 +59,15 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
     def __init__(self, client: Langfuse) -> None:
         self._client = client
 
+    async def close(self) -> None:
+        """Flush the Langfuse client to prevent data loss."""
+        import contextlib
+
+        flush = getattr(self._client, "flush", None)
+        if callable(flush):
+            with contextlib.suppress(Exception):
+                flush()
+
     # ------------------------------------------------------------------
     # BaseEvalCaseSource ABC
     # ------------------------------------------------------------------
@@ -66,18 +75,31 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
     async def fetch(self, ref: ResourceRef) -> list[EvalCase]:
         """Dispatch to single-trace or multi-trace fetch based on ``ref``.
 
-        - If ``ref.extra`` contains any filter key (name, tags, user_id,
-          session_id, from_timestamp, to_timestamp, limit), calls
-          :meth:`from_traces` with those kwargs.
-        - Otherwise, treats ``ref.id`` as a trace ID and calls
-          :meth:`from_trace`, returning a single-element list.
+        - If ``ref.id`` is non-empty and ``ref.extra`` contains no filter
+          keys beyond ``limit``, treats ``ref.id`` as a trace ID and calls
+          :meth:`from_trace`, returning a single-element list. Note:
+          ``limit`` is silently ignored in this case since a trace ID
+          is deterministic.
+        - If ``ref.extra`` contains any multi-trace filter key (name, tags,
+          user_id, session_id, from_timestamp, to_timestamp), calls
+          :meth:`from_traces` with those kwargs (including ``limit``).
+        - If ``ref.id`` is empty and no filter keys are set, raises
+          ``ValueError``.
 
         The synchronous Langfuse SDK calls are offloaded to a thread so
         they don't block the event loop.
         """
         filter_kwargs = {k: v for k, v in ref.extra.items() if k in _FILTER_KEYS}
+        has_multi_trace_filters = bool(filter_kwargs.keys() - {"limit"})
+        if ref.id and not has_multi_trace_filters:
+            return [await asyncio.to_thread(self.from_trace, ref.id)]
         if filter_kwargs:
             return await self._fetch_traces_concurrent(**filter_kwargs)  # type: ignore[arg-type]
+        if not ref.id:
+            raise ValueError(
+                "LangfuseEvalCaseSource.fetch() requires either a trace ID in ref.id "
+                "or filter keys (name, tags, user_id, session_id, from_timestamp, to_timestamp) in ref.extra"
+            )
         return [await asyncio.to_thread(self.from_trace, ref.id)]
 
     # ------------------------------------------------------------------

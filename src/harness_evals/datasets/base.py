@@ -9,9 +9,24 @@ from harness_evals.refs import ResourceRef
 
 
 class BaseDatasetSource(ABC):
-    """Fetch authored goldens from an adapter-backed dataset source."""
+    """Fetch authored goldens from an adapter-backed dataset source.
+
+    Subclasses that require credentials or configuration at init time
+    should override :meth:`from_ref` to extract what they need from the
+    ``ResourceRef.extra`` dict.
+    """
 
     name: str
+
+    @classmethod
+    def from_ref(cls, ref: ResourceRef) -> BaseDatasetSource:
+        """Construct an instance using information in *ref*.
+
+        The default implementation ignores *ref* and calls ``cls()``.
+        Override this when the source needs credentials, client objects,
+        or other init-time configuration derived from the ref.
+        """
+        return cls()
 
     @abstractmethod
     async def fetch(self, ref: ResourceRef) -> list[Golden]:

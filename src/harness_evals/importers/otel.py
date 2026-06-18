@@ -112,9 +112,6 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         # From exported JSON span data → single EvalCase with full trajectory
         ec = OTELEvalCaseSource.from_span_json(json.load(f))
 
-        # Per-turn: one EvalCase per LLM inference span
-        cases = OTELEvalCaseSource.from_span_json_per_turn(json.load(f))
-
         # From SDK ReadableSpan objects
         ec = OTELEvalCaseSource.from_spans(sdk_spans)
     """
@@ -126,15 +123,9 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
 
         ``ref.id`` must be a path to a JSON file containing a list of span dicts
         (OTLP JSON export format).
-
-        Set ``ref.extra["per_turn"] = "true"`` to get one EvalCase per LLM
-        inference span instead.
         """
         path = ref.id
         raw = await asyncio.to_thread(_read_json_file, path)
-        per_turn = ref.extra.get("per_turn", "").lower() == "true"
-        if per_turn:
-            return self.from_span_json_per_turn(raw)
         return [self.from_span_json(raw)]
 
     @staticmethod
@@ -145,12 +136,6 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         """
         converted = _convert_sdk_spans(spans)
         return _build_conversation_eval_case(converted)
-
-    @staticmethod
-    def from_spans_per_turn(spans: list[Any]) -> list[EvalCase]:
-        """Convert OTel ``ReadableSpan`` objects to one EvalCase per LLM turn."""
-        converted = _convert_sdk_spans(spans)
-        return _build_per_turn(converted)
 
     @staticmethod
     def from_span_json(data: list[dict[str, Any]]) -> EvalCase:
@@ -169,14 +154,6 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         """
         return _build_conversation_eval_case(data)
 
-    @staticmethod
-    def from_span_json_per_turn(data: list[dict[str, Any]]) -> list[EvalCase]:
-        """Convert exported OTEL JSON span data to one EvalCase per LLM turn.
-
-        Each LLM inference span becomes its own EvalCase, with child tool
-        spans attached as tool_calls.
-        """
-        return _build_per_turn(data)
 
 
 # ------------------------------------------------------------------
@@ -286,73 +263,6 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
         token_count=total_tokens if total_tokens > 0 else None,
         metadata=metadata or None,
     )
-
-
-# ------------------------------------------------------------------
-# Core builder: per-turn (one EvalCase per LLM span)
-# ------------------------------------------------------------------
-
-
-def _build_per_turn(spans: list[dict[str, Any]]) -> list[EvalCase]:
-    """Build one EvalCase per LLM inference span (turn)."""
-    sorted_spans = sorted(spans, key=_span_sort_key)
-    cases: list[EvalCase] = []
-
-    for span in sorted_spans:
-        if classify_span(span) != SpanType.LLM_TURN:
-            continue
-
-        attrs = span.get("attributes") or {}
-        input_text = _extract_user_input_from_span(attrs)
-        output_text, turn_tool_calls = _extract_output_from_span(attrs)
-        if not output_text:
-            continue
-
-        messages: list[Message] = []
-        if input_text:
-            messages.append(Message(role="user", content=input_text))
-        messages.append(Message(role="assistant", content=output_text, tool_calls=turn_tool_calls or None))
-
-        # Collect tool calls from child execute_tool spans
-        child_tool_calls: list[ToolCall] = []
-        span_id = span.get("span_id")
-        if span_id:
-            for child in sorted_spans:
-                if (
-                    child.get("parent_span_id") == span_id
-                    and classify_span(child) == SpanType.TOOL_CALL
-                ):
-                    child_tool_calls.append(_extract_tool_from_span(child))
-
-        input_tokens = _safe_int(attrs.get("gen_ai.usage.input_tokens", 0))
-        output_tokens = _safe_int(attrs.get("gen_ai.usage.output_tokens", 0))
-        total_tokens = input_tokens + output_tokens
-
-        meta: dict[str, Any] = {}
-        _set_if(meta, "trace_id", span.get("trace_id"))
-        _set_if(meta, "span_id", span.get("span_id"))
-        _set_if(meta, "provider", attrs.get("gen_ai.provider.name") or attrs.get("gen_ai.system"))
-        _set_if(meta, "model", attrs.get("gen_ai.response.model") or attrs.get("gen_ai.request.model"))
-        _set_if(meta, "operation", attrs.get("gen_ai.operation.name"))
-        _set_if(meta, "input_tokens", input_tokens or None)
-        _set_if(meta, "output_tokens", output_tokens or None)
-        finish = attrs.get("gen_ai.response.finish_reasons")
-        if finish:
-            meta["finish_reasons"] = finish if isinstance(finish, list) else _try_json(finish)
-
-        cases.append(
-            EvalCase(
-                input=input_text,
-                output=output_text,
-                messages=messages or None,
-                tool_calls=child_tool_calls or None,
-                latency_ms=_span_latency(span),
-                token_count=total_tokens if total_tokens > 0 else None,
-                metadata=meta or None,
-            )
-        )
-
-    return cases
 
 
 # ------------------------------------------------------------------

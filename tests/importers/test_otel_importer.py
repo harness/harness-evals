@@ -14,6 +14,8 @@ from harness_evals.refs import ResourceRef
 
 @pytest.mark.unit
 class TestOTELEvalCaseSourceFromSpanJson:
+    """Tests for legacy attribute format (backwards compat)."""
+
     def test_basic_llm_trace(self):
         spans = [
             {
@@ -41,10 +43,12 @@ class TestOTELEvalCaseSourceFromSpanJson:
             },
         ]
         ec = OTELEvalCaseSource.from_span_json(spans)
-        assert ec.input == {"query": "hello"}
-        assert ec.output == {"answer": "world"}
+        # New behavior: input/output are extracted from conversation messages
+        assert ec.input == "hello"
+        assert ec.output == "world"
         assert ec.latency_ms == pytest.approx(1000.0)
         assert ec.token_count == 15
+        assert ec.messages is not None
         assert len(ec.messages) == 2
         assert ec.messages[0].role == "user"
         assert ec.messages[1].role == "assistant"
@@ -113,6 +117,304 @@ class TestOTELEvalCaseSourceFromSpanJson:
 
 
 @pytest.mark.unit
+class TestOTELSemconvFormat:
+    """Tests for the new OTel GenAI semantic conventions format."""
+
+    def test_new_semconv_attributes(self):
+        """Test spans using gen_ai.operation.name, gen_ai.provider.name, etc."""
+        spans = [
+            {
+                "name": "chat claude-sonnet-4-6-20250514",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "anthropic",
+                    "gen_ai.request.model": "claude-sonnet-4-6-20250514",
+                    "gen_ai.response.model": "claude-sonnet-4-6-20250514",
+                    "gen_ai.usage.input_tokens": 100,
+                    "gen_ai.usage.output_tokens": 50,
+                    "gen_ai.input_messages": json.dumps([
+                        {
+                            "role": "user",
+                            "parts": [{"type": "text", "content": "What is 2+2?"}],
+                        }
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {
+                            "role": "assistant",
+                            "parts": [{"type": "text", "content": "4"}],
+                        }
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 1500000000,
+                "parent_span_id": None,
+            },
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assert ec.token_count == 150
+        assert ec.messages is not None
+        assert len(ec.messages) == 2
+        assert ec.messages[0].role == "user"
+        assert ec.messages[0].content == "What is 2+2?"
+        assert ec.messages[1].role == "assistant"
+        assert ec.messages[1].content == "4"
+        assert ec.metadata is not None
+        assert ec.metadata["provider"] == "anthropic"
+        assert ec.metadata["model"] == "claude-sonnet-4-6-20250514"
+
+    def test_new_semconv_tool_spans(self):
+        """Test tool spans using gen_ai.tool.* attributes."""
+        spans = [
+            {
+                "name": "chat gpt-4",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.usage.input_tokens": 200,
+                    "gen_ai.usage.output_tokens": 80,
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "Look up order 123"}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {
+                            "role": "assistant",
+                            "parts": [
+                                {"type": "text", "content": "Let me look that up."},
+                                {"type": "tool_call", "content": json.dumps({"name": "lookup_order", "arguments": {"id": "123"}})},
+                            ],
+                        }
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 2000000000,
+                "parent_span_id": None,
+            },
+            {
+                "name": "execute_tool lookup_order",
+                "span_id": "span_002",
+                "attributes": {
+                    "gen_ai.tool.name": "lookup_order",
+                    "gen_ai.tool.type": "function",
+                    "gen_ai.tool.call.arguments": '{"id": "123"}',
+                    "gen_ai.tool.call.result": '{"status": "shipped"}',
+                },
+                "start_time_unix_nano": 2000000000,
+                "end_time_unix_nano": 2500000000,
+                "parent_span_id": "span_001",
+            },
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assert ec.tool_calls is not None
+        assert len(ec.tool_calls) == 1
+        assert ec.tool_calls[0].name == "lookup_order"
+        assert ec.tool_calls[0].input == {"id": "123"}
+        assert ec.tool_calls[0].output == '{"status": "shipped"}'
+
+    def test_tool_call_in_messages(self):
+        """Tool calls embedded in output_messages are parsed into Message.tool_calls."""
+        spans = [
+            {
+                "name": "chat gpt-4",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {
+                            "role": "assistant",
+                            "parts": [
+                                {"type": "tool_call", "content": json.dumps({"name": "get_weather", "arguments": {"city": "NYC"}})},
+                            ],
+                        }
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 2000000000,
+                "parent_span_id": None,
+            },
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assert ec.messages is not None
+        assistant_msg = ec.messages[1]
+        assert assistant_msg.role == "assistant"
+        assert assistant_msg.tool_calls is not None
+        assert assistant_msg.tool_calls[0].name == "get_weather"
+        assert assistant_msg.tool_calls[0].input == {"city": "NYC"}
+
+    def test_system_instructions_in_metadata(self):
+        """gen_ai.system_instructions is available via span attributes."""
+        spans = [
+            {
+                "name": "chat gpt-4",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.system_instructions": "You are helpful.",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "hi"}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "hello!"}]},
+                    ]),
+                    "gen_ai.usage.input_tokens": 20,
+                    "gen_ai.usage.output_tokens": 5,
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 1200000000,
+                "parent_span_id": None,
+            },
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assert ec.messages is not None
+        assert ec.messages[0].role == "user"
+        assert ec.messages[1].role == "assistant"
+        assert ec.messages[1].content == "hello!"
+
+
+@pytest.mark.unit
+class TestOTELPerTurnMode:
+    """Tests for per_turn mode — one EvalCase per LLM inference span."""
+
+    def test_per_turn_basic(self):
+        """Each LLM span becomes a separate EvalCase."""
+        spans = [
+            {
+                "name": "chat gpt-4",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.response.model": "gpt-4",
+                    "gen_ai.usage.input_tokens": 50,
+                    "gen_ai.usage.output_tokens": 30,
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "Where is my order?"}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "Let me check."}]},
+                    ]),
+                    "gen_ai.response.finish_reasons": ["tool_use"],
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 2000000000,
+                "parent_span_id": None,
+            },
+            {
+                "name": "execute_tool lookup_order",
+                "span_id": "span_002",
+                "attributes": {
+                    "gen_ai.tool.name": "lookup_order",
+                    "gen_ai.tool.call.arguments": '{"id": "ORD-1"}',
+                    "gen_ai.tool.call.result": '{"status": "shipped"}',
+                },
+                "start_time_unix_nano": 2000000000,
+                "end_time_unix_nano": 2200000000,
+                "parent_span_id": "span_001",
+            },
+            {
+                "name": "chat gpt-4",
+                "span_id": "span_003",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.response.model": "gpt-4",
+                    "gen_ai.usage.input_tokens": 120,
+                    "gen_ai.usage.output_tokens": 60,
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "Where is my order?"}]},
+                        {"role": "assistant", "parts": [{"type": "text", "content": "Let me check."}]},
+                        {"role": "tool", "parts": [{"type": "tool_call_response", "content": json.dumps({"status": "shipped"})}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "Your order has been shipped!"}]},
+                    ]),
+                    "gen_ai.response.finish_reasons": ["stop"],
+                },
+                "start_time_unix_nano": 2200000000,
+                "end_time_unix_nano": 3500000000,
+                "parent_span_id": None,
+            },
+        ]
+        cases = OTELEvalCaseSource.from_span_json_per_turn(spans)
+        assert len(cases) == 2
+
+        # First turn
+        assert cases[0].input == "Where is my order?"
+        assert cases[0].output == "Let me check."
+        assert cases[0].latency_ms == pytest.approx(1000.0)
+        assert cases[0].token_count == 80
+        assert cases[0].metadata is not None
+        assert cases[0].metadata["span_id"] == "span_001"
+        assert cases[0].metadata["provider"] == "openai"
+        assert cases[0].metadata["model"] == "gpt-4"
+        # Tool call from child span
+        assert cases[0].tool_calls is not None
+        assert cases[0].tool_calls[0].name == "lookup_order"
+
+        # Second turn
+        assert cases[1].input == "Where is my order?"
+        assert cases[1].output == "Your order has been shipped!"
+        assert cases[1].latency_ms == pytest.approx(1300.0)
+        assert cases[1].token_count == 180
+        assert cases[1].metadata is not None
+        assert cases[1].metadata["span_id"] == "span_003"
+
+    def test_per_turn_skips_non_llm_spans(self):
+        """Tool-only spans don't produce EvalCases."""
+        spans = [
+            {
+                "name": "execute_tool search",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.tool.name": "search",
+                    "gen_ai.tool.call.arguments": '{"q": "foo"}',
+                    "gen_ai.tool.call.result": "bar",
+                },
+                "start_time_unix_nano": 0,
+                "end_time_unix_nano": 100000000,
+                "parent_span_id": None,
+            },
+        ]
+        cases = OTELEvalCaseSource.from_span_json_per_turn(spans)
+        assert cases == []
+
+    def test_per_turn_legacy_format(self):
+        """per_turn also works with legacy attribute names."""
+        spans = [
+            {
+                "name": "gen_ai.chat",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.system": "openai",
+                    "gen_ai.prompt": '[{"role": "user", "content": "hi"}]',
+                    "gen_ai.completion": '{"role": "assistant", "content": "hello!"}',
+                    "gen_ai.usage.input_tokens": 5,
+                    "gen_ai.usage.output_tokens": 3,
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 1500000000,
+                "parent_span_id": None,
+            },
+        ]
+        cases = OTELEvalCaseSource.from_span_json_per_turn(spans)
+        assert len(cases) == 1
+        assert cases[0].input == "hi"
+        assert cases[0].output == "hello!"
+        assert cases[0].latency_ms == pytest.approx(500.0)
+
+
+@pytest.mark.unit
 class TestOTELEvalCaseSourceFetch:
     """Tests for the uniform fetch(ref) entry point."""
 
@@ -120,8 +422,19 @@ class TestOTELEvalCaseSourceFetch:
     async def test_fetch_reads_file_and_returns_single_case(self):
         spans = [
             {
-                "name": "root",
-                "attributes": {"input": "what is 2+2?", "output": "4"},
+                "name": "chat gpt-4",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "what is 2+2?"}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "4"}]},
+                    ]),
+                },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 2000000000,
                 "parent_span_id": None,
@@ -136,7 +449,45 @@ class TestOTELEvalCaseSourceFetch:
         cases = await source.fetch(ref)
 
         assert len(cases) == 1
-        assert cases[0].output == 4  # "4" JSON-parses to int
+        assert cases[0].input == "what is 2+2?"
+        assert cases[0].output == "4"
+        Path(tmp_path).unlink()
+
+    @pytest.mark.asyncio
+    async def test_fetch_per_turn(self):
+        spans = [
+            {
+                "name": "chat gpt-4",
+                "span_id": "span_001",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4",
+                    "gen_ai.usage.input_tokens": 10,
+                    "gen_ai.usage.output_tokens": 5,
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "hi"}]},
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "hello"}]},
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 1500000000,
+                "parent_span_id": None,
+            },
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(spans, f)
+            tmp_path = f.name
+
+        source = OTELEvalCaseSource()
+        ref = ResourceRef(source="otel", id=tmp_path, extra={"per_turn": "true"})
+        cases = await source.fetch(ref)
+
+        assert len(cases) == 1
+        assert cases[0].input == "hi"
+        assert cases[0].output == "hello"
         Path(tmp_path).unlink()
 
     @pytest.mark.asyncio

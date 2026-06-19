@@ -2,7 +2,7 @@
 
 import pytest
 
-from harness_evals.conversation.golden import ConversationGolden
+from harness_evals.conversation.golden import ConversationGolden, ConversationMode
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.runner import evaluate_dataset
@@ -42,19 +42,29 @@ class TestEvaluateDatasetWithConversationGolden:
             await evaluate_dataset(goldens, mock_agent_fn_conv, [])
 
     async def test_conversation_goldens_with_simulator_llm(self):
+        """SIMULATE mode generates one user turn then stops (mock returns achieved=True)."""
         llm = SimulatorMockLLM()
+        call_count = 0
+
+        async def counting_agent(messages: list[Message]) -> Message:
+            nonlocal call_count
+            call_count += 1
+            return Message(role="assistant", content="Here is your answer.")
+
         goldens = [
-            ConversationGolden(scenario="Ask about refund", expected_outcome="Explained"),
+            ConversationGolden(scenario="Ask about refund", expected_outcome="Explained", max_turns=5),
         ]
         metrics = [ExactMatchMetric()]
         results = await evaluate_dataset(
             goldens,
-            mock_agent_fn_conv,
+            counting_agent,
             metrics,
             simulator_llm=llm,
         )
         assert len(results) == 1
         assert isinstance(results[0], list)
+        # SimulatorMockLLM returns achieved=True immediately, so only 1 turn should execute
+        assert call_count == 1
 
     async def test_mixed_goldens_raises(self):
         """Mixed lists (Golden + ConversationGolden) should raise TypeError."""
@@ -84,3 +94,69 @@ class TestEvaluateDatasetWithConversationGolden:
             simulator_llm=llm,
         )
         assert len(results) == 1
+
+    async def test_scripted_mode_calls_agent(self):
+        """SCRIPTED mode feeds user turns to agent and collects responses."""
+        llm = SimulatorMockLLM()
+        call_count = 0
+
+        async def counting_agent(messages: list[Message]) -> Message:
+            nonlocal call_count
+            call_count += 1
+            return Message(role="assistant", content=f"Response {call_count}")
+
+        user_turns = [
+            Message(role="user", content="Hello"),
+            Message(role="user", content="How are you?"),
+            Message(role="user", content="Goodbye"),
+        ]
+        goldens = [
+            ConversationGolden(
+                scenario="Multi-turn greeting",
+                expected_outcome="Polite exchange",
+                turns=user_turns,
+                mode=ConversationMode.SCRIPTED,
+            )
+        ]
+        metrics = [ExactMatchMetric()]
+        results = await evaluate_dataset(
+            goldens,
+            counting_agent,
+            metrics,
+            simulator_llm=llm,
+        )
+        assert len(results) == 1
+        assert call_count == 3
+
+    async def test_scripted_mode_requires_turns(self):
+        """SCRIPTED mode without turns raises ValueError."""
+        with pytest.raises(ValueError, match="requires 'turns'"):
+            ConversationGolden(
+                scenario="test",
+                expected_outcome="done",
+                mode=ConversationMode.SCRIPTED,
+            )
+
+    async def test_replay_mode_requires_turns(self):
+        """REPLAY mode without turns raises ValueError."""
+        with pytest.raises(ValueError, match="requires 'turns'"):
+            ConversationGolden(
+                scenario="test",
+                expected_outcome="done",
+                mode=ConversationMode.REPLAY,
+            )
+
+    async def test_mode_enum_serialization(self):
+        """ConversationMode round-trips through to_dict/from_dict."""
+        turns = [Message(role="user", content="Hi")]
+        golden = ConversationGolden(
+            scenario="test",
+            expected_outcome="done",
+            turns=turns,
+            mode=ConversationMode.SCRIPTED,
+        )
+        d = golden.to_dict()
+        assert d["mode"] == "scripted"
+
+        restored = ConversationGolden.from_dict(d)
+        assert restored.mode == ConversationMode.SCRIPTED

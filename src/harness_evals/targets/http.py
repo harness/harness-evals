@@ -14,6 +14,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover
+    httpx = None  # type: ignore[assignment]
+
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.plugins import register_target
@@ -57,12 +62,45 @@ class HttpTarget(BaseTarget):
     confidence_path: str | None = None
     latency_ms_path: str | None = None
 
+    _async_client: object | None = field(default=None, init=False, repr=False)
+
     def __post_init__(self) -> None:
         _validate_input_path(self.input_path)
 
+    async def __aenter__(self) -> HttpTarget:
+        if httpx is None:
+            raise ImportError("httpx is required for async context manager usage: pip install harness-evals[harness]")
+        verify: bool | ssl.SSLContext = self.verify_tls
+        if not self.verify_tls:
+            logger.warning("TLS verification disabled for %s — do not use in production", self.url)
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            verify = ctx
+        self._async_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout_s),
+            verify=verify,
+        )
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        if self._async_client is not None:
+            await self._async_client.aclose()  # type: ignore[union-attr]
+            self._async_client = None
+
     async def ainvoke(self, golden: Golden) -> EvalCase:
         body = self._build_request_body(golden)
-        response_body, content_type, latency_ms, error = await asyncio.to_thread(self._execute_with_retries, body)
+
+        if self._async_client is not None:
+            response_body, content_type, latency_ms, error = await self._execute_async(body)
+        else:
+            logger.debug("HttpTarget used without context manager — falling back to sync thread pool")
+            response_body, content_type, latency_ms, error = await asyncio.to_thread(
+                self._execute_with_retries, body
+            )
 
         if error is not None:
             return EvalCase.from_golden(
@@ -85,6 +123,49 @@ class HttpTarget(BaseTarget):
         if extracted_context is not None:
             eval_case.context = extracted_context
         return eval_case
+
+    async def _execute_async(self, body: bytes) -> tuple[object, str, float, str | None]:
+        """Async HTTP call using httpx with connection pooling and retries."""
+        client = self._async_client
+        assert client is not None
+
+        headers = {"Content-Type": "application/json", "Accept": "application/json", **self.headers}
+        params: dict[str, str] = {}
+        self.auth.apply(headers, params)
+
+        url = self.url
+        if params:
+            sep = "&" if "?" in url else "?"
+            url = url + sep + urlencode(params)
+
+        last_error: str | None = None
+        last_latency_ms = 0.0
+        attempts = 1 + self.retries
+
+        for attempt in range(attempts):
+            if attempt > 0:
+                await asyncio.sleep(self.backoff_s * (2 ** (attempt - 1)))
+
+            t0 = time.perf_counter()
+            try:
+                response = await client.request(  # type: ignore[union-attr]
+                    self.method,
+                    url,
+                    content=body,
+                    headers=headers,
+                )
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                parsed = _parse_response(response.text, content_type)
+                return parsed, content_type, elapsed_ms, None
+            except Exception as exc:
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                last_latency_ms = elapsed_ms
+                last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+
+        return None, "", last_latency_ms, last_error
 
     def _build_request_body(self, golden: Golden) -> bytes:
         if self.body_template is not None:

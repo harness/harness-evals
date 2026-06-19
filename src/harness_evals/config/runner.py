@@ -205,11 +205,20 @@ def _build_auth(raw: dict) -> Any:
     raise HarnessEvalsError(f"Unknown auth type {auth_type!r}. Valid types: none, bearer, api_key, basic")
 
 
-def build_metric(spec: MetricSpec, llm: BaseLLM | None = None) -> BaseMetric:
-    """Construct a ``BaseMetric`` from a ``MetricSpec``."""
+def build_metric(
+    spec: MetricSpec,
+    llm: BaseLLM | None = None,
+    *,
+    registry: dict[str, type] | None = None,
+) -> BaseMetric:
+    """Construct a ``BaseMetric`` from a ``MetricSpec``.
 
-    registry = _build_registry()
-    registry.update(registered_metrics())
+    Pass a pre-built ``registry`` to avoid rebuilding it for every metric.
+    """
+
+    if registry is None:
+        registry = _build_registry()
+        registry.update(registered_metrics())
     cls = registry.get(spec.kind)
     if cls is None:
         raise UnknownMetricError(spec.kind, sorted(registry))
@@ -331,7 +340,9 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
     target = await build_target(cfg.target)
 
     judge_llm = _resolve_judge_llm(cfg, target)
-    metrics = [build_metric(m, llm=judge_llm) for m in cfg.metrics]
+    metric_registry = _build_registry()
+    metric_registry.update(registered_metrics())
+    metrics = [build_metric(m, llm=judge_llm, registry=metric_registry) for m in cfg.metrics]
     sinks = [build_sink(s) for s in cfg.sinks]
 
     async with target:

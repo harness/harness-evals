@@ -328,6 +328,95 @@ ec = EvalCase(
 )
 ```
 
+### Multi-turn evaluation with ConversationGolden
+
+`ConversationGolden` supports three modes for multi-turn evaluation:
+
+| Mode | Description | Use case |
+|------|-------------|----------|
+| `SIMULATE` | LLM generates user turns, agent responds | Testing agent behavior on dynamic scenarios |
+| `REPLAY` | Full transcript scored as-is, no agent call | Evaluating historical conversations |
+| `SCRIPTED` | Pre-scripted user turns, agent called each turn | Testing agent against a curated dataset |
+
+#### Simulate — LLM-driven user turns
+
+```python
+import asyncio
+from harness_evals import evaluate_dataset, Message
+from harness_evals.conversation import ConversationGolden, ConversationMode
+from harness_evals.metrics.conversation import GoalAccuracyMetric, TurnRelevancyMetric
+from harness_evals.llm import OpenAILLM
+
+llm = OpenAILLM(model="gpt-4o-mini")
+
+goldens = [
+    ConversationGolden(
+        scenario="User requests a refund for a damaged item",
+        expected_outcome="Agent processes refund and confirms timeline",
+        max_turns=8,
+        user_persona="Frustrated customer, short replies",
+        mode=ConversationMode.SIMULATE,
+    )
+]
+
+async def my_agent(messages: list[Message]) -> Message:
+    # Your agent logic here — receives full history, returns next response
+    ...
+
+results = asyncio.run(evaluate_dataset(
+    goldens, my_agent,
+    metrics=[GoalAccuracyMetric(llm=llm), TurnRelevancyMetric(llm=llm)],
+    simulator_llm=llm,
+))
+```
+
+#### Scripted — bring your own user turns, call agent live
+
+```python
+goldens = [
+    ConversationGolden(
+        scenario="Customer asks about order status",
+        expected_outcome="Agent provides tracking info",
+        turns=[
+            Message(role="user", content="Where is my order #12345?"),
+            Message(role="user", content="When will it arrive?"),
+            Message(role="user", content="Can I change the delivery address?"),
+        ],
+        mode=ConversationMode.SCRIPTED,
+    )
+]
+
+results = asyncio.run(evaluate_dataset(
+    goldens, my_agent,
+    metrics=[GoalAccuracyMetric(llm=llm), TurnRelevancyMetric(llm=llm)],
+    simulator_llm=llm,
+))
+```
+
+#### Replay — score an existing transcript
+
+```python
+goldens = [
+    ConversationGolden(
+        scenario="Support interaction",
+        expected_outcome="Issue resolved",
+        turns=[
+            Message(role="user", content="My account is locked"),
+            Message(role="assistant", content="I can help. What's your email?"),
+            Message(role="user", content="alice@example.com"),
+            Message(role="assistant", content="Done — your account is unlocked."),
+        ],
+        mode=ConversationMode.REPLAY,
+    )
+]
+
+results = asyncio.run(evaluate_dataset(
+    goldens, my_agent,  # agent_fn not called in REPLAY mode; simulator_llm still required by API
+    metrics=[GoalAccuracyMetric(llm=llm), TurnRelevancyMetric(llm=llm)],
+    simulator_llm=llm,
+))
+```
+
 ### Evaluate production traces from Langfuse
 
 ```python

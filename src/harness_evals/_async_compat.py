@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import os
 from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 
 T = TypeVar("T")
 
-_THREAD_POOL = ThreadPoolExecutor(max_workers=4)
+_THREAD_POOL = ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 4) + 4))
 atexit.register(_THREAD_POOL.shutdown, wait=False)
 
 

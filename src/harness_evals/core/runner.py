@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -49,6 +51,7 @@ def evaluate(
     """
     scores: list[Score] = []
     for metric in metrics:
+        t0 = time.perf_counter()
         try:
             score = metric.measure(eval_case)
         except Exception as e:
@@ -58,7 +61,9 @@ def evaluate(
                 threshold=metric.threshold,
                 reason=f"Metric raised: {e}",
             )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
         if score is not None:
+            score.scoring_duration_ms = elapsed_ms
             _enrich_score(score, metric)
             scores.append(score)
 
@@ -74,7 +79,7 @@ async def a_evaluate(
     metrics: list[BaseMetric],
     sinks: list[BaseSink] | None = None,
 ) -> list[Score]:
-    """Async variant of evaluate(). Calls ``a_measure()`` on each metric.
+    """Async variant of evaluate(). Calls ``a_measure()`` on all metrics concurrently.
 
     Use this inside async contexts (event loops, Jupyter notebooks) to
     avoid the ``asyncio.run()`` crash that occurs when sync ``evaluate()``
@@ -89,18 +94,29 @@ async def a_evaluate(
     ``evaluate_cases()`` and ``evaluate_dataset()`` handle this
     automatically.
     """
-    scores: list[Score] = []
-    for metric in metrics:
+    async def _timed_measure(metric: BaseMetric) -> tuple[Score | None | BaseException, float]:
+        t0 = time.perf_counter()
         try:
-            score = await metric.a_measure(eval_case)
-        except Exception as e:
+            result = await metric.a_measure(eval_case)
+        except BaseException as exc:
+            return exc, (time.perf_counter() - t0) * 1000.0
+        return result, (time.perf_counter() - t0) * 1000.0
+
+    timed_results = await asyncio.gather(*[_timed_measure(m) for m in metrics])
+
+    scores: list[Score] = []
+    for metric, (result, elapsed_ms) in zip(metrics, timed_results):
+        if isinstance(result, BaseException):
             score = Score(
                 name=metric.name,
                 value=0.0,
                 threshold=metric.threshold,
-                reason=f"Metric raised: {e}",
+                reason=f"Metric raised: {result}",
             )
+        else:
+            score = result
         if score is not None:
+            score.scoring_duration_ms = elapsed_ms
             _enrich_score(score, metric)
             scores.append(score)
 
@@ -189,6 +205,9 @@ def evaluate_batch_metrics(
     return scores
 
 
+_runner_logger = logging.getLogger(__name__)
+
+
 async def _evaluate_dataset_single(
     goldens: list[Golden],
     agent_fn: Callable[[Golden], Awaitable[EvalCase]],
@@ -197,26 +216,54 @@ async def _evaluate_dataset_single(
     *,
     concurrency: int | None = None,
 ) -> list[list[Score]]:
-    """Internal helper: evaluate a list of single-turn Golden instances."""
-    semaphore = asyncio.Semaphore(concurrency) if concurrency is not None else None
+    """Internal helper: evaluate a list of single-turn Golden instances.
 
-    async def _run_agent(golden: Golden) -> EvalCase:
-        if semaphore:
-            async with semaphore:
-                return await agent_fn(golden)
-        return await agent_fn(golden)
+    Pipelines target invocation directly into scoring — no barrier between
+    the two phases. A semaphore gates concurrent agent calls.
 
-    eval_cases = await asyncio.gather(*[_run_agent(g) for g in goldens])
+    Pass ``concurrency=None`` for unlimited parallelism (no semaphore).
+    """
+    sem: asyncio.Semaphore | None = asyncio.Semaphore(concurrency) if concurrency is not None else None
+    sink_queue: asyncio.Queue[tuple[list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
 
-    scored = await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases])
+    async def _sink_writer() -> None:
+        """Background task that drains sink writes off the hot path."""
+        assert sink_queue is not None
+        while True:
+            item = await sink_queue.get()
+            if item is None:
+                break
+            scores, eval_case = item
+            try:
+                for s in sinks:  # type: ignore[union-attr]
+                    s.write(scores, eval_case)
+            except Exception:
+                _runner_logger.exception("Sink write failed for eval_case input=%s", eval_case.input)
 
-    if sinks:
-        for eval_case, scores in zip(eval_cases, scored, strict=True):
-            for sink in sinks:
-                sink.write(scores, eval_case)
+    async def _run_and_score(golden: Golden) -> list[Score]:
+        if sem is not None:
+            async with sem:
+                eval_case = await agent_fn(golden)
+        else:
+            eval_case = await agent_fn(golden)
+        scores = await a_evaluate(eval_case, metrics)
+        if sink_queue is not None:
+            await sink_queue.put((scores, eval_case))
+        return scores
+
+    sink_task: asyncio.Task | None = None
+    if sink_queue is not None:
+        sink_task = asyncio.create_task(_sink_writer())
+
+    scored = list(await asyncio.gather(*[_run_and_score(g) for g in goldens]))
+
+    if sink_queue is not None:
+        await sink_queue.put(None)
+        assert sink_task is not None
+        await sink_task
 
     _finalize_sinks(sinks)
-    return list(scored)
+    return scored
 
 
 async def _evaluate_dataset_conversation(

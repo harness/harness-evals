@@ -571,3 +571,91 @@ class TestEvaluateDataset:
         results = await evaluate_dataset(goldens, tracked_agent, metrics=[ExactMatchMetric()], concurrency=2)
         assert len(results) == 5
         assert max_active <= 2
+
+
+@pytest.mark.unit
+class TestScoringDurationMs:
+    """Verify scoring_duration_ms is populated by the runner on all code paths."""
+
+    def test_evaluate_populates_scoring_duration_ms(self):
+        ec = EvalCase(input="q", output="a", expected="a")
+        scores = evaluate(ec, metrics=[ExactMatchMetric()])
+        assert len(scores) == 1
+        assert scores[0].scoring_duration_ms is not None
+        assert scores[0].scoring_duration_ms >= 0
+
+    def test_evaluate_populates_on_failure(self):
+        ec = EvalCase(input="q", output="wrong", expected="right")
+        scores = evaluate(ec, metrics=[ExactMatchMetric()])
+        assert scores[0].scoring_duration_ms is not None
+        assert scores[0].scoring_duration_ms >= 0
+
+    def test_evaluate_populates_on_exception(self):
+        class BrokenMetric(ExactMatchMetric):
+            def measure(self, eval_case):
+                raise RuntimeError("boom")
+
+        ec = EvalCase(input="q", output="a", expected="a")
+        scores = evaluate(ec, metrics=[BrokenMetric()])
+        assert scores[0].scoring_duration_ms is not None
+        assert scores[0].scoring_duration_ms >= 0
+
+    async def test_a_evaluate_populates_scoring_duration_ms(self):
+        ec = EvalCase(input="q", output="a", expected="a")
+        scores = await a_evaluate(ec, metrics=[ExactMatchMetric()])
+        assert len(scores) == 1
+        assert scores[0].scoring_duration_ms is not None
+        assert scores[0].scoring_duration_ms >= 0
+
+    async def test_a_evaluate_populates_on_exception(self):
+        class BrokenMetric(ExactMatchMetric):
+            async def a_measure(self, eval_case):
+                raise RuntimeError("async boom")
+
+        ec = EvalCase(input="q", output="a", expected="a")
+        scores = await a_evaluate(ec, metrics=[BrokenMetric()])
+        assert scores[0].scoring_duration_ms is not None
+        assert scores[0].scoring_duration_ms >= 0
+
+    def test_evaluate_cases_populates_scoring_duration_ms(self):
+        cases = [
+            EvalCase(input="q1", output="a", expected="a"),
+            EvalCase(input="q2", output="b", expected="c"),
+        ]
+        results = evaluate_cases(cases, metrics=[ExactMatchMetric()])
+        for case_scores in results:
+            for score in case_scores:
+                assert score.scoring_duration_ms is not None
+                assert score.scoring_duration_ms >= 0
+
+    async def test_evaluate_dataset_populates_scoring_duration_ms(self):
+        goldens = [
+            Golden(input="q1", expected="a"),
+            Golden(input="q2", expected="b"),
+        ]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        results = await evaluate_dataset(goldens, agent_fn, metrics=[ExactMatchMetric()])
+        for case_scores in results:
+            for score in case_scores:
+                assert score.scoring_duration_ms is not None
+                assert score.scoring_duration_ms >= 0
+
+    def test_junit_sink_emits_time_from_runner(self, tmp_path):
+        """End-to-end: evaluate() -> JUnit sink -> XML time attribute."""
+        import xml.etree.ElementTree as ET
+
+        from harness_evals.sinks.junit_sink import JUnitSink
+
+        path = tmp_path / "results.xml"
+        sink = JUnitSink(str(path))
+        ec = EvalCase(input="q", output="a", expected="a")
+        scores = evaluate(ec, metrics=[ExactMatchMetric()], sinks=[sink])
+        sink.finalize()
+
+        tree = ET.parse(path)
+        tc = tree.getroot().find("testcase")
+        assert "time" in tc.attrib
+        assert float(tc.attrib["time"]) >= 0

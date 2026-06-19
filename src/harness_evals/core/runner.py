@@ -11,6 +11,7 @@ from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.summary import ScoreSummary, summarize
 
 if TYPE_CHECKING:
     from harness_evals.conversation.golden import ConversationGolden
@@ -105,7 +106,7 @@ async def a_evaluate(
     timed_results = await asyncio.gather(*[_timed_measure(m) for m in metrics])
 
     scores: list[Score] = []
-    for metric, (result, elapsed_ms) in zip(metrics, timed_results):
+    for metric, (result, elapsed_ms) in zip(metrics, timed_results, strict=True):
         if isinstance(result, BaseException):
             score = Score(
                 name=metric.name,
@@ -376,3 +377,50 @@ async def evaluate_dataset(
         sinks,
         concurrency=concurrency,
     )
+
+
+async def evaluate_dataset_pair(
+    goldens: list[Golden],
+    candidate_a_fn: Callable[[Golden], Awaitable[str]],
+    candidate_b_fn: Callable[[Golden], Awaitable[str]],
+    metric: BaseMetric,
+    *,
+    concurrency: int = 10,
+) -> ScoreSummary:
+    """Run two candidates on goldens, then evaluate pairwise.
+
+    Calls both candidate functions for each golden, constructs
+    ``EvalCase`` objects with candidate A as ``output`` and candidate B
+    as ``expected``, then scores them with the provided metric
+    (typically ``PairwiseMetric``).
+
+    Returns a ``ScoreSummary`` with win-rate statistics.
+
+    Args:
+        goldens: Input prompts to evaluate.
+        candidate_a_fn: Async callable that produces candidate A's response.
+        candidate_b_fn: Async callable that produces candidate B's response.
+        metric: Metric to evaluate (typically ``PairwiseMetric``).
+        concurrency: Max concurrent golden evaluations (default 10).
+    """
+    if concurrency < 1:
+        raise ValueError(f"concurrency must be >= 1, got {concurrency}")
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _run_pair(golden: Golden) -> list[Score]:
+        async with sem:
+            output_a, output_b = await asyncio.gather(
+                candidate_a_fn(golden),
+                candidate_b_fn(golden),
+            )
+            eval_case = EvalCase(
+                input=golden.input,
+                output=output_a,
+                expected=output_b,
+                context=golden.context,
+            )
+            return await a_evaluate(eval_case, [metric])
+
+    all_scores = list(await asyncio.gather(*[_run_pair(g) for g in goldens]))
+    return summarize(all_scores)

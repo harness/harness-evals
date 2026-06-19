@@ -27,6 +27,7 @@ from harness_evals.core.runner import (
     evaluate_batch_metrics,
     evaluate_cases,
     evaluate_dataset,
+    evaluate_dataset_pair,
 )
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
@@ -86,6 +87,7 @@ __all__ = [
     "assert_test",
     "evaluate_cases",
     "evaluate_dataset",
+    "evaluate_dataset_pair",
     "evaluate_batch_metrics",
     "summarize",
     "MetricSummary",

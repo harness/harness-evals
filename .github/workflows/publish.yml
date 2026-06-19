@@ -19,16 +19,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-${{ matrix.python-version }}-
+
       - name: Install dependencies
-        run: pip install -e ".[all,dev]"
+        run: poetry install --all-extras --with dev
 
       - name: Lint
         run: |
-          ruff check src/ tests/
-          ruff format --check src/ tests/
+          poetry run ruff check src/ tests/
+          poetry run ruff format --check src/ tests/
 
       - name: Test
-        run: pytest tests/ -v --ignore=tests/sinks/test_sinks.py
+        run: poetry run pytest tests/ -v --ignore=tests/sinks/test_sinks.py
 
   # TODO: Re-enable once PyPI trusted publisher is configured.
   # For now, publish locally: python -m build && pip install dist/*.whl

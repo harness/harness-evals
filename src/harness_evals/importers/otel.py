@@ -16,7 +16,6 @@ from harness_evals.importers.base import BaseEvalCaseSource
 from harness_evals.plugins import register_eval_case_source
 from harness_evals.refs import ResourceRef
 
-
 # ------------------------------------------------------------------
 # Span classification
 # ------------------------------------------------------------------
@@ -187,6 +186,8 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
     root_span: dict[str, Any] | None = None
     turn_details: list[dict[str, Any]] = []
 
+    has_llm_turns = any(st == SpanType.LLM_TURN for st, _ in classified)
+
     for span_type, span in classified:
         attrs = span.get("attributes") or {}
 
@@ -194,10 +195,19 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
             root_span = span
             if not user_input:
                 user_input = _extract_user_input_from_span(attrs)
+            if not has_llm_turns:
+                content, turn_tool_calls = _extract_output_from_span(attrs)
+                if content:
+                    last_output = content
+                    messages.append(Message(role="assistant", content=content))
+                if turn_tool_calls:
+                    messages.append(Message(role="assistant", content=None, tool_calls=turn_tool_calls))
 
         elif span_type == SpanType.LLM_TURN:
             if not user_input:
                 user_input = _extract_user_input_from_span(attrs)
+
+            _recover_intermediate_user_messages(attrs, messages)
 
             content, turn_tool_calls = _extract_output_from_span(attrs)
 
@@ -308,6 +318,39 @@ def _extract_user_input_from_span(attrs: dict) -> str:
             return prompt
 
     return ""
+
+
+def _recover_intermediate_user_messages(
+    attrs: dict, messages: list[Message]
+) -> None:
+    """Append user messages from this turn's input that aren't already in the trajectory.
+
+    In multi-turn conversations, each LLM turn's input_messages contains the full
+    history including new user messages. We detect new user messages by checking the
+    tail of input_messages for user content not already present in the trajectory.
+    """
+    for key in ("gen_ai.input_messages", "gen_ai.input.messages"):
+        raw = attrs.get(key)
+        if not raw:
+            continue
+        parsed = raw if isinstance(raw, list) else _try_json(raw)
+        if not isinstance(parsed, list):
+            continue
+
+        existing_user_texts = {
+            m.content for m in messages if m.role == "user" and m.content
+        }
+
+        for msg in parsed:
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            text = _text_from_parts(msg.get("parts", []))
+            if not text and "content" in msg and isinstance(msg["content"], str):
+                text = msg["content"]
+            if text and text not in existing_user_texts:
+                messages.append(Message(role="user", content=text))
+                existing_user_texts.add(text)
+        return
 
 
 def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
@@ -538,12 +581,10 @@ def _compute_trace_latency(sorted_spans: list[dict[str, Any]]) -> float | None:
     for span in sorted_spans:
         start = span.get("start_time_unix_nano")
         end = span.get("end_time_unix_nano")
-        if start is not None:
-            if min_start is None or start < min_start:
-                min_start = start
-        if end is not None:
-            if max_end is None or end > max_end:
-                max_end = end
+        if start is not None and (min_start is None or start < min_start):
+            min_start = start
+        if end is not None and (max_end is None or end > max_end):
+            max_end = end
 
     if min_start is not None and max_end is not None:
         return (max_end - min_start) / 1_000_000

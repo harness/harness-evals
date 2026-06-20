@@ -326,3 +326,135 @@ class TestOTELEvalCaseSourceFetch:
         ref = ResourceRef(source="otel", id="/nonexistent/path/spans.json")
         with pytest.raises(FileNotFoundError):
             await source.fetch(ref)
+
+
+@pytest.mark.unit
+class TestAgentRootOnlyOutput:
+    """Regression: single invoke_agent span with output must not be lost."""
+
+    def test_single_agent_root_span_extracts_output(self):
+        spans = [
+            {
+                "name": "invoke_agent",
+                "attributes": {
+                    "gen_ai.operation.name": "invoke_agent",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]}
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 2000000000,
+                "parent_span_id": None,
+            }
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assert ec.input == "hello"
+        assert ec.output == "hi there"
+        assert any(m.role == "assistant" and m.content == "hi there" for m in ec.messages)
+
+    def test_agent_root_with_child_llm_turn_does_not_duplicate(self):
+        spans = [
+            {
+                "name": "invoke_agent",
+                "attributes": {
+                    "gen_ai.operation.name": "invoke_agent",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]}
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 3000000000,
+                "parent_span_id": None,
+            },
+            {
+                "name": "gen_ai.chat",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.system": "openai",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]}
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}
+                    ]),
+                    "gen_ai.usage.input_tokens": 5,
+                    "gen_ai.usage.output_tokens": 3,
+                },
+                "start_time_unix_nano": 1100000000,
+                "end_time_unix_nano": 2000000000,
+                "parent_span_id": "root",
+            },
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assistant_msgs = [m for m in ec.messages if m.role == "assistant"]
+        assert len(assistant_msgs) == 1
+
+
+@pytest.mark.unit
+class TestMultiTurnUserRecovery:
+    """Regression: intermediate user messages must appear in the trajectory."""
+
+    def test_two_turn_conversation_recovers_second_user_message(self):
+        spans = [
+            {
+                "name": "invoke_agent",
+                "attributes": {
+                    "gen_ai.operation.name": "invoke_agent",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "first question"}]}
+                    ]),
+                },
+                "start_time_unix_nano": 1000000000,
+                "end_time_unix_nano": 5000000000,
+                "parent_span_id": None,
+            },
+            {
+                "name": "gen_ai.chat",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.system": "openai",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "first question"}]}
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "first answer"}]}
+                    ]),
+                    "gen_ai.usage.input_tokens": 5,
+                    "gen_ai.usage.output_tokens": 3,
+                },
+                "start_time_unix_nano": 1100000000,
+                "end_time_unix_nano": 2000000000,
+                "parent_span_id": "root",
+            },
+            {
+                "name": "gen_ai.chat",
+                "attributes": {
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.system": "openai",
+                    "gen_ai.input_messages": json.dumps([
+                        {"role": "user", "parts": [{"type": "text", "content": "first question"}]},
+                        {"role": "assistant", "parts": [{"type": "text", "content": "first answer"}]},
+                        {"role": "user", "parts": [{"type": "text", "content": "second question"}]}
+                    ]),
+                    "gen_ai.output_messages": json.dumps([
+                        {"role": "assistant", "parts": [{"type": "text", "content": "second answer"}]}
+                    ]),
+                    "gen_ai.usage.input_tokens": 10,
+                    "gen_ai.usage.output_tokens": 5,
+                },
+                "start_time_unix_nano": 3000000000,
+                "end_time_unix_nano": 4000000000,
+                "parent_span_id": "root",
+            },
+        ]
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        roles = [m.role for m in ec.messages]
+        assert roles == ["user", "assistant", "user", "assistant"]
+        assert ec.messages[2].content == "second question"
+        assert ec.output == "second answer"

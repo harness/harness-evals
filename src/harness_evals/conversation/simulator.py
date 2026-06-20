@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from harness_evals._async_compat import _run_async
-from harness_evals.conversation.golden import ConversationGolden
+from harness_evals.conversation.golden import ConversationGolden, ConversationMode
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
@@ -64,8 +64,10 @@ class ConversationSimulator:
         agent_fn: Callable[[list[Message]], Awaitable[Message]],
     ) -> EvalCase:
         """Run one conversation and return the resulting EvalCase."""
-        if golden.turns:
+        if golden.mode == ConversationMode.REPLAY:
             return self._replay(golden)
+        if golden.mode == ConversationMode.SCRIPTED:
+            return await self._scripted(golden, agent_fn)
 
         history: list[Message] = []
 
@@ -120,6 +122,21 @@ class ConversationSimulator:
         )
         result = await self.simulator_llm.generate_json(prompt, _STOP_SCHEMA)
         return bool(result.get("achieved", False))
+
+    async def _scripted(
+        self,
+        golden: ConversationGolden,
+        agent_fn: Callable[[list[Message]], Awaitable[Message]],
+    ) -> EvalCase:
+        """Run agent against pre-scripted user turns from a dataset."""
+        assert golden.turns is not None
+        history: list[Message] = []
+        for turn in golden.turns:
+            if turn.role == "user":
+                history.append(turn)
+                assistant_msg = await agent_fn(list(history))
+                history.append(assistant_msg)
+        return self._build_eval_case(golden, history)
 
     def _replay(self, golden: ConversationGolden) -> EvalCase:
         """Replay pre-scripted turns without simulation."""

@@ -30,7 +30,8 @@ class TestFaultDataclass:
             Fault(type="timeout", probability=1.5)
 
     def test_all_valid_types(self):
-        for ft in ("timeout", "malformed_response", "rate_limit", "empty_response"):
+        for ft in ("timeout", "malformed_response", "rate_limit", "empty_response",
+                   "latency", "partial_response", "wrong_schema"):
             f = Fault(type=ft, probability=0.1)
             assert f.type == ft
 
@@ -166,3 +167,140 @@ class TestFaultInjector:
         result = await injector.run("test")
         assert result == ""
         assert injector.history[0]["fault_type"] == "empty_response"
+
+
+# ---------------------------------------------------------------------------
+# New fault types: latency, partial_response, wrong_schema
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestLatencyFault:
+    async def test_latency_calls_real_agent(self):
+        """Latency fault still returns the real agent's response."""
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="latency", probability=1.0, config={"delay_s": 0.01})],
+        )
+        result = await injector.run("hello")
+        assert result == "echo:hello"
+        assert injector.history[0]["injected"]
+        assert injector.history[0]["fault_type"] == "latency"
+
+    async def test_latency_adds_delay(self):
+        """The response is delayed by at least the configured duration."""
+        import time
+
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="latency", probability=1.0, config={"delay_s": 0.05})],
+        )
+        t0 = time.perf_counter()
+        await injector.run("test")
+        elapsed = time.perf_counter() - t0
+        assert elapsed >= 0.04  # allow slight timing slack
+
+    async def test_latency_default_delay(self):
+        """Default delay_s is 1.0 when not specified in config."""
+        import time
+
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="latency", probability=1.0, config={"delay_s": 0.02})],
+        )
+        t0 = time.perf_counter()
+        await injector.run("test")
+        elapsed = time.perf_counter() - t0
+        assert elapsed >= 0.015
+
+
+@pytest.mark.unit
+class TestPartialResponseFault:
+    async def test_truncates_string(self):
+        """String responses are truncated at truncate_at fraction."""
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="partial_response", probability=1.0, config={"truncate_at": 0.5})],
+        )
+        result = await injector.run("hello")
+        full = "echo:hello"
+        expected = full[: int(len(full) * 0.5)]
+        assert result == expected
+
+    async def test_truncate_default_fraction(self):
+        """Default truncate_at is 0.5."""
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="partial_response", probability=1.0)],
+        )
+        result = await injector.run("abcdefgh")
+        full = "echo:abcdefgh"
+        assert result == full[: len(full) // 2]
+
+    async def test_non_string_unchanged(self):
+        """Non-string output is returned as-is."""
+
+        async def dict_agent(x: str) -> dict:
+            return {"key": x}
+
+        injector = FaultInjector(
+            agent_fn=dict_agent,
+            faults=[Fault(type="partial_response", probability=1.0, config={"truncate_at": 0.3})],
+        )
+        result = await injector.run("test")
+        assert result == {"key": "test"}
+
+    async def test_calls_real_agent(self):
+        """partial_response must call the real agent to get output."""
+        call_count = 0
+
+        async def counting_agent(x: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return f"response:{x}"
+
+        injector = FaultInjector(
+            agent_fn=counting_agent,
+            faults=[Fault(type="partial_response", probability=1.0)],
+        )
+        await injector.run("test")
+        assert call_count == 1
+
+
+@pytest.mark.unit
+class TestWrongSchemaFault:
+    async def test_returns_config_response(self):
+        """wrong_schema returns the response from fault config."""
+        custom = {"unexpected_field": "value", "code": 500}
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="wrong_schema", probability=1.0, config={"response": custom})],
+        )
+        result = await injector.run("test")
+        assert result == custom
+        assert injector.history[0]["injected"]
+
+    async def test_default_response(self):
+        """Without config, returns default error dict."""
+        injector = FaultInjector(
+            agent_fn=_echo_agent,
+            faults=[Fault(type="wrong_schema", probability=1.0)],
+        )
+        result = await injector.run("test")
+        assert result == {"error": "unexpected_response"}
+
+    async def test_does_not_call_agent(self):
+        """wrong_schema must NOT call the real agent."""
+        call_count = 0
+
+        async def counting_agent(x: str) -> str:
+            nonlocal call_count
+            call_count += 1
+            return x
+
+        injector = FaultInjector(
+            agent_fn=counting_agent,
+            faults=[Fault(type="wrong_schema", probability=1.0, config={"response": {"bad": True}})],
+        )
+        await injector.run("test")
+        assert call_count == 0

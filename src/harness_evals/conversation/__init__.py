@@ -1,6 +1,6 @@
 """Multi-turn conversation evaluation: goldens, simulation, and runners."""
 
-from harness_evals.conversation.golden import ConversationGolden
+from harness_evals.conversation.golden import ConversationGolden, ConversationMode
 from harness_evals.conversation.runner import (
     evaluate_conversation,
     evaluate_conversations,
@@ -9,6 +9,7 @@ from harness_evals.conversation.simulator import ConversationSimulator
 
 __all__ = [
     "ConversationGolden",
+    "ConversationMode",
     "ConversationSimulator",
     "evaluate_conversation",
     "evaluate_conversations",

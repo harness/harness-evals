@@ -1,0 +1,68 @@
+# Example: evaluate a streaming (SSE) chat endpoint via StreamingHttpTarget.
+#
+# This mirrors a real local Harness AI chat run that streams Server-Sent Events
+# and pauses on an `elicitation_yaml` review (a DBOps changeset). The target
+# captures selected SSE events into metadata and selects the changeset YAML as
+# the gradeable output.
+#
+# Run it (PYTHONPATH=. puts the examples/ custom metric on the import path):
+#   cd harness-evals
+#   export HARNESS_AI_CHAT_URL=http://localhost:8000/chat/unified
+#   export HARNESS_ACCOUNT_ID=...
+#   export HARNESS_ORG_ID=...
+#   export HARNESS_PROJECT_ID=...
+#   PYTHONPATH=. poetry run harness-evals run examples/streaming-http.eval.yaml
+#
+# Validate config only (no HTTP call):
+#   poetry run harness-evals run examples/streaming-http.eval.yaml --validate
+
+name: harness-chat-dbops-changeset
+
+# Load the example custom metric (examples/sse_trajectory_metric.py) so captured
+# SSE events are surfaced in the run output.
+plugins:
+  - examples.sse_trajectory_metric
+
+dataset: ./streaming-http.goldens.jsonl
+
+target:
+  type: streaming_http
+  # Endpoint + query params. No auth header is needed for a local setup; add
+  # `auth:` or `headers:` if your instance requires it.
+  url: "${HARNESS_AI_CHAT_URL}?orgIdentifier=${HARNESS_ORG_ID}&projectIdentifier=${HARNESS_PROJECT_ID}"
+  headers:
+    Content-Type: application/json
+
+  # Request body. `prompt` is filled from each golden's input via input_path.
+  body_template:
+    prompt: null
+    stream: true
+    context:
+      is_v2: true
+    harness_context:
+      account_id: "${HARNESS_ACCOUNT_ID}"
+      org_id: "${HARNESS_ORG_ID}"
+      project_id: "${HARNESS_PROJECT_ID}"
+  input_path: $.prompt
+
+  # This run ends on a HITL review rather than a final assistant message, so the
+  # gradeable output is the changeset YAML inside the `elicitation_yaml` event.
+  output_event: elicitation_yaml
+  output_path: $.content.yaml
+
+  # Capture the trajectory events into EvalCase.metadata["sse_events"].
+  capture_events:
+    - stream_metadata
+    - assistant_tool_request
+    - assistant_tool_result
+    - elicitation_yaml
+    - model_usage
+
+# `contains` checks that the selected output (the changeset YAML) includes the
+# golden's `expected` substring. `sse_trajectory` reports the captured SSE
+# events (counts, tool calls, reviews) in its score reason.
+metrics:
+  - {kind: contains, threshold: 1.0}
+  - {kind: sse_trajectory, threshold: 1.0}
+
+sinks: [stdout]

@@ -7,6 +7,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1]
+
+### Changed
+
+- README brought back in sync with the shipped API. Added the previously undocumented metrics
+  (Webhook, StructuralSimilarity, TurnLatency, TurnTokenCost, DAG, PromptAlignment, Summarization,
+  and the expanded safety detectors: Bias, Compliance, HarmSeverity, HarmfulAdvice, MisuseDetection,
+  RoleViolation) to the Available Metrics table; documented `SimulationGraph` (and the `GRAPH`
+  conversation mode), `PromptOptimizer`, and the `Synthesizer`/`InputGenerator` dataset generators;
+  linked the framework integration examples; and fixed the stale git clone URL.
+
 ## [0.7.3]
 
 ### Added

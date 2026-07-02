@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from urllib.error import URLError
 from urllib.request import Request
@@ -159,6 +160,45 @@ async def test_sse_default_event_name_is_message(monkeypatch: pytest.MonkeyPatch
     assert result.meta("sse_events") == {"message": [{"output": "hi"}]}
 
 
+@pytest.mark.unit
+async def test_sse_output_skips_trailing_envelope_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real-world shape: the answer is followed by telemetry/terminator events
+    # (model_usage, done) whose payloads don't carry output_path. The backward
+    # scan must pick the message, not the trailing envelopes.
+    body = _sse(
+        "event: message\ndata: {\"output\": \"real answer\"}",
+        "event: model_usage\ndata: {\"input_tokens\": 17, \"output_tokens\": 4299}",
+        "event: done\ndata: {}",
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run")
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == "real answer"
+
+
+@pytest.mark.unit
+async def test_sse_output_empty_when_no_event_matches_output_path(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # No event carries $.output (only envelope/telemetry payloads). Rather than
+    # grading against a usage/terminator blob, output is empty and a warning is
+    # logged so the misconfiguration is visible.
+    body = _sse(
+        "event: model_usage\ndata: {\"input_tokens\": 17}",
+        "event: done\ndata: {}",
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run")
+    with caplog.at_level(logging.WARNING, logger="harness_evals.targets.streaming_http"):
+        result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == ""
+    assert any("output_event is not set" in rec.message for rec in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # Event capture
 # ---------------------------------------------------------------------------
@@ -188,11 +228,34 @@ async def test_capture_events_stores_only_requested(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.unit
-async def test_no_capture_events_stores_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse("event: message\ndata: {\"output\": \"done\"}")
+async def test_default_captures_all_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Unset capture_events -> every event is captured so metrics can evaluate
+    # across the whole stream.
+    body = _sse(
+        "event: progress\ndata: {\"pct\": 10}",
+        "event: tool_call\ndata: {\"name\": \"search\"}",
+        "event: message\ndata: {\"output\": \"done\"}",
+    )
     _patch_response(monkeypatch, body)
 
     target = StreamingHttpTarget(url="http://localhost:8080/run")
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == "done"
+    assert result.meta("sse_events") == {
+        "progress": [{"pct": 10}],
+        "tool_call": [{"name": "search"}],
+        "message": [{"output": "done"}],
+    }
+
+
+@pytest.mark.unit
+async def test_empty_capture_events_stores_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Explicit empty list is the opt-out: capture nothing.
+    body = _sse("event: message\ndata: {\"output\": \"done\"}")
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", capture_events=[])
     result = await target.ainvoke(Golden(input="q"))
 
     assert result.output == "done"

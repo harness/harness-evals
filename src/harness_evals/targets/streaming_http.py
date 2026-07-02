@@ -2,9 +2,9 @@
 
 Generic, vendor-neutral sibling of :class:`~harness_evals.targets.http.HttpTarget`.
 It speaks Server-Sent Events (``text/event-stream``): it parses named events,
-optionally captures a configured subset into ``EvalCase.metadata["sse_events"]``,
-and selects a final output from the stream. Non-streaming responses fall back to
-buffered JSON/text parsing, matching ``HttpTarget`` semantics.
+captures them into ``EvalCase.metadata["sse_events"]`` (all events by default,
+or a configured subset), and selects a final output from the stream. Non-streaming
+responses fall back to buffered JSON/text parsing, matching ``HttpTarget`` semantics.
 
 This target makes no assumptions about any specific product's request or response
 shape — request bodies are built from ``body_template`` + ``input_path`` and all
@@ -53,14 +53,23 @@ class StreamingHttpTarget(BaseTarget):
     Streaming-specific fields:
         stream: When ``True`` (default), ``text/event-stream`` responses are
             parsed as SSE. When ``False``, always use buffered parsing.
-        capture_events: Explicit SSE event names to capture into
-            ``metadata["sse_events"]`` as ``{event_name: [payloads...]}``.
-            Only listed events are captured; if unset/empty, nothing is stored.
-        output_event: Which captured event carries the final output. When set,
-            the last payload of that event is used (then ``output_path`` within
-            it if it is a dict/list). When unset, ``output_path`` is applied to
-            the last JSON ``data`` payload, falling back to the accumulated text
-            of ``data`` lines.
+        capture_events: SSE event names to capture into
+            ``metadata["sse_events"]`` as ``{event_name: [payloads...]}`` so
+            metrics can evaluate across multiple events. Default (unset/``None``)
+            captures *all* events. Provide an explicit list to capture only those
+            events; an explicit empty list (``[]``) captures nothing.
+        output_event: Which event carries the primary ``EvalCase.output``. When
+            set, the last payload of that event is used (then ``output_path``
+            within it if it is a dict/list). When unset, output is auto-selected:
+            ``output_path`` is applied to the *last JSON ``data`` payload from
+            which it resolves*, scanning backward so trailing envelope/telemetry
+            events (e.g. ``model_usage``, ``done``, ``stream_metadata``) are
+            skipped rather than mistaken for the answer. If no payload resolves,
+            output falls back to the accumulated text of ``data`` lines (token
+            streams); if there are structured payloads but none match, output is
+            empty and a warning is logged — set ``output_event`` for such streams.
+            Independent of ``capture_events``: all other events remain available
+            to metrics via ``sse_events``.
     """
 
     url: str
@@ -121,7 +130,6 @@ class StreamingHttpTarget(BaseTarget):
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
         body = self._build_request_body(golden)
-
         if self._async_client is not None:
             raw_body, content_type, latency_ms, error = await self._execute_async(body)
         else:
@@ -276,29 +284,46 @@ class StreamingHttpTarget(BaseTarget):
         return output, kwargs, metadata_extra, final_payload
 
     def _capture(self, decoded: list[tuple[str, object]]) -> dict | None:
-        """Capture explicitly requested SSE events into ``{"sse_events": {...}}``."""
-        if not self.capture_events:
-            return None
-        wanted = set(self.capture_events)
+        """Capture SSE events into ``{"sse_events": {event_name: [payloads...]}}``.
+
+        Default (``capture_events`` unset/``None``) captures *all* events so
+        metrics can evaluate across the full stream. An explicit list captures
+        only those event names; an explicit empty list captures nothing.
+        """
+        if self.capture_events is None:
+            wanted: set[str] | None = None  # capture everything
+        else:
+            wanted = set(self.capture_events)
         captured: dict[str, list] = {}
         for name, payload in decoded:
-            if name in wanted:
+            if wanted is None or name in wanted:
                 captured.setdefault(name, []).append(payload)
         if not captured:
             return None
         return {"sse_events": captured}
 
     def _final_payload(self, decoded: list[tuple[str, object]]) -> object | None:
-        """The JSON payload used for optional-field extraction (the assembled final payload)."""
+        """The JSON payload used for output + optional-field extraction.
+
+        With ``output_event`` set, this is the last payload of that event.
+        Otherwise it is the last JSON payload from which ``output_path`` resolves
+        — scanning backward so trailing envelope/telemetry events (``model_usage``,
+        ``done``, ``stream_metadata``, …) don't shadow the real answer. If nothing
+        resolves, falls back to the last JSON payload overall (so optional-field
+        paths still have a source), or ``None`` if there are no JSON payloads.
+        """
         if self.output_event is not None:
             payloads = [p for name, p in decoded if name == self.output_event]
             if payloads and isinstance(payloads[-1], (dict, list)):
                 return payloads[-1]
             return None
-        for _name, payload in reversed(decoded):
-            if isinstance(payload, (dict, list)):
+        json_payloads = [p for _name, p in decoded if isinstance(p, (dict, list))]
+        if not json_payloads:
+            return None
+        for payload in reversed(json_payloads):
+            if extract_path(payload, self.output_path) is not None:
                 return payload
-        return None
+        return json_payloads[-1]
 
     def _final_output(self, decoded: list[tuple[str, object]], final_payload: object | None) -> str | dict | list:
         if self.output_event is not None:
@@ -313,9 +338,20 @@ class StreamingHttpTarget(BaseTarget):
 
         if isinstance(final_payload, (dict, list)):
             result = extract_path(final_payload, self.output_path)
-            return result if result is not None else ""
+            if result is not None:
+                return result
+            # There were structured payloads but none carried output_path — the
+            # answer isn't auto-locatable. Fail visibly (empty) rather than
+            # grading against a trailing envelope/telemetry blob.
+            logger.warning(
+                "StreamingHttpTarget: output_event is not set and no SSE event "
+                "matched output_path %r; EvalCase.output is empty. Set "
+                "output_event to select the event that carries the answer.",
+                self.output_path,
+            )
+            return ""
 
-        # Fallback: accumulate raw text payloads (e.g. token streams).
+        # No structured payloads at all → token/text stream: accumulate text.
         texts = [p for _name, p in decoded if isinstance(p, str)]
         return "".join(texts)
 

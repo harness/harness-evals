@@ -38,5 +38,8 @@ Thumbs.db
 # Example output artifacts
 examples/output/
 
+# Local-only example configs/datasets (never committed)
+examples/*.local.*
+
 # Research papers / large binaries
 *.pdf

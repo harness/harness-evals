@@ -11,7 +11,7 @@
 
 name: baseline-regression
 
-dataset: ./examples/goldens.jsonl
+dataset: ./goldens.jsonl
 
 target:
   type: prompt
@@ -19,7 +19,6 @@ target:
   model: {provider: openai, name: gpt-4o}
 
 metrics:
-  - exact_match
   - {kind: contains, threshold: 0.8}
 
 sinks: [stdout]

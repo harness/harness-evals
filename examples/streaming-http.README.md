@@ -22,7 +22,7 @@ Use this pattern when the target system streams intermediate events such as:
 The streaming target converts the stream into a normal `EvalCase`:
 
 - the selected final output goes into `EvalCase.output`
-- selected captured events go into `EvalCase.metadata["sse_events"]`
+- captured events (all by default, or a configured subset) go into `EvalCase.metadata["sse_events"]`
 - metrics evaluate the resulting `EvalCase`
 
 ## Assumed Event Stream
@@ -71,7 +71,7 @@ target:
 
 `output_path` extracts the exact field to grade from the selected event payload (`$.answer`).
 
-`capture_events` controls what is preserved in `EvalCase.metadata["sse_events"]`. Only listed event names are captured.
+`capture_events` controls what is preserved in `EvalCase.metadata["sse_events"]` for metrics to evaluate. If omitted, **all** events are captured by default; provide an explicit list to restrict capture to those event names (an empty list `[]` captures nothing). `output_event` is independent — it only selects the primary `EvalCase.output`; every other event still reaches metrics via `sse_events`.
 
 The URL is read from `SSE_ENDPOINT_URL` so no host or credentials are baked into the config — target params support `${VAR}` interpolation (recursively, including nested `headers`/`body_template` values).
 

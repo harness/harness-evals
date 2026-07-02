@@ -35,8 +35,20 @@ class HttpDatasetSource(BaseDatasetSource):
 def _fetch_text(url: str, timeout_s: float) -> tuple[str, str]:
     request = Request(url, headers={"Accept": "application/json, application/x-ndjson, text/plain"})
     with urlopen(request, timeout=timeout_s) as response:
-        body = response.read().decode("utf-8")
-        return body, _content_type(response)
+        content_type = _content_type(response)
+        body = response.read().decode(_charset(content_type))
+        return body, content_type
+
+
+def _charset(content_type: str) -> str:
+    """Extract the charset from a Content-Type header, defaulting to utf-8."""
+    for part in content_type.split(";"):
+        part = part.strip()
+        if part.startswith("charset="):
+            charset = part[len("charset=") :].strip().strip('"')
+            if charset:
+                return charset
+    return "utf-8"
 
 
 def _content_type(response: object) -> str:

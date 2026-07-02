@@ -27,6 +27,8 @@ class TurnTokenCostMetric(BaseMetric):
             threshold=threshold,
             **kwargs,
         )
+        if max_tokens_per_turn <= 0:
+            raise ValueError(f"max_tokens_per_turn must be positive, got {max_tokens_per_turn}")
         self.max_tokens_per_turn = max_tokens_per_turn
 
     def measure(self, eval_case: EvalCase) -> Score:

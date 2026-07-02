@@ -67,8 +67,13 @@ class DiscriminationMetric(BaseMetric):
                 reason="Cannot compute discrimination — need both successes and failures to calculate AUC-ROC, but only one outcome type is present",
             )
 
-        # Compute AUC-ROC via the Wilcoxon-Mann-Whitney statistic
-        # Sort by confidence descending
+        # Compute AUC-ROC via the trapezoidal rule over the ROC curve.
+        # Sort by confidence descending, then advance the curve one *tied block*
+        # at a time. Advancing per-block (rather than per-point) is what makes
+        # ties contribute a diagonal segment — the standard tie correction. A
+        # per-point sweep would make the result depend on the arbitrary ordering
+        # of tied successes vs. failures (e.g. all-equal confidence could score
+        # anywhere from 0.0 to 1.0 instead of the correct 0.5).
         sorted_pairs = sorted(pairs, key=lambda x: x[0], reverse=True)
 
         auc = 0.0
@@ -77,11 +82,17 @@ class DiscriminationMetric(BaseMetric):
         prev_fpr = 0.0
         prev_tpr = 0.0
 
-        for _, outcome in sorted_pairs:
-            if outcome:
-                tp += 1
-            else:
-                fp += 1
+        i = 0
+        n = len(sorted_pairs)
+        while i < n:
+            conf = sorted_pairs[i][0]
+            # Consume the entire block of equal confidence before updating the curve.
+            while i < n and sorted_pairs[i][0] == conf:
+                if sorted_pairs[i][1]:
+                    tp += 1
+                else:
+                    fp += 1
+                i += 1
             tpr = tp / positives
             fpr = fp / negatives
             # Trapezoidal rule

@@ -225,23 +225,34 @@ async def _evaluate_dataset_single(
     Pass ``concurrency=None`` for unlimited parallelism (no semaphore).
     """
     sem: asyncio.Semaphore | None = asyncio.Semaphore(concurrency) if concurrency is not None else None
-    sink_queue: asyncio.Queue[tuple[list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
+    sink_queue: asyncio.Queue[tuple[int, list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
 
     async def _sink_writer() -> None:
-        """Background task that drains sink writes off the hot path."""
+        """Background task that drains sink writes off the hot path.
+
+        Cases finish out of order under concurrency, but sinks must see them in
+        input (golden) order so appended rows line up with the dataset. Buffer
+        items by index and flush the contiguous prefix as it becomes available.
+        """
         assert sink_queue is not None
+        pending: dict[int, tuple[list[Score], EvalCase]] = {}
+        next_idx = 0
         while True:
             item = await sink_queue.get()
             if item is None:
                 break
-            scores, eval_case = item
-            try:
-                for s in sinks:  # type: ignore[union-attr]
-                    s.write(scores, eval_case)
-            except Exception:
-                _runner_logger.exception("Sink write failed for eval_case input=%s", eval_case.input)
+            idx, scores, eval_case = item
+            pending[idx] = (scores, eval_case)
+            while next_idx in pending:
+                buf_scores, buf_case = pending.pop(next_idx)
+                try:
+                    for s in sinks:  # type: ignore[union-attr]
+                        s.write(buf_scores, buf_case)
+                except Exception:
+                    _runner_logger.exception("Sink write failed for eval_case input=%s", buf_case.input)
+                next_idx += 1
 
-    async def _run_and_score(golden: Golden) -> list[Score]:
+    async def _run_and_score(idx: int, golden: Golden) -> list[Score]:
         if sem is not None:
             async with sem:
                 eval_case = await agent_fn(golden)
@@ -249,14 +260,14 @@ async def _evaluate_dataset_single(
             eval_case = await agent_fn(golden)
         scores = await a_evaluate(eval_case, metrics)
         if sink_queue is not None:
-            await sink_queue.put((scores, eval_case))
+            await sink_queue.put((idx, scores, eval_case))
         return scores
 
     sink_task: asyncio.Task | None = None
     if sink_queue is not None:
         sink_task = asyncio.create_task(_sink_writer())
 
-    scored = list(await asyncio.gather(*[_run_and_score(g) for g in goldens]))
+    scored = list(await asyncio.gather(*[_run_and_score(i, g) for i, g in enumerate(goldens)]))
 
     if sink_queue is not None:
         await sink_queue.put(None)

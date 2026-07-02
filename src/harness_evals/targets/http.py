@@ -159,6 +159,17 @@ class HttpTarget(BaseTarget):
                 content_type = response.headers.get("content-type", "").lower()
                 parsed = _parse_response(response.text, content_type)
                 return parsed, content_type, elapsed_ms, None
+            except httpx.HTTPStatusError as exc:  # type: ignore[union-attr]
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                last_latency_ms = elapsed_ms
+                last_error = f"{type(exc).__name__}: {exc}"
+                status = exc.response.status_code
+                # 4xx responses are client errors — retrying can never succeed,
+                # so fail fast instead of hammering the endpoint with backoff.
+                if 400 <= status < 500:
+                    logger.warning("HttpTarget got non-retryable %d: %s", status, last_error)
+                    return None, "", last_latency_ms, last_error
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
                 last_latency_ms = elapsed_ms
@@ -210,7 +221,16 @@ class HttpTarget(BaseTarget):
                     content_type = _get_content_type(response)
                     parsed = _parse_response(raw, content_type)
                     return parsed, content_type, elapsed_ms, None
-            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            except HTTPError as exc:
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                last_attempt_latency_ms = elapsed_ms
+                last_error = f"{type(exc).__name__}: {exc}"
+                # 4xx responses are client errors — retrying can never succeed.
+                if 400 <= exc.code < 500:
+                    logger.warning("HttpTarget got non-retryable %d: %s", exc.code, last_error)
+                    return None, "", last_attempt_latency_ms, last_error
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+            except (URLError, TimeoutError, OSError) as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
                 last_attempt_latency_ms = elapsed_ms
                 last_error = f"{type(exc).__name__}: {exc}"

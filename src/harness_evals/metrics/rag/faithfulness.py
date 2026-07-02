@@ -103,7 +103,10 @@ class FaithfulnessMetric(BaseMetric):
 
         supported = sum(1 for v in verdicts if v.get("verdict", "").lower() == "supported")
         total = len(claims)
-        value = supported / total
+        # Clamp: the verify call is independent of the extract call, so a
+        # malformed judge response could return more "supported" verdicts than
+        # there were claims. Without this guard value > 1.0 raises in Score.
+        value = min(1.0, supported / total)
 
         return Score(
             name=self.name,

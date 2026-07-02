@@ -15,6 +15,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
+from harness_evals.metrics._coerce import safe_int
 
 _DEFAULT_RUBRIC = {
     5: "Excellent — fully addresses the task, accurate, well-structured, no issues.",
@@ -130,7 +131,7 @@ class RubricJudgeMetric(BaseMetric):
 
         prompt = self._build_prompt(eval_case)
         result = await self.llm.generate_json(prompt, _RESPONSE_SCHEMA)
-        level = int(result.get("level", min_level))
+        level = safe_int(result.get("level", min_level), min_level)
         level = max(min_level, min(max_level, level))
         reasoning = result.get("reasoning", "")
 

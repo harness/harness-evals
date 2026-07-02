@@ -7,6 +7,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import SafetyMetric
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
+from harness_evals.metrics._coerce import safe_float
 
 _VALID_DOMAINS = ("general", "medical", "legal", "financial", "technical")
 
@@ -72,7 +73,7 @@ class HarmSeverityMetric(SafetyMetric):
         result = await self.llm.generate_json(prompt, _RESPONSE_SCHEMA)
 
         reasoning = result.get("reasoning", "")
-        severity = float(result.get("severity", 1.0))
+        severity = safe_float(result.get("severity", 1.0), 1.0)
         severity = max(0.0, min(1.0, severity))
         harm_category = result.get("harm_category", "none")
 

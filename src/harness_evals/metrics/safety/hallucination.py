@@ -7,6 +7,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import SafetyMetric
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
+from harness_evals.metrics._coerce import safe_float
 
 _PROMPT_TEMPLATE = """You are a fact-checking evaluator. Determine what fraction of the claims in the output are supported by the provided reference material.
 
@@ -80,7 +81,7 @@ class HallucinationMetric(SafetyMetric):
         )
         result = await self.llm.generate_json(prompt, _RESPONSE_SCHEMA)
 
-        value = float(result.get("score", 0.0))
+        value = safe_float(result.get("score", 0.0), 0.0)
         value = max(0.0, min(1.0, value))
         reasoning = result.get("reasoning", "")
 

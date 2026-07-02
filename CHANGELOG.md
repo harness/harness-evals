@@ -7,6 +7,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0]
+
+### Added
+
+- **`StreamingHttpTarget`** (`type: streaming_http`) — a generic, vendor-neutral
+  target that POSTs to a Server-Sent Events (`text/event-stream`) endpoint and
+  maps the stream to an `EvalCase`. Parses named SSE events, optionally captures
+  a configured subset into `metadata["sse_events"]` (`capture_events`), and
+  selects a final output via `output_event` + `output_path` (falling back to the
+  last JSON `data` payload, then concatenated text). Non-streaming responses fall
+  back to buffered JSON/text parsing, matching `HttpTarget`. Async path uses
+  `httpx.AsyncClient.stream`; a sync `urllib` fallback is used outside an
+  `async with` context.
+- Recursive `${VAR}` environment interpolation for target params in eval configs,
+  including nested values in `headers` and `body_template`.
+- `examples/streaming-http.*` — generic SSE example (config, goldens, custom
+  `sse_trajectory` observability metric, README).
+
 ## [0.7.3]
 
 ### Added

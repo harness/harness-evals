@@ -6,6 +6,10 @@ captured by ``StreamingHttpTarget`` (via its ``capture_events`` option) and
 reports them through the score's ``reason`` (shown by the stdout sink) and
 ``metadata`` (written by the json sink).
 
+It is intentionally generic: it summarizes whatever events were captured and,
+if a ``tool_call`` event is present, lists the tool names found in it. Adapt the
+event names to whatever your streaming service emits.
+
 Load it from a YAML eval config via a ``plugins:`` entry, then reference it as a
 metric ``kind``:
 
@@ -35,10 +39,10 @@ class SseTrajectoryMetric(BaseMetric):
     """Summarize captured SSE events into a score.
 
     Reads ``EvalCase.metadata["sse_events"]`` (populated by
-    ``StreamingHttpTarget``'s ``capture_events``) and reports per-event counts,
-    tool calls, and any elicitation reviews. Scores 1.0 when at least one event
-    was captured, else 0.0 — so a run that never streamed the expected events
-    fails loudly instead of silently passing.
+    ``StreamingHttpTarget``'s ``capture_events``) and reports per-event counts
+    plus any tool names found in ``tool_call`` events. Scores 1.0 when at least
+    one event was captured, else 0.0 — so a run that never streamed the expected
+    events fails loudly instead of silently passing.
     """
 
     def __init__(self, threshold: float = 1.0, **kwargs: object) -> None:
@@ -55,39 +59,25 @@ class SseTrajectoryMetric(BaseMetric):
             )
 
         counts = {name: len(payloads) for name, payloads in sse_events.items()}
-        tool_calls = _tool_names(sse_events.get("assistant_tool_request", []))
-        reviews = _reviews(sse_events.get("elicitation_yaml", []))
+        tool_calls = _tool_names(sse_events.get("tool_call", []))
 
         reason = "captured: " + ", ".join(f"{name}={n}" for name, n in sorted(counts.items()))
         if tool_calls:
             reason += f" | tools: {', '.join(tool_calls)}"
-        if reviews:
-            reason += f" | reviews: {', '.join(reviews)}"
 
         return Score(
             name=self.name,
             value=1.0,
             threshold=self.threshold,
             reason=reason,
-            metadata={"event_counts": counts, "tool_calls": tool_calls, "reviews": reviews},
+            metadata={"event_counts": counts, "tool_calls": tool_calls},
         )
 
 
 def _tool_names(events: list[Any]) -> list[str]:
-    """Extract tool names from captured ``assistant_tool_request`` payloads."""
+    """Extract tool names from captured ``tool_call`` payloads (``{"name": ...}``)."""
     names: list[str] = []
     for payload in events:
-        if isinstance(payload, dict):
-            for call in payload.get("v", []) or []:
-                if isinstance(call, dict) and call.get("name"):
-                    names.append(str(call["name"]))
+        if isinstance(payload, dict) and payload.get("name"):
+            names.append(str(payload["name"]))
     return names
-
-
-def _reviews(events: list[Any]) -> list[str]:
-    """Extract a label for each captured ``elicitation_yaml`` review."""
-    reviews: list[str] = []
-    for payload in events:
-        if isinstance(payload, dict):
-            reviews.append(str(payload.get("review_id") or payload.get("title") or "review"))
-    return reviews

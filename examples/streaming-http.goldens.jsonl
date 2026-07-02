@@ -1,1 +1,1 @@
-{"input": "Create a user table with name and age column , database schema as : abhishek-sql", "expected": "createTable"}
+{"input": "What is the capital of France?", "expected": "Paris"}

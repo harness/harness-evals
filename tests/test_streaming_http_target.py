@@ -328,6 +328,170 @@ async def test_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Async production path (httpx.AsyncClient.stream)
+#
+# The config runner enters targets via ``async with target:`` (config/runner.py),
+# which sets ``_async_client`` and routes ``ainvoke`` through ``_execute_async``.
+# That path — line reassembly (``aiter_lines`` -> ``"\n".join``), content-type
+# detection, and ``raise_for_status`` — is unique to the async client and is not
+# exercised by the sync ``urlopen`` fallback tests above. These tests inject a
+# fake async client so the real ``_execute_async`` code runs without httpx.
+# ---------------------------------------------------------------------------
+
+
+class _FakeStreamResponse:
+    """Mimics the subset of ``httpx.Response`` used by ``_execute_async``."""
+
+    def __init__(self, body: str, content_type: str = "text/event-stream", status_code: int = 200) -> None:
+        self._body = body
+        self.headers = {"content-type": content_type}
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    async def aiter_lines(self):
+        # httpx yields lines without their trailing newline; the target rejoins
+        # them with "\n". Splitting on "\n" reproduces that exactly.
+        for line in self._body.split("\n"):
+            yield line
+
+    async def aiter_text(self):
+        yield self._body
+
+
+class _FakeStreamCtx:
+    def __init__(self, response: _FakeStreamResponse) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> _FakeStreamResponse:
+        return self._response
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+
+class _FakeAsyncClient:
+    """Records each ``stream()`` call and returns a canned response.
+
+    ``responses`` is consumed one per attempt; a ``BaseException`` value is
+    raised from ``stream()`` (transport failure) while a ``_FakeStreamResponse``
+    is returned normally.
+    """
+
+    def __init__(self, responses: list[object]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    def stream(self, method: str, url: str, *, content: bytes | None = None, headers: dict | None = None):
+        self.calls.append({"method": method, "url": url, "content": content, "headers": headers})
+        item = self._responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return _FakeStreamCtx(item)  # type: ignore[arg-type]
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.unit
+async def test_async_sse_line_reassembly_and_output() -> None:
+    body = _sse(
+        "event: token\ndata: {\"chunk\": \"partial\"}",
+        "event: message\ndata: {\"output\": \"final answer\"}",
+    )
+    client = _FakeAsyncClient([_FakeStreamResponse(body)])
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", auth=BearerAuth(token="tok123"))
+    target._async_client = client  # inject fake, bypassing __aenter__
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    # Output survives the aiter_lines -> "\n".join -> _parse_sse round-trip.
+    assert result.output == "final answer"
+
+    # Request shape: method, streaming Accept header, and auth all applied.
+    call = client.calls[0]
+    assert call["method"] == "POST"
+    assert call["headers"]["Accept"] == "text/event-stream"
+    assert call["headers"]["Authorization"] == "Bearer tok123"
+    assert call["content"] == b'{"input": "q"}'
+
+
+@pytest.mark.unit
+async def test_async_captures_events_and_selects_output_event() -> None:
+    body = _sse(
+        "event: progress\ndata: {\"pct\": 10}",
+        "event: message\ndata: {\"output\": \"ignored\"}",
+        "event: final\ndata: {\"output\": \"chosen\"}",
+    )
+    client = _FakeAsyncClient([_FakeStreamResponse(body)])
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        output_event="final",
+        capture_events=["progress"],
+    )
+    target._async_client = client
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == "chosen"
+    assert result.meta("sse_events") == {"progress": [{"pct": 10}]}
+
+
+@pytest.mark.unit
+async def test_async_non_event_stream_uses_buffered_text_path() -> None:
+    client = _FakeAsyncClient([_FakeStreamResponse('{"output": "buffered"}', content_type="application/json")])
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run")
+    target._async_client = client
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    # content-type is not text/event-stream -> aiter_text path -> buffered parse.
+    assert result.output == "buffered"
+    assert result.meta("sse_events") is None
+
+
+@pytest.mark.unit
+async def test_async_raise_for_status_retries_then_fails() -> None:
+    # Every attempt returns a 500 whose raise_for_status raises; after retries
+    # are exhausted the error is surfaced on the EvalCase.
+    responses = [
+        _FakeStreamResponse("", content_type="text/event-stream", status_code=500),
+        _FakeStreamResponse("", content_type="text/event-stream", status_code=500),
+    ]
+    client = _FakeAsyncClient(responses)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", retries=1, backoff_s=0.0)
+    target._async_client = client
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == ""
+    assert result.metadata is not None
+    assert "http_error" in result.metadata
+    assert "HTTP 500" in result.metadata["http_error"]
+    assert len(client.calls) == 2  # initial attempt + one retry
+
+
+@pytest.mark.unit
+async def test_async_retries_then_succeeds() -> None:
+    ok = _FakeStreamResponse(_sse("event: message\ndata: {\"output\": \"recovered\"}"))
+    client = _FakeAsyncClient([URLError("boom"), ok])
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", retries=2, backoff_s=0.0)
+    target._async_client = client
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == "recovered"
+    assert len(client.calls) == 2
+
+
+# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 

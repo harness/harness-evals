@@ -112,10 +112,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
             exit_code = 1
 
     if args.update_baseline and cfg.baseline:
-        store = build_baseline_store(cfg.baseline)
-        run_id = str(uuid.uuid4())[:8]
-        store.save(run_id, scores_to_baseline_dict(scores))
-        print(f"Baseline saved as run {run_id!r}", file=sys.stderr)
+        if exit_code != 0:
+            # Never persist a failing run as the new baseline — doing so would
+            # silently ratchet the baseline down to the regressed scores.
+            print(
+                "Skipping --update-baseline: run did not pass its gates; baseline left unchanged.",
+                file=sys.stderr,
+            )
+        else:
+            store = build_baseline_store(cfg.baseline)
+            run_id = str(uuid.uuid4())[:8]
+            store.save(run_id, scores_to_baseline_dict(scores))
+            print(f"Baseline saved as run {run_id!r}", file=sys.stderr)
 
     return exit_code
 

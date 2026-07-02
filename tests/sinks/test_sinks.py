@@ -309,6 +309,23 @@ class TestJUnitSink:
         names = {tc.attrib["name"] for tc in testcases}
         assert names == {"pass_metric", "fail_metric"}
 
+    def test_strips_illegal_control_chars(self, tmp_path):
+        path = tmp_path / "results.xml"
+        sink = JUnitSink(str(path))
+        ec = EvalCase(input="bad\x01input", output="a")
+        sink.write(
+            [Score(name="m1", value=0.3, threshold=0.8, reason="bad\x0breason")],
+            ec,
+        )
+        sink.finalize()
+
+        # Must parse without a ParseError.
+        ET.parse(path)
+
+        raw = path.read_bytes()
+        assert b"\x0b" not in raw
+        assert b"\x01" not in raw
+
     def test_no_time_attribute_when_duration_not_set(self, tmp_path):
         path = tmp_path / "results.xml"
         sink = JUnitSink(str(path))

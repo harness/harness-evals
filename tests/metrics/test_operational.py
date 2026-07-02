@@ -8,7 +8,36 @@ from harness_evals.metrics.operational import (
     LatencyMetric,
     RetryCountMetric,
     TokenCostMetric,
+    TurnLatencyMetric,
+    TurnTokenCostMetric,
 )
+
+
+@pytest.mark.unit
+class TestConstructorValidation:
+    def test_latency_non_positive_max_ms(self):
+        with pytest.raises(ValueError):
+            LatencyMetric(max_ms=0)
+
+    def test_cost_efficiency_non_positive_max_cost(self):
+        with pytest.raises(ValueError):
+            CostEfficiencyMetric(max_cost_usd=0)
+
+    def test_token_cost_non_positive_max_tokens(self):
+        with pytest.raises(ValueError):
+            TokenCostMetric(max_tokens=0)
+
+    def test_retry_count_non_positive_max_retries(self):
+        with pytest.raises(ValueError):
+            RetryCountMetric(max_retries=0)
+
+    def test_turn_latency_non_positive_max_ms_per_turn(self):
+        with pytest.raises(ValueError):
+            TurnLatencyMetric(max_ms_per_turn=0)
+
+    def test_turn_token_cost_non_positive_max_tokens_per_turn(self):
+        with pytest.raises(ValueError):
+            TurnTokenCostMetric(max_tokens_per_turn=0)
 
 
 @pytest.mark.unit

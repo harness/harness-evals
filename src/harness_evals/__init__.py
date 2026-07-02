@@ -39,6 +39,7 @@ from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSourc
 from harness_evals.input_generator import InputGenerator
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
+from harness_evals.optimizer import OptimizationResult, PromptOptimizer
 from harness_evals.refs import ResourceRef, resolve
 from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
@@ -125,6 +126,9 @@ __all__ = [
     "FaultInjector",
     "TurnLatencyMetric",
     "TurnTokenCostMetric",
+    # Optimizer
+    "PromptOptimizer",
+    "OptimizationResult",
     # Conversation
     "ConversationGolden",
     "ConversationSimulator",

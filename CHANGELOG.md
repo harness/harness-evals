@@ -7,7 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.10.0]
+## [0.9.4]
 
 ### Added
 
@@ -24,6 +24,56 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   including nested values in `headers` and `body_template`.
 - `examples/streaming-http.*` — generic SSE example (config, goldens, custom
   `sse_trajectory` observability metric, README).
+
+## [0.9.2]
+
+### Fixed
+
+- **Discrimination metric**: AUC-ROC now handles tied confidence scores by advancing the ROC
+  curve one tied block at a time. Previously, cases sharing a confidence value produced
+  order-dependent results (e.g. all-equal confidence could score anywhere from 0.0 to 1.0
+  instead of the correct 0.5).
+- **RAG faithfulness & context precision**: clamp the score to `≤1.0` so a malformed judge
+  response returning more verdicts than there were claims/chunks no longer raises and aborts
+  the evaluation run.
+- **Bias metric**: fails closed when the classifier returns no classifications for extracted
+  opinions (returns `0.0` instead of a silent `1.0` pass), and normalizes against opinions
+  actually classified rather than opinions extracted.
+- **CLI `--update-baseline`**: no longer overwrites the baseline when the run failed its gates,
+  preventing a regressed run from silently poisoning the stored baseline.
+- **JUnit sink**: strips XML-1.0-illegal control characters from names, inputs, and reasons so
+  output is no longer rejected as malformed by CI parsers (Jenkins, GitHub Actions, GitLab).
+- **HTTP target**: fails fast on `4xx` client errors instead of exhausting retries with
+  exponential backoff; `5xx` and network/timeout errors are still retried. Applies to both the
+  async and sync paths.
+- **Operational metrics** (`Latency`, `CostEfficiency`, `TokenCost`, `RetryCount`,
+  `TurnLatency`, `TurnTokenCost`): validate that their configured bound is positive, raising a
+  clear `ValueError` instead of `ZeroDivisionError` at measure time.
+- **Judge metrics**: non-numeric judge output (e.g. `{"score": "high"}` or `null`) now degrades
+  to the metric's safe default via a shared coercion helper instead of raising and aborting the
+  run. Covers toxicity, harmful-advice, misuse, prompt-injection, role-violation, hallucination,
+  harm-severity, pairwise, and rubric metrics.
+- **Security composite**: stores a copy of the weight mapping in result metadata so callers can
+  no longer mutate the module-global default weights in place.
+- **Langfuse dataset source**: guards against a missing `page.meta` during pagination, falling
+  back to a short-page stop condition instead of raising `AttributeError` mid-fetch.
+- **HTTP dataset source**: honors the `Content-Type` charset when decoding responses instead of
+  hard-coding UTF-8.
+- **Langfuse importer**: parses OpenAI-style `function.arguments` JSON strings into a dict so
+  `ToolCall.input` is a consistent type for downstream tool-argument metrics.
+- **Runner**: single-turn dataset sink writes are now emitted in input (golden) order while
+  preserving concurrency, so appended sink rows line up with the dataset.
+
+## [0.9.1]
+
+### Changed
+
+- README brought back in sync with the shipped API. Added the previously undocumented metrics
+  (Webhook, StructuralSimilarity, TurnLatency, TurnTokenCost, DAG, PromptAlignment, Summarization,
+  and the expanded safety detectors: Bias, Compliance, HarmSeverity, HarmfulAdvice, MisuseDetection,
+  RoleViolation) to the Available Metrics table; documented `SimulationGraph` (and the `GRAPH`
+  conversation mode), `PromptOptimizer`, and the `Synthesizer`/`InputGenerator` dataset generators;
+  linked the framework integration examples; and fixed the stale git clone URL.
 
 ## [0.7.3]
 

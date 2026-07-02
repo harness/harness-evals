@@ -21,6 +21,12 @@ import time
 
 from harness_evals.llm.base import BaseLLM
 
+# TODO: Record token usage from the Harness AI gateway response once the
+# response shape is confirmed. Unlike the OpenAI/Anthropic SDKs, the gateway's
+# token-count field names and nesting are not pinned down, so we don't guess at
+# them here. When the schema is known, extract the counts and call
+# ``harness_evals.llm.usage.record_token_usage(...)`` from ``_call_chat``.
+
 
 def _generate_jwt(secret: bytes, *, service_name: str = "harness-evals") -> str:
     """Generate a Harness AI service JWT (HS256).

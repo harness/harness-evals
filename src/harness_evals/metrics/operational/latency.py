@@ -13,6 +13,8 @@ class LatencyMetric(BaseMetric):
 
     def __init__(self, max_ms: float = 5000, threshold: float = 0.5, **kwargs: object) -> None:
         super().__init__(name="latency", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
+        if max_ms <= 0:
+            raise ValueError(f"max_ms must be positive, got {max_ms}")
         self.max_ms = max_ms
 
     def measure(self, eval_case: EvalCase) -> Score:

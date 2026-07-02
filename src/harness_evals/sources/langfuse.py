@@ -2,7 +2,7 @@
 
 import warnings
 
-__all__ = ["LangfuseSource"]
+__all__ = ["LangfuseSource"]  # noqa: F822 — provided via __getattr__
 
 
 def __getattr__(name: str) -> object:

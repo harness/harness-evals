@@ -337,6 +337,7 @@ ec = EvalCase(
 | `SIMULATE` | LLM generates user turns, agent responds | Testing agent behavior on dynamic scenarios |
 | `REPLAY` | Full transcript scored as-is, no agent call | Evaluating historical conversations |
 | `SCRIPTED` | Pre-scripted user turns, agent called each turn | Testing agent against a curated dataset |
+| `GRAPH` | A declarative DAG drives user turns with conditional branching | Testing agent across branching decision paths (see [SimulationGraph](#branching-scenarios-with-simulationgraph)) |
 
 #### Simulate — LLM-driven user turns
 
@@ -416,6 +417,42 @@ results = asyncio.run(evaluate_dataset(
     simulator_llm=llm,
 ))
 ```
+
+#### Branching scenarios with SimulationGraph
+
+`SimulationGraph` drives simulation through a declarative DAG (`ConversationMode.GRAPH`). Nodes produce user turns — `ScriptedNode` (fixed message), `LLMNode` (LLM generates a turn toward a goal), `BranchNode` (routes on the agent's last response), `StopNode` (ends the conversation) — and edges connect them, optionally guarded by named predicates. Cycles are structurally rejected; to loop, use a node with no matching outgoing edge (it re-executes until a predicate matches or `max_turns` is reached).
+
+```python
+from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
+from harness_evals.conversation.graph import (
+    SimulationGraph, ScriptedNode, LLMNode, BranchNode, StopNode, Edge,
+)
+
+graph = SimulationGraph(
+    start="greeting",
+    nodes={
+        "greeting": ScriptedNode(message="I need help with my order"),
+        "probe": LLMNode(goal="Ask increasingly specific questions about the delay"),
+        "route": BranchNode(),
+        "escalate": ScriptedNode(message="I want to speak to a manager"),
+        "done": StopNode(),
+    },
+    edges=[
+        Edge(source="greeting", target="probe"),
+        Edge(source="probe", target="route"),
+        Edge(source="route", target="escalate", predicate="unresolved"),
+        Edge(source="route", target="done", predicate="resolved"),
+    ],
+    predicates={
+        "unresolved": lambda msg: "sorry" in msg.content.lower(),
+        "resolved": lambda msg: "refund" in msg.content.lower(),
+    },
+)
+
+simulator = ConversationSimulator(simulator_llm=llm, graph=graph)
+```
+
+A graph can also be serialized to/from a plain dict (`SimulationGraph.from_dict(...)`). When loaded from `ConversationGolden.graph_config`, only unconditional edges are supported — predicate functions aren't serializable, so pass them explicitly to `from_dict()` when needed.
 
 ### Evaluate production traces from Langfuse
 
@@ -582,20 +619,64 @@ for name, m in summary.by_metric.items():
     print(f"{name}: mean={m.mean:.2f} pass_rate={m.pass_rate:.0%} ({m.count} cases)")
 ```
 
+### Synthesize a dataset from documents
+
+`Synthesizer` (and task-specific variants like `ConversationSynthesizer`, `ScriptedConversationSynthesizer`) generate `Golden` datasets from source documents using an LLM. `InputGenerator` produces input variations (rephrasings, adversarial rewrites, complexity ladders) for robustness testing.
+
+```python
+import asyncio
+from harness_evals import Synthesizer, save_dataset
+from harness_evals.llm import OpenAILLM
+
+synth = Synthesizer(llm=OpenAILLM(model="gpt-4o-mini"))
+goldens = asyncio.run(synth.generate(documents=[doc_text], n=20, difficulty="mixed"))
+save_dataset(goldens, "goldens.jsonl")
+```
+
+See `examples/synthesize_dataset.py` for a runnable end-to-end example.
+
+### Optimize a prompt automatically
+
+`PromptOptimizer` runs an iterative diagnose → rewrite → re-evaluate loop against a golden set until it hits a target score or runs out of patience. The judge LLM must be a **different** instance than the model being optimized (self-evaluation is rejected).
+
+```python
+import asyncio
+from harness_evals import PromptOptimizer
+from harness_evals.llm import OpenAILLM
+from harness_evals.prompts import PromptTemplate
+from harness_evals.metrics import GEvalMetric
+
+optimizer = PromptOptimizer(
+    model=OpenAILLM(model="gpt-4o-mini"),
+    judge=OpenAILLM(model="gpt-4o"),       # must differ from model
+    metrics=[GEvalMetric(criteria="Correct and helpful?", llm=OpenAILLM(model="gpt-4o"))],
+    target_score=0.85,
+    max_iterations=10,
+)
+
+result = asyncio.run(optimizer.optimize(
+    PromptTemplate("Answer the question: {{input}}"),  # placeholders must be in input_variables (defaults to ["input"])
+    goldens,
+))
+print(f"{result.initial_score:.2f} → {result.best_score:.2f} in {result.iterations} iters")
+print(result.best_prompt.template)
+result.save("optimized-prompt.json")
+```
+
 ## Available Metrics
 
 | Category | Metrics | What They Measure |
 |----------|---------|------------------|
-| **Deterministic** | ExactMatch, Contains, Regex, NumericDiff, ListContains | Exact comparison against expected output |
-| **Structural** | JsonDiff, SchemaValidation | Structural similarity and schema conformance for JSON/YAML |
-| **Operational** | Latency, TokenCost, CostEfficiency, RetryCount | Performance and cost from typed fields |
+| **Deterministic** | ExactMatch, Contains, Regex, NumericDiff, ListContains, Webhook | Exact comparison against expected output, or delegated to an external webhook |
+| **Structural** | JsonDiff, SchemaValidation, StructuralSimilarity | Structural similarity and schema conformance for JSON/YAML |
+| **Operational** | Latency, TokenCost, CostEfficiency, RetryCount, TurnLatency, TurnTokenCost | Performance and cost from typed fields, including per-turn conversation cost |
 | **Reliability** | OutcomeConsistency, ResourceConsistency, TrajectoryConsistency, PromptRobustness, EnvironmentRobustness, FaultRobustness, BrierScore | Consistency across repeated runs, trajectory similarity, robustness to prompt/environment/fault perturbations |
 | **Predictability** | Calibration, Discrimination | Expected calibration error and AUC-ROC over confidence scores |
 | **MCP** | ToolSelectionAccuracy, MCPTraceCompleteness | MCP tool selection accuracy and trace completeness |
 | **Similarity** | Levenshtein, BLEU, EmbeddingSimilarity | String distance, n-gram overlap, and semantic vector similarity |
-| **LLM-Judged** | GEval, RubricJudge, Pairwise | LLM scores output against criteria, rubric, or A/B comparison. `GEval` supports free-form criteria, numbered `evaluation_steps`, and integer score-band rubrics via `list[RubricLevel]`; `RubricJudge` uses a flat level → description rubric. (requires `[llm]`) |
+| **LLM-Judged** | GEval, RubricJudge, Pairwise, DAG, PromptAlignment, Summarization | LLM scores output against criteria, rubric, or A/B comparison. `GEval` supports free-form criteria, numbered `evaluation_steps`, and integer score-band rubrics via `list[RubricLevel]`; `RubricJudge` uses a flat level → description rubric; `DAG` composes judgement nodes into a decision graph; `PromptAlignment` checks instruction-following; `Summarization` scores summary faithfulness and coverage. (requires `[llm]`) |
 | **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, AnswerCorrectness, AnswerSimilarity, ContextEntityRecall, ContextRelevancy | Retrieval-augmented generation quality (requires `[llm]`) |
-| **Safety** | PII, Toxicity, PromptInjection, Hallucination | PII leaks, toxic content, prompt injection, hallucination (reported separately, never averaged) |
+| **Safety** | PII, Toxicity, PromptInjection, Hallucination, Bias, Compliance, HarmSeverity, HarmfulAdvice, MisuseDetection, RoleViolation | PII leaks, toxic content, prompt injection, hallucination, bias, policy compliance, harm severity, harmful advice, misuse, and role/system-prompt violations (reported separately, never averaged) |
 | **Agent** | ToolCorrectness, ToolArgumentMatch, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, deterministic argument match, task completion, LLM-judged argument validation, plan quality/adherence, step efficiency (some require `[llm]`) |
 | **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |
 | **Security** | VulnerabilityCorrectness, SecurityCompleteness, CodeSafety, CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability | LLM-as-Judge metrics for AI-generated security vulnerability remediations, with composite Remediation Quality Index (requires LLM provider: `[llm]` or `[harness]`) |
@@ -707,13 +788,14 @@ Registered metrics appear in `catalog()` and are referenceable by `kind:` in YAM
 - [Metrics Guide](docs/metrics-guide.md) — how to write a new metric, templates for every category
 - [Integration Guide](docs/integration-guide.md) — pytest, GitHub Actions, Harness CI, GitLab CI
 - [Contributing](docs/CONTRIBUTING.md) — development workflow, code style, PR process
+- [Framework Integrations](examples/integrations/) — runnable examples for LangChain, CrewAI, DSPy, LlamaIndex, OpenAI Agents, Pydantic AI, Strands, Bedrock AgentCore, Google ADK, LiteLLM, and more
 - [Architecture Decision Records](docs/adr/) — why we made key design choices
 - [Changelog](CHANGELOG.md) — version history
 
 ## Development
 
 ```bash
-git clone git@github.com:sunilgattupalle/harness-evals.git
+git clone git@github.com:harness/harness-evals.git
 cd harness-evals
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all,dev]"

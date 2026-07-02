@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from xml.etree.ElementTree import Element, ElementTree, SubElement
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+
+# Characters that are illegal in XML 1.0 even when escaped. ElementTree escapes
+# <, >, &, and quotes but writes these control chars verbatim, producing a file
+# that strict JUnit parsers (Jenkins, GitHub Actions, GitLab) reject as
+# malformed. LLM output and score reasons routinely contain them. The legal set
+# is tab, newline, carriage return, and everything from 0x20 up (minus the
+# surrogate/FFFE-FFFF gaps).
+_XML_ILLEGAL_RE = re.compile(
+    "[^\x09\x0a\x0d\x20-퟿-�\U00010000-\U0010ffff]"
+)
+
+
+def _xml_safe(text: str) -> str:
+    """Strip characters that are not legal in XML 1.0 text/attribute content."""
+    return _XML_ILLEGAL_RE.sub("", text)
 
 
 class JUnitSink(BaseSink):
@@ -29,11 +45,11 @@ class JUnitSink(BaseSink):
         self._tests = 0
 
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
-        input_preview = str(eval_case.input)[:120]
+        input_preview = _xml_safe(str(eval_case.input)[:120])
         for score in scores:
             self._tests += 1
             attrs: dict[str, str] = {
-                "name": score.name,
+                "name": _xml_safe(score.name),
                 "classname": input_preview,
             }
             if score.scoring_duration_ms is not None:
@@ -47,7 +63,7 @@ class JUnitSink(BaseSink):
                     message=f"{score.name}: {score.value:.4f} < {score.threshold:.4f}",
                     type="MetricFailure",
                 )
-                failure.text = score.reason or ""
+                failure.text = _xml_safe(score.reason or "")
             self._testcases.append(tc)
 
     def finalize(self) -> None:

@@ -6,6 +6,7 @@ Requires: pip install harness-evals[langfuse]
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 
 try:
@@ -333,7 +334,7 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
                         msg_tool_calls = [
                             ToolCall(
                                 name=tc.get("function", {}).get("name", tc.get("name", "")),
-                                input=tc.get("function", {}).get("arguments") if "function" in tc else tc.get("input"),
+                                input=_tool_call_input(tc),
                             )
                             for tc in entry["tool_calls"]
                             if isinstance(tc, dict)
@@ -356,13 +357,30 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
                     if isinstance(tc, dict):
                         tc_obj = ToolCall(
                             name=tc.get("function", {}).get("name", tc.get("name", "")),
-                            input=tc.get("function", {}).get("arguments") if "function" in tc else tc.get("input"),
+                            input=_tool_call_input(tc),
                         )
                         msg_tool_calls.append(tc_obj)
                         tool_calls.append(tc_obj)
             messages.append(Message(role=role, content=content, tool_calls=msg_tool_calls or None))
         elif isinstance(obs_output, str):
             messages.append(Message(role="assistant", content=obs_output))
+
+
+def _tool_call_input(tc: dict) -> dict | None:
+    """Normalize a tool call's arguments to a dict.
+
+    OpenAI-style traces put the arguments under ``function.arguments`` as a
+    JSON *string*; other shapes use a dict under ``input``. Returning a parsed
+    dict for both keeps ``ToolCall.input`` a consistent type so downstream
+    tool-argument metrics can compare it against expected dicts.
+    """
+    raw = tc.get("function", {}).get("arguments") if "function" in tc else tc.get("input")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+    return raw if isinstance(raw, dict) else None
 
 
 def _to_dict_or_none(val: object) -> dict | None:

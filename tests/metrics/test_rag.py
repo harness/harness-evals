@@ -85,6 +85,27 @@ class TestFaithfulnessMetric:
         score = await metric.a_measure(ec)
         assert score.value == 1.0
 
+    async def test_more_verdicts_than_claims_clamped(self):
+        """Judge returns more supported verdicts than claims → clamp to 1.0, no error."""
+        llm = MockLLM(
+            responses=[
+                {"claims": ["c1", "c2"]},
+                {
+                    "verdicts": [
+                        {"claim": "c1", "verdict": "supported"},
+                        {"claim": "c2", "verdict": "supported"},
+                        {"claim": "c3", "verdict": "supported"},
+                        {"claim": "c4", "verdict": "supported"},
+                    ]
+                },
+            ]
+        )
+        metric = FaithfulnessMetric(llm=llm, threshold=0.7)
+        ec = EvalCase(input="q", output="a", context=["ctx"])
+        score = await metric.a_measure(ec)
+        assert score.value == 1.0
+        assert score.passed
+
 
 @pytest.mark.unit
 class TestAnswerRelevancyMetric:
@@ -141,6 +162,22 @@ class TestContextPrecisionMetric:
         ec = EvalCase(input="q", output="a")
         score = await metric.a_measure(ec)
         assert score.value == 0.0
+
+    async def test_more_verdicts_than_chunks_clamped(self):
+        """Judge returns more relevant verdicts than chunks → clamp to 1.0, no error."""
+        llm = MockLLM(
+            default={
+                "verdicts": [
+                    {"chunk_index": 0, "relevant": True},
+                    {"chunk_index": 1, "relevant": True},
+                    {"chunk_index": 2, "relevant": True},
+                ]
+            }
+        )
+        metric = ContextPrecisionMetric(llm=llm, threshold=0.5)
+        ec = EvalCase(input="q", output="a", context=["c1", "c2"])
+        score = await metric.a_measure(ec)
+        assert score.value == 1.0
 
 
 @pytest.mark.unit

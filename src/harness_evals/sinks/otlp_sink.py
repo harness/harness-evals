@@ -180,13 +180,12 @@ class OtlpSink(BaseSink):
         self._owns_meter_provider = meter_provider is None
 
         # --- Providers (internal or external) ---
-        if tracer_provider is not None or meter_provider is not None:
-            if endpoint != "http://localhost:4317":
-                warnings.warn(
-                    "endpoint/protocol/insecure/headers are ignored when tracer_provider "
-                    "or meter_provider is supplied. Configure export on the provider you pass in.",
-                    stacklevel=2,
-                )
+        if (tracer_provider is not None or meter_provider is not None) and endpoint != "http://localhost:4317":
+            warnings.warn(
+                "endpoint/protocol/insecure/headers are ignored when tracer_provider "
+                "or meter_provider is supplied. Configure export on the provider you pass in.",
+                stacklevel=2,
+            )
 
         if tracer_provider is not None and meter_provider is not None:
             self._trace_provider = tracer_provider

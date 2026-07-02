@@ -11,6 +11,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
+from harness_evals.metrics._coerce import safe_float
 
 
 def _to_str(val: str | dict | list | None) -> str:
@@ -152,12 +153,12 @@ class PairwiseMetric(BaseMetric):
         """Collect num_votes judge scores for a given ordering."""
         if self.num_votes == 1:
             result = await self._single_judge(input_text, response_a, response_b)
-            score = float(result.get("score", 0.0))
+            score = safe_float(result.get("score", 0.0), 0.0)
             return [max(0.0, min(1.0, score))]
 
         tasks = [self._single_judge(input_text, response_a, response_b) for _ in range(self.num_votes)]
         results = await asyncio.gather(*tasks)
-        return [max(0.0, min(1.0, float(r.get("score", 0.0)))) for r in results]
+        return [max(0.0, min(1.0, safe_float(r.get("score", 0.0), 0.0))) for r in results]
 
     @staticmethod
     def _winner_from_score(score: float) -> str:

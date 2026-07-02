@@ -253,12 +253,30 @@ async def _evaluate_dataset_single(
                 next_idx += 1
 
     async def _run_and_score(idx: int, golden: Golden) -> list[Score]:
-        if sem is not None:
-            async with sem:
+        try:
+            if sem is not None:
+                async with sem:
+                    eval_case = await agent_fn(golden)
+            else:
                 eval_case = await agent_fn(golden)
+        except Exception as exc:
+            # Target failure isolation: a raising agent_fn must not abort the
+            # whole dataset. Emit failed scores for this item and continue.
+            _runner_logger.exception("agent_fn raised for golden input=%s", golden.input)
+            eval_case = EvalCase.from_golden(golden, output="")
+            scores = []
+            for metric in metrics:
+                score = Score(
+                    name=metric.name,
+                    value=0.0,
+                    threshold=metric.threshold,
+                    reason=f"Target (agent_fn) raised: {exc}",
+                    metadata={"target_error": True},
+                )
+                _enrich_score(score, metric)
+                scores.append(score)
         else:
-            eval_case = await agent_fn(golden)
-        scores = await a_evaluate(eval_case, metrics)
+            scores = await a_evaluate(eval_case, metrics)
         if sink_queue is not None:
             await sink_queue.put((idx, scores, eval_case))
         return scores

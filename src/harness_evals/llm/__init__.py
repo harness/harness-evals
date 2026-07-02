@@ -2,8 +2,15 @@
 
 from harness_evals.llm.base import BaseLLM
 from harness_evals.llm.embedding import BaseEmbedding
+from harness_evals.llm.usage import TokenUsage, collect_token_usage, record_token_usage
 
-__all__ = ["BaseLLM", "BaseEmbedding"]
+__all__ = [
+    "BaseLLM",
+    "BaseEmbedding",
+    "TokenUsage",
+    "collect_token_usage",
+    "record_token_usage",
+]
 
 # Provider imports are deferred to avoid hard dependency on openai/anthropic.
 # Use: from harness_evals.llm.openai import OpenAILLM

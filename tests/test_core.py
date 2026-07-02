@@ -531,6 +531,32 @@ class TestEvaluateDataset:
         results = await evaluate_dataset(goldens, bad_agent, metrics=[ExactMatchMetric()])
         assert not results[0][0].passed
 
+    async def test_evaluate_dataset_isolates_agent_failure(self):
+        """A raising agent_fn for one item must not abort the rest of the dataset."""
+        goldens = [
+            Golden(input="q0", expected="a0"),
+            Golden(input="boom", expected="a1"),
+            Golden(input="q2", expected="a2"),
+        ]
+
+        async def flaky_agent(golden: Golden) -> EvalCase:
+            if golden.input == "boom":
+                raise RuntimeError("kaboom")
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        results = await evaluate_dataset(goldens, flaky_agent, metrics=[ExactMatchMetric()])
+
+        assert len(results) == 3
+        # Surviving items scored normally, in input order.
+        assert results[0][0].passed
+        assert results[2][0].passed
+        # Failed item produced a failed score rather than crashing the run.
+        failed = results[1][0]
+        assert not failed.passed
+        assert failed.value == 0.0
+        assert "kaboom" in failed.reason
+        assert failed.metadata.get("target_error") is True
+
     async def test_evaluate_dataset_runs_concurrently(self):
         """Verify that evaluate_dataset uses asyncio.gather (runs in parallel)."""
         import asyncio

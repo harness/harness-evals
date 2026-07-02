@@ -8,6 +8,16 @@ from typing import Any
 
 from harness_evals.llm._schema import ANTHROPIC_UNSUPPORTED, make_strict_schema
 from harness_evals.llm.base import BaseLLM
+from harness_evals.llm.usage import record_token_usage
+
+
+def _record_anthropic_usage(response: Any) -> None:
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        record_token_usage(
+            input_tokens=getattr(usage, "input_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None),
+        )
 
 
 class AnthropicLLM(BaseLLM):
@@ -57,6 +67,7 @@ class AnthropicLLM(BaseLLM):
             max_tokens=self.max_tokens,
             **self._optional_params(),
         )
+        _record_anthropic_usage(response)
         return response.content[0].text if response.content else ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
@@ -74,5 +85,6 @@ class AnthropicLLM(BaseLLM):
                 }
             },
         )
+        _record_anthropic_usage(response)
         text = response.content[0].text if response.content else "{}"
         return json.loads(text)

@@ -43,7 +43,7 @@ from harness_evals.optimizer import OptimizationResult, PromptOptimizer
 from harness_evals.refs import ResourceRef, resolve
 from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
-from harness_evals.summary import MetricSummary, ScoreSummary, summarize
+from harness_evals.summary import DimensionSummary, MetricSummary, ScoreSummary, summarize
 from harness_evals.synthesizer import ConversationSynthesizer, ScriptedConversationSynthesizer, Synthesizer
 from harness_evals.targets import (
     ApiKeyAuth,
@@ -92,6 +92,7 @@ __all__ = [
     "evaluate_batch_metrics",
     "summarize",
     "MetricSummary",
+    "DimensionSummary",
     "ScoreSummary",
     # Baseline
     "BaselineStore",

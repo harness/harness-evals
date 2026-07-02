@@ -68,6 +68,36 @@ class TestStdoutSink:
         assert "pass_rate" in captured
         assert "Overall pass rate" in captured
 
+    def test_finalize_prints_dimension_block_and_safety(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        dim_scores = [
+            Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+            Score(name="pii_leak", value=0.0, threshold=1.0, metadata={"dimension": "safety"}),
+        ]
+        sink = StdoutSink(summary=True)
+        sink.write(dim_scores, ec)
+        capsys.readouterr()  # clear per-case output
+
+        sink.finalize()
+        captured = capsys.readouterr().out
+
+        assert "Dimensions:" in captured
+        assert "correctness" in captured
+        # Safety surfaced separately as a hard constraint.
+        assert "Safety: 1 violation(s)" in captured
+        assert "violation(s)" in captured
+
+    def test_finalize_no_safety_line_without_safety_scores(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write([Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"})], ec)
+        capsys.readouterr()
+
+        sink.finalize()
+        captured = capsys.readouterr().out
+        assert "Safety:" not in captured
+        assert "Dimensions:" in captured
+
     def test_finalize_no_summary_when_disabled(self, capsys, eval_case, scores):
         sink = StdoutSink(summary=False)
         sink.write(scores, eval_case)
@@ -730,6 +760,31 @@ class TestOtlpSinkTraces:
         summary_event = [c for c in mocks["root_span"].add_event.call_args_list if c[0][0] == "eval.summary"]
         assert len(summary_event) == 1
         assert summary_event[0][1]["attributes"]["eval.summary.accuracy.mean"] == 0.9
+
+    def test_finalize_emits_dimension_summary_attributes(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+        ec = EvalCase(input="q", output="a")
+        sink.write(
+            [
+                Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+                Score(name="pii_leak", value=0.0, threshold=1.0, metadata={"dimension": "safety"}),
+            ],
+            ec,
+        )
+        sink.finalize()
+
+        root = mocks["root_span"]
+        # Per-dimension mean set on the root span (ADR-009).
+        root.set_attribute.assert_any_call("eval.summary.dimension.correctness.mean", 1.0)
+        root.set_attribute.assert_any_call("eval.summary.dimension.safety.mean", 0.0)
+        # Safety violation count as a hard-constraint signal (ADR-003).
+        root.set_attribute.assert_any_call("eval.summary.dimension.safety.violations", 1)
+        # Also folded into the summary event.
+        summary_event = [c for c in root.add_event.call_args_list if c[0][0] == "eval.summary"]
+        attrs = summary_event[0][1]["attributes"]
+        assert attrs["eval.summary.dimension.correctness.mean"] == 1.0
+        assert attrs["eval.summary.dimension.safety.violations"] == 1
 
     def test_finalize_idempotent(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks

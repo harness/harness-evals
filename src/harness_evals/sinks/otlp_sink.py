@@ -25,6 +25,7 @@ except ImportError as _err:
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.summary import SAFETY_DIMENSION, UNKNOWN_DIMENSION
 
 _MAX_ATTR_LEN = 1000
 _VALID_PROTOCOLS = {"grpc", "http"}
@@ -233,6 +234,9 @@ class OtlpSink(BaseSink):
         self._item_count = 0
         self._items_passed = 0
         self._score_values: dict[str, list[float]] = {}
+        # Per-dimension accumulators for the root-span summary (ADR-009).
+        self._dimension_values: dict[str, list[float]] = {}
+        self._dimension_passed: dict[str, int] = {}
 
     @staticmethod
     def _create_internal_providers(
@@ -337,6 +341,9 @@ class OtlpSink(BaseSink):
                 self._items_passed += 1
             for s in scores:
                 self._score_values.setdefault(s.name, []).append(s.value)
+                dimension = (s.metadata or {}).get("dimension") or UNKNOWN_DIMENSION
+                self._dimension_values.setdefault(dimension, []).append(s.value)
+                self._dimension_passed[dimension] = self._dimension_passed.get(dimension, 0) + int(s.passed)
 
         # Build score event attributes (used in both paths)
         score_events: list[dict[str, Any]] = []
@@ -407,6 +414,8 @@ class OtlpSink(BaseSink):
             item_count = self._item_count
             items_passed = self._items_passed
             score_values = {k: list(v) for k, v in self._score_values.items()}
+            dimension_values = {k: list(v) for k, v in self._dimension_values.items()}
+            dimension_passed = dict(self._dimension_passed)
 
         if root is not None:
             root.set_attribute("eval.summary.items_total", item_count)
@@ -416,6 +425,17 @@ class OtlpSink(BaseSink):
             summary_attrs: dict[str, Any] = {}
             for name, values in score_values.items():
                 summary_attrs[f"eval.summary.{name}.mean"] = round(sum(values) / len(values), 4)
+            # Per-dimension averages (ADR-009), plus Safety violation count as a
+            # hard-constraint signal (ADR-003). Set on the root span so a single
+            # span query returns the whole radar shape.
+            for dimension, values in dimension_values.items():
+                mean = round(sum(values) / len(values), 4)
+                root.set_attribute(f"eval.summary.dimension.{dimension}.mean", mean)
+                summary_attrs[f"eval.summary.dimension.{dimension}.mean"] = mean
+                if dimension == SAFETY_DIMENSION:
+                    violations = len(values) - dimension_passed.get(dimension, 0)
+                    root.set_attribute("eval.summary.dimension.safety.violations", violations)
+                    summary_attrs["eval.summary.dimension.safety.violations"] = violations
             if summary_attrs:
                 root.add_event("eval.summary", attributes=summary_attrs)
             root.set_status(StatusCode.OK)

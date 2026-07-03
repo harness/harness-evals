@@ -1,0 +1,58 @@
+# Example: evaluate a streaming (SSE) endpoint via StreamingHttpTarget.
+#
+# StreamingHttpTarget is generic — it works with ANY endpoint that responds with
+# `text/event-stream`. This example assumes a chat/agent-style service that
+# streams named events (token deltas, tool calls, a final answer, usage) and
+# grades the final answer plus the captured trajectory.
+#
+# Run it (PYTHONPATH=. puts the examples/ custom metric on the import path):
+#   cd harness-evals
+#   export SSE_ENDPOINT_URL=http://localhost:8000/stream
+#   PYTHONPATH=. poetry run harness-evals run examples/streaming-http.eval.yaml
+#
+# Validate config only (no HTTP call):
+#   poetry run harness-evals run examples/streaming-http.eval.yaml --validate
+
+name: streaming-sse-example
+
+# Load the example custom metric (examples/sse_trajectory_metric.py) so captured
+# SSE events are surfaced in the run output.
+plugins:
+  - examples.sse_trajectory_metric
+
+dataset: ./streaming-http.goldens.jsonl
+
+target:
+  type: streaming_http
+  # Endpoint URL is read from the environment so no host/credentials are baked
+  # into the config. Add `auth:` or `headers:` if your service requires them.
+  url: "${SSE_ENDPOINT_URL}"
+  headers:
+    Content-Type: application/json
+
+  # Request body. `prompt` is filled from each golden's input via input_path.
+  body_template:
+    prompt: null
+    stream: true
+  input_path: $.prompt
+
+  # The service emits a `final` event carrying the answer; grade that field.
+  # Omit `output_event` to instead grade the last JSON `data` payload, or the
+  # concatenated text of `data` lines for a plain token stream.
+  output_event: final
+  output_path: $.answer
+
+  # Capture selected trajectory events into EvalCase.metadata["sse_events"].
+  # Only listed event names are stored.
+  capture_events:
+    - tool_call
+    - usage
+
+# `contains` checks the graded output (the final answer) includes the golden's
+# `expected` substring. `sse_trajectory` reports the captured SSE events
+# (counts + tool names) in its score reason for observability.
+metrics:
+  - {kind: contains, threshold: 1.0}
+  - {kind: sse_trajectory, threshold: 1.0}
+
+sinks: [stdout]

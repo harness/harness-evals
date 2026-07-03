@@ -77,7 +77,7 @@ _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _resolve_env_in_params(params: dict) -> dict:
-    """Resolve ``${VAR}`` references in string values of a params dict.
+    """Resolve ``${VAR}`` references in params.
 
     .. note::
         YAML requires ``${VAR}`` references to be quoted (``"${VAR}"``).
@@ -85,23 +85,26 @@ def _resolve_env_in_params(params: dict) -> dict:
         means this function will never see the interpolation placeholder.
     """
 
-    resolved = {}
-    for key, value in params.items():
-        if isinstance(value, str) and "${" in value:
-            resolved[key] = _resolve_env_value(value)
-        elif value is None:
-            import warnings
+    return {key: _resolve_env_in_value(key, value, warn_on_none=True) for key, value in params.items()}
 
-            warnings.warn(
-                f"Parameter {key!r} resolved to None. If you intended environment variable "
-                f"interpolation, ensure the value is quoted in YAML: {key}: \"${{{key.upper()}}}\"",
-                UserWarning,
-                stacklevel=2,
-            )
-            resolved[key] = value
-        else:
-            resolved[key] = value
-    return resolved
+
+def _resolve_env_in_value(key: str, value: Any, *, warn_on_none: bool = False) -> Any:
+    if isinstance(value, str) and "${" in value:
+        return _resolve_env_value(value)
+    if isinstance(value, dict):
+        return {nested_key: _resolve_env_in_value(nested_key, nested_value) for nested_key, nested_value in value.items()}
+    if isinstance(value, list):
+        return [_resolve_env_in_value(key, item) for item in value]
+    if value is None and warn_on_none:
+        import warnings
+
+        warnings.warn(
+            f"Parameter {key!r} resolved to None. If you intended environment variable "
+            f"interpolation, ensure the value is quoted in YAML: {key}: \"${{{key.upper()}}}\"",
+            UserWarning,
+            stacklevel=2,
+        )
+    return value
 
 
 def _resolve_env_value(value: str) -> str:
@@ -132,6 +135,8 @@ async def build_target(spec: TargetSpec) -> BaseTarget:
         return await _build_prompt_target(spec.params)
     if spec.type == "http":
         return _build_http_target(spec.params)
+    if spec.type == "streaming_http":
+        return _build_streaming_http_target(spec.params)
     cls = lookup_target(spec.type)
     return cls(**spec.params)
 
@@ -176,11 +181,21 @@ async def _build_prompt_target(params: dict[str, Any]) -> BaseTarget:
 def _build_http_target(params: dict[str, Any]) -> BaseTarget:
     from harness_evals.targets.http import HttpTarget
 
-    kwargs = dict(params)
+    kwargs = _resolve_env_in_params(params)
     raw_auth = kwargs.pop("auth", None)
     if raw_auth is not None:
         kwargs["auth"] = _build_auth(raw_auth)
     return HttpTarget(**kwargs)
+
+
+def _build_streaming_http_target(params: dict[str, Any]) -> BaseTarget:
+    from harness_evals.targets.streaming_http import StreamingHttpTarget
+
+    kwargs = _resolve_env_in_params(params)
+    raw_auth = kwargs.pop("auth", None)
+    if raw_auth is not None:
+        kwargs["auth"] = _build_auth(raw_auth)
+    return StreamingHttpTarget(**kwargs)
 
 
 def _build_auth(raw: dict) -> Any:

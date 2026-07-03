@@ -90,6 +90,30 @@ class TestEnvVarResolution:
         assert result["api_key"] == "sk-literal"
         assert result["model"] == "gpt-4o"
 
+    def test_resolves_nested_env_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("API_HOST", "http://localhost:8000")
+        monkeypatch.setenv("ORG_ID", "default")
+        monkeypatch.setenv("PROJECT_ID", "demo")
+        from harness_evals.config.runner import _resolve_env_in_params
+
+        result = _resolve_env_in_params({
+            "url": "${API_HOST}/chat?org=${ORG_ID}&project=${PROJECT_ID}",
+            "headers": {"X-Org": "${ORG_ID}"},
+            "body_template": {
+                "harness_context": {
+                    "org_id": "${ORG_ID}",
+                    "project_id": "${PROJECT_ID}",
+                },
+                "events": ["${ORG_ID}", "literal"],
+            },
+        })
+
+        assert result["url"] == "http://localhost:8000/chat?org=default&project=demo"
+        assert result["headers"]["X-Org"] == "default"
+        assert result["body_template"]["harness_context"]["org_id"] == "default"
+        assert result["body_template"]["harness_context"]["project_id"] == "demo"
+        assert result["body_template"]["events"] == ["default", "literal"]
+
 
 # ---------------------------------------------------------------------------
 # build_sink
@@ -137,6 +161,36 @@ class TestBuildTarget:
         from harness_evals.targets.auth import BearerAuth
 
         assert isinstance(target.auth, BearerAuth)
+
+    async def test_streaming_http_target_resolves_env_in_params(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("API_HOST", "http://localhost:8000")
+        monkeypatch.setenv("ACCOUNT_ID", "acct")
+        monkeypatch.setenv("ORG_ID", "default")
+        monkeypatch.setenv("PROJECT_ID", "demo")
+        spec = TargetSpec(type="streaming_http", params={
+            "url": "${API_HOST}/chat/unified?orgIdentifier=${ORG_ID}&projectIdentifier=${PROJECT_ID}",
+            "body_template": {
+                "prompt": None,
+                "stream": True,
+                "harness_context": {
+                    "account_id": "${ACCOUNT_ID}",
+                    "org_id": "${ORG_ID}",
+                    "project_id": "${PROJECT_ID}",
+                },
+            },
+        })
+
+        target = await build_target(spec)
+        from harness_evals.targets.streaming_http import StreamingHttpTarget
+
+        assert isinstance(target, StreamingHttpTarget)
+        assert target.url == "http://localhost:8000/chat/unified?orgIdentifier=default&projectIdentifier=demo"
+        assert target.body_template is not None
+        assert target.body_template["harness_context"] == {
+            "account_id": "acct",
+            "org_id": "default",
+            "project_id": "demo",
+        }
 
     async def test_prompt_target(self, tmp_path) -> None:
         prompt_path = tmp_path / "prompt.txt"

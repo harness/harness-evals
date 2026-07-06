@@ -6,6 +6,7 @@ import json
 import threading
 import uuid
 import warnings
+from collections.abc import Callable
 from typing import Any
 
 try:
@@ -104,7 +105,20 @@ class OtlpSink(BaseSink):
     """Export eval scores as OpenTelemetry metrics and traces to an OTLP endpoint.
 
     **Metrics**: Each ``Score`` becomes a gauge observation on ``evals.score``.
-    ``EvalCase`` runtime fields (latency, tokens, cost) are recorded as histograms.
+    ``EvalCase`` runtime fields are recorded as histograms: ``evals.item.latency``,
+    ``evals.item.tokens``, ``evals.item.cost``, ``evals.item.retry_count``, and
+    ``evals.item.confidence`` (each recorded only when the field is set).
+
+    **Custom metadata**: Numeric values in ``EvalCase.metadata`` are auto-forwarded
+    as ``evals.item.meta.<key>`` gauges — no instrumentation required. Non-numeric
+    values (and ``bool``, to avoid emitting True/False as 1/0) are skipped.
+
+    **Custom instruments**: The OTel ``Meter`` is exposed as ``sink.meter`` so
+    callers can create their own instruments without subclassing. Pass an
+    ``on_write(meter, scores, eval_case)`` callback to record custom instruments
+    per item; it receives the full ``EvalCase`` (including the complete
+    ``metadata`` dict) and is intended for observation, not mutation. Exceptions
+    raised by the callback are caught and warned — they never fail the eval run.
 
     **Traces**: A root ``eval-run`` span contains child ``eval-item`` spans
     (one per ``write()`` call), each with ``evals.score`` events per metric.
@@ -163,6 +177,7 @@ class OtlpSink(BaseSink):
         parent_context: Context | None = None,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
+        on_write: Callable[[Any, list[Score], EvalCase], None] | None = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")
@@ -174,6 +189,7 @@ class OtlpSink(BaseSink):
         self._extra_attributes = extra_attributes or {}
         self._item_span_attributes = item_span_attributes or {}
         self._parent_context = parent_context
+        self._on_write = on_write
         self._finalized = False
 
         self._owns_trace_provider = tracer_provider is None
@@ -198,7 +214,9 @@ class OtlpSink(BaseSink):
             self._meter_provider = meter_provider if meter_provider is not None else mp
 
         # --- Metrics ---
-        meter = self._meter_provider.get_meter(service_name)
+        # Exposed publicly so callers can create custom instruments without
+        # subclassing (e.g. ``sink.meter.create_counter(...)``).
+        meter = self.meter = self._meter_provider.get_meter(service_name)
 
         self._score_gauge = meter.create_gauge(
             name="evals.score",
@@ -220,6 +238,20 @@ class OtlpSink(BaseSink):
             description="Cost per eval item",
             unit="usd",
         )
+        self._retry_hist = meter.create_histogram(
+            name="evals.item.retry_count",
+            description="Retry count per eval item",
+            unit="count",
+        )
+        self._confidence_hist = meter.create_histogram(
+            name="evals.item.confidence",
+            description="Confidence score per eval item",
+            unit="ratio",
+        )
+
+        # Lazily-created gauges for numeric EvalCase.metadata keys, keyed by
+        # metadata key. OTel instruments must be created once and reused.
+        self._meta_gauges: dict[str, Any] = {}
 
         # --- Traces ---
         self._tracer = self._trace_provider.get_tracer(service_name)
@@ -326,6 +358,24 @@ class OtlpSink(BaseSink):
             self._token_hist.record(eval_case.token_count, attributes=base_attrs)
         if eval_case.cost_usd is not None:
             self._cost_hist.record(eval_case.cost_usd, attributes=base_attrs)
+        if eval_case.retry_count is not None:
+            self._retry_hist.record(eval_case.retry_count, attributes=base_attrs)
+        if eval_case.confidence is not None:
+            self._confidence_hist.record(eval_case.confidence, attributes=base_attrs)
+
+        # Auto-forward numeric EvalCase.metadata as evals.item.meta.<key> gauges.
+        # bool is an int subclass — exclude it so True/False don't become 1/0.
+        for meta_key, meta_value in (eval_case.metadata or {}).items():
+            if isinstance(meta_value, bool) or not isinstance(meta_value, (int, float)):
+                continue
+            gauge = self._meta_gauges.get(meta_key)
+            if gauge is None:
+                gauge = self.meter.create_gauge(
+                    name=f"evals.item.meta.{meta_key}",
+                    description=f"Custom eval-case metadata: {meta_key}",
+                )
+                self._meta_gauges[meta_key] = gauge
+            gauge.set(meta_value, attributes=base_attrs)
 
         # --- Traces ---
         with self._lock:
@@ -395,6 +445,14 @@ class OtlpSink(BaseSink):
             for event_attrs in score_events:
                 item_span.add_event("eval.score", attributes=event_attrs)
             item_span.end()
+
+        # User extensibility hook: record custom instruments off the meter.
+        # Guarded so a failing telemetry callback never breaks the eval run.
+        if self._on_write is not None:
+            try:
+                self._on_write(self.meter, scores, eval_case)
+            except Exception as exc:
+                warnings.warn(f"OtlpSink on_write callback raised: {exc}", stacklevel=2)
 
     def finalize(self) -> None:
         """End the root span with summary attributes and flush both providers."""

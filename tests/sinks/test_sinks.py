@@ -393,10 +393,16 @@ def otlp_mocks():
     mock_latency_hist = MagicMock()
     mock_token_hist = MagicMock()
     mock_cost_hist = MagicMock()
+    mock_retry_hist = MagicMock()
+    mock_confidence_hist = MagicMock()
     mock_meter = MagicMock()
+    # Dedicated mock per dynamically-created metadata gauge, keyed by instrument name.
+    meta_gauges: dict[str, MagicMock] = {}
 
-    def _create_gauge(**kwargs):
-        return mock_gauge
+    def _create_gauge(name="", **kwargs):
+        if name == "evals.score":
+            return mock_gauge
+        return meta_gauges.setdefault(name, MagicMock())
 
     def _create_histogram(name="", **kwargs):
         if "latency" in name:
@@ -405,6 +411,10 @@ def otlp_mocks():
             return mock_token_hist
         if "cost" in name:
             return mock_cost_hist
+        if "retry_count" in name:
+            return mock_retry_hist
+        if "confidence" in name:
+            return mock_confidence_hist
         return MagicMock()
 
     mock_meter.create_gauge.side_effect = _create_gauge
@@ -426,6 +436,9 @@ def otlp_mocks():
         "latency_hist": mock_latency_hist,
         "token_hist": mock_token_hist,
         "cost_hist": mock_cost_hist,
+        "retry_hist": mock_retry_hist,
+        "confidence_hist": mock_confidence_hist,
+        "meta_gauges": meta_gauges,
         "meter": mock_meter,
         "meter_provider": mock_meter_provider,
         "tracer": mock_tracer,
@@ -548,6 +561,101 @@ class TestOtlpSink:
         mocks["latency_hist"].record.assert_not_called()
         mocks["token_hist"].record.assert_not_called()
         mocks["cost_hist"].record.assert_not_called()
+        mocks["retry_hist"].record.assert_not_called()
+        mocks["confidence_hist"].record.assert_not_called()
+
+    def test_retry_count_histogram(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(input="q", output="a", retry_count=3)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        mocks["retry_hist"].record.assert_called_once()
+        assert mocks["retry_hist"].record.call_args[0][0] == 3
+
+    def test_confidence_histogram(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(input="q", output="a", confidence=0.87)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        mocks["confidence_hist"].record.assert_called_once()
+        assert mocks["confidence_hist"].record.call_args[0][0] == 0.87
+
+    def test_numeric_metadata_forwarded_as_gauge(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+        ec = EvalCase(input="q", output="a", metadata={"rerank_score": 0.82, "chunks": 5})
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        assert "evals.item.meta.rerank_score" in mocks["meta_gauges"]
+        assert "evals.item.meta.chunks" in mocks["meta_gauges"]
+        rerank = mocks["meta_gauges"]["evals.item.meta.rerank_score"]
+        rerank.set.assert_called_once()
+        assert rerank.set.call_args[0][0] == 0.82
+        # observation carries base attributes (run_id)
+        assert rerank.set.call_args[1]["attributes"]["eval.run_id"] == "run-1"
+
+    def test_non_numeric_and_bool_metadata_skipped(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(
+            input="q",
+            output="a",
+            metadata={"model": "gpt-4o", "cached": True, "tags": ["x"], "score": 0.5},
+        )
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        # Only the numeric, non-bool key is forwarded.
+        assert set(mocks["meta_gauges"]) == {"evals.item.meta.score"}
+
+    def test_metadata_gauge_reused_across_writes(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(input="q", output="a", metadata={"k": 1})
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        # Instrument created once, reused (not re-created per write).
+        gauge_names = [c.kwargs.get("name") for c in mocks["meter"].create_gauge.call_args_list]
+        assert gauge_names.count("evals.item.meta.k") == 1
+        assert mocks["meta_gauges"]["evals.item.meta.k"].set.call_count == 2
+
+    def test_meter_exposed(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        assert sink.meter is mocks["meter"]
+
+    def test_on_write_callback_invoked(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        seen = {}
+
+        def cb(meter, scores, eval_case):
+            seen["meter"] = meter
+            seen["scores"] = scores
+            seen["input"] = eval_case.input
+
+        sink = OtlpSink(on_write=cb)
+        ec = EvalCase(input="hello", output="a")
+        score = Score(name="m", value=1.0, threshold=0.5)
+        sink.write([score], ec)
+
+        assert seen["meter"] is mocks["meter"]
+        assert seen["scores"] == [score]
+        assert seen["input"] == "hello"
+
+    def test_on_write_exception_is_warned_not_raised(self, otlp_mocks):
+        OtlpSink, _mocks = otlp_mocks
+
+        def cb(meter, scores, eval_case):
+            raise RuntimeError("boom")
+
+        sink = OtlpSink(on_write=cb)
+        ec = EvalCase(input="q", output="a")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)  # must not raise
+        assert any("on_write callback raised" in str(w.message) for w in caught)
 
     def test_empty_scores_skipped(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks

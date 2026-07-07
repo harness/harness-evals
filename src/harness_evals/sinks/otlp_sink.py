@@ -26,6 +26,7 @@ except ImportError as _err:
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.summary import build_dimension_summary, dimension_of
 
 _MAX_ATTR_LEN = 1000
 _VALID_PROTOCOLS = {"grpc", "http"}
@@ -208,7 +209,12 @@ class OtlpSink(BaseSink):
             self._meter_provider = meter_provider
         else:
             tp, mp = self._create_internal_providers(
-                endpoint, service_name, insecure, protocol, headers, resource_attributes,
+                endpoint,
+                service_name,
+                insecure,
+                protocol,
+                headers,
+                resource_attributes,
             )
             self._trace_provider = tracer_provider if tracer_provider is not None else tp
             self._meter_provider = meter_provider if meter_provider is not None else mp
@@ -265,6 +271,9 @@ class OtlpSink(BaseSink):
         self._item_count = 0
         self._items_passed = 0
         self._score_values: dict[str, list[float]] = {}
+        # Per-dimension accumulators for the root-span summary (ADR-009).
+        self._dimension_values: dict[str, list[float]] = {}
+        self._dimension_passed: dict[str, int] = {}
 
     @staticmethod
     def _create_internal_providers(
@@ -346,8 +355,11 @@ class OtlpSink(BaseSink):
             for mk, mv in meta.items():
                 if isinstance(mv, (str, int, float, bool)):
                     metric_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
-            if meta.get("dimension"):
-                metric_attrs["eval.dimension"] = meta["dimension"]
+            # Always tag the dimension (falling back to "unknown") so it matches
+            # the final aggregation, which buckets undeclared scores via
+            # dimension_of(). Otherwise dashboards grouped by eval.dimension
+            # silently drop legacy/custom metrics.
+            metric_attrs["eval.dimension"] = dimension_of(score)
             if self._model:
                 metric_attrs["model"] = self._model
             self._score_gauge.set(score.value, attributes=metric_attrs)
@@ -387,6 +399,9 @@ class OtlpSink(BaseSink):
                 self._items_passed += 1
             for s in scores:
                 self._score_values.setdefault(s.name, []).append(s.value)
+                dimension = dimension_of(s)
+                self._dimension_values.setdefault(dimension, []).append(s.value)
+                self._dimension_passed[dimension] = self._dimension_passed.get(dimension, 0) + int(s.passed)
 
         # Build score event attributes (used in both paths)
         score_events: list[dict[str, Any]] = []
@@ -397,9 +412,9 @@ class OtlpSink(BaseSink):
                 "eval.score.threshold": score.threshold,
                 "eval.score.passed": score.passed,
             }
-            dimension = (score.metadata or {}).get("dimension")
-            if dimension:
-                event_attrs["eval.dimension"] = dimension
+            # Match the per-score gauge and final aggregation: undeclared scores
+            # fall back to "unknown" rather than being dropped from the attribute.
+            event_attrs["eval.dimension"] = dimension_of(score)
             if score.reason:
                 event_attrs["eval.score.reason"] = score.reason
             score_events.append(event_attrs)
@@ -465,6 +480,8 @@ class OtlpSink(BaseSink):
             item_count = self._item_count
             items_passed = self._items_passed
             score_values = {k: list(v) for k, v in self._score_values.items()}
+            dimension_values = {k: list(v) for k, v in self._dimension_values.items()}
+            dimension_passed = dict(self._dimension_passed)
 
         if root is not None:
             root.set_attribute("eval.summary.items_total", item_count)
@@ -474,6 +491,30 @@ class OtlpSink(BaseSink):
             summary_attrs: dict[str, Any] = {}
             for name, values in score_values.items():
                 summary_attrs[f"eval.summary.{name}.mean"] = round(sum(values) / len(values), 4)
+            # Per-dimension averages (ADR-009), plus Safety violation count as a
+            # hard-constraint signal (ADR-003). Set on the root span so a single
+            # span query returns the whole radar shape. Aggregation uses the same
+            # helper as summarize() so the two never diverge.
+            for dimension, values in dimension_values.items():
+                passed = dimension_passed.get(dimension, 0)
+                ds = build_dimension_summary(dimension, values, passed)
+                # Emit the full aggregation (ADR-016): mean, pass rate, and
+                # metric count. Mean alone can make a dimension look healthy
+                # while hiding threshold failures and sample size.
+                mean = round(ds.mean, 4)
+                pass_rate = round(ds.pass_rate, 4)
+                base = f"eval.summary.dimension.{dimension}"
+                for suffix, value in (
+                    ("mean", mean),
+                    ("pass_rate", pass_rate),
+                    ("count", ds.metric_count),
+                ):
+                    root.set_attribute(f"{base}.{suffix}", value)
+                    summary_attrs[f"{base}.{suffix}"] = value
+                if ds.is_safety:
+                    violations = ds.metric_count - passed
+                    root.set_attribute("eval.summary.dimension.safety.violations", violations)
+                    summary_attrs["eval.summary.dimension.safety.violations"] = violations
             if summary_attrs:
                 root.add_event("eval.summary", attributes=summary_attrs)
             root.set_status(StatusCode.OK)

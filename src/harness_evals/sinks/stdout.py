@@ -38,5 +38,22 @@ class StdoutSink(BaseSink):
         print(header)
         for ms in result.by_metric.values():
             print(f"  {ms.name}: mean={ms.mean:.4f}, pass_rate={ms.pass_rate:.1%} ({ms.passed_count}/{ms.count})")
-        print(f"  Overall pass rate: {result.overall_pass_rate:.1%}")
+        print(f"  Quality pass rate: {result.quality_pass_rate:.1%}")
+
+        # Safety is a hard constraint (ADR-003): surfaced separately, never
+        # folded into the quality pass rate.
+        has_safety = any(ds.is_safety for ds in result.by_dimension.values())
+        if has_safety:
+            print(f"  Safety: {result.safety_violations} violation(s), pass rate {result.safety_pass_rate:.1%}")
+
+        # Per-dimension breakdown (ADR-009): where the target is strong/weak.
+        if result.by_dimension:
+            print("  Dimensions:")
+            for ds in result.by_dimension.values():
+                status = (
+                    f"{result.safety_violations} violation(s)"
+                    if ds.is_safety
+                    else f"pass_rate={ds.pass_rate:.0%}"
+                )
+                print(f"    {ds.dimension:<13} mean={ds.mean:.2f}  {status}  (n={ds.metric_count})")
         self._all_scores.clear()

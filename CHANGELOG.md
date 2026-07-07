@@ -7,6 +7,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0]
+
+### Removed
+
+- **BREAKING (pre-1.0): `ScoreSummary.overall_pass_rate`** has been removed. It blended safety scores
+  into an aggregate pass rate, contradicting ADR-003 (safety is a hard constraint, never averaged). Use
+  `quality_pass_rate` (non-safety scores) together with `safety_pass_rate` / `safety_violations`.
+  Migration: `s/overall_pass_rate/quality_pass_rate/`. `StdoutSink` now prints "Quality pass rate".
+
+### Added
+
+- **Dimension-level aggregation (ADR-009)**: `summarize()` now populates `ScoreSummary.by_dimension`
+  (a `DimensionSummary` per dimension: `mean`, `pass_rate`, `metric_count`, `is_safety`). Scores
+  without a declared dimension are bucketed under `"unknown"`.
+- **Safety separation (ADR-003)**: `ScoreSummary` exposes `quality_pass_rate`, `safety_pass_rate`,
+  and `safety_violations`; safety is reported separately and excluded from the quality pass rate.
+- **StdoutSink**: prints a per-dimension breakdown block and a distinct safety line.
+- **OtlpSink**: emits `eval.summary.dimension.<dim>.{mean,pass_rate,count}` and
+  `eval.summary.dimension.safety.violations` on the root eval-run span. Per-score gauges and events
+  always carry `eval.dimension` (falling back to `"unknown"`), matching the summary aggregation so
+  dashboards grouped by dimension never silently drop undeclared metrics.
+
 ## [0.9.4]
 
 ### Added

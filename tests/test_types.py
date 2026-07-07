@@ -139,3 +139,51 @@ class TestMessage:
         msg = Message.from_dict({"role": "user", "content": "hello"})
         assert msg.latency_ms is None
         assert msg.token_count is None
+
+    def test_message_rag_fields_default_none(self):
+        msg = Message(role="assistant", content="answer")
+        assert msg.retrieval_context is None
+        assert msg.expected is None
+
+    def test_message_rag_fields_set(self):
+        msg = Message(
+            role="assistant",
+            content="answer",
+            retrieval_context=["chunk1", "chunk2"],
+            expected="the expected answer",
+        )
+        assert msg.retrieval_context == ["chunk1", "chunk2"]
+        assert msg.expected == "the expected answer"
+
+    def test_message_to_dict_includes_rag_when_set(self):
+        msg = Message(role="assistant", content="a", retrieval_context=["c1"], expected="e")
+        d = msg.to_dict()
+        assert d["retrieval_context"] == ["c1"]
+        assert d["expected"] == "e"
+
+    def test_message_to_dict_omits_rag_when_none(self):
+        msg = Message(role="assistant", content="a")
+        d = msg.to_dict()
+        assert "retrieval_context" not in d
+        assert "expected" not in d
+
+    def test_message_from_dict_reads_rag_fields(self):
+        msg = Message.from_dict(
+            {"role": "assistant", "content": "a", "retrieval_context": ["c1"], "expected": "e"}
+        )
+        assert msg.retrieval_context == ["c1"]
+        assert msg.expected == "e"
+
+    def test_message_roundtrip_with_rag_fields(self):
+        msg = Message(
+            role="assistant",
+            content="answer",
+            retrieval_context=["chunk1", "chunk2"],
+            expected="the expected answer",
+        )
+        assert Message.from_dict(msg.to_dict()) == msg
+
+    def test_message_from_dict_backward_compat_no_rag(self):
+        msg = Message.from_dict({"role": "user", "content": "hello"})
+        assert msg.retrieval_context is None
+        assert msg.expected is None

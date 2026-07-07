@@ -61,6 +61,25 @@ class TestBuildMetric:
         metric = build_metric(MetricSpec(kind="geval", params={"criteria": "Is it correct?"}), llm=llm)
         assert metric.name == "geval"
 
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "turn_faithfulness",
+            "turn_contextual_precision",
+            "turn_contextual_recall",
+            "turn_contextual_relevancy",
+        ],
+    )
+    def test_turn_level_rag_metrics_registered(self, kind: str, mock_llm) -> None:
+        # Regression: these were exported but not in the registry, so config
+        # users specifying them hit UnknownMetricError (PR #38 medium finding).
+        metric = build_metric(MetricSpec(kind=kind), llm=mock_llm())
+        assert metric.name == kind
+
+    def test_turn_level_rag_metric_without_llm_raises(self) -> None:
+        with pytest.raises(HarnessEvalsError, match="requires an LLM"):
+            build_metric(MetricSpec(kind="turn_faithfulness"))
+
 
 # ---------------------------------------------------------------------------
 # env var resolution in model params
@@ -96,17 +115,19 @@ class TestEnvVarResolution:
         monkeypatch.setenv("PROJECT_ID", "demo")
         from harness_evals.config.runner import _resolve_env_in_params
 
-        result = _resolve_env_in_params({
-            "url": "${API_HOST}/chat?org=${ORG_ID}&project=${PROJECT_ID}",
-            "headers": {"X-Org": "${ORG_ID}"},
-            "body_template": {
-                "harness_context": {
-                    "org_id": "${ORG_ID}",
-                    "project_id": "${PROJECT_ID}",
+        result = _resolve_env_in_params(
+            {
+                "url": "${API_HOST}/chat?org=${ORG_ID}&project=${PROJECT_ID}",
+                "headers": {"X-Org": "${ORG_ID}"},
+                "body_template": {
+                    "harness_context": {
+                        "org_id": "${ORG_ID}",
+                        "project_id": "${PROJECT_ID}",
+                    },
+                    "events": ["${ORG_ID}", "literal"],
                 },
-                "events": ["${ORG_ID}", "literal"],
-            },
-        })
+            }
+        )
 
         assert result["url"] == "http://localhost:8000/chat?org=default&project=demo"
         assert result["headers"]["X-Org"] == "default"
@@ -153,10 +174,13 @@ class TestBuildTarget:
         assert target.url == "http://localhost:8080/run"
 
     async def test_http_target_with_bearer_auth(self) -> None:
-        spec = TargetSpec(type="http", params={
-            "url": "http://localhost:8080/run",
-            "auth": {"type": "bearer", "token": "tok123"},
-        })
+        spec = TargetSpec(
+            type="http",
+            params={
+                "url": "http://localhost:8080/run",
+                "auth": {"type": "bearer", "token": "tok123"},
+            },
+        )
         target = await build_target(spec)
         from harness_evals.targets.auth import BearerAuth
 
@@ -167,18 +191,21 @@ class TestBuildTarget:
         monkeypatch.setenv("ACCOUNT_ID", "acct")
         monkeypatch.setenv("ORG_ID", "default")
         monkeypatch.setenv("PROJECT_ID", "demo")
-        spec = TargetSpec(type="streaming_http", params={
-            "url": "${API_HOST}/chat/unified?orgIdentifier=${ORG_ID}&projectIdentifier=${PROJECT_ID}",
-            "body_template": {
-                "prompt": None,
-                "stream": True,
-                "harness_context": {
-                    "account_id": "${ACCOUNT_ID}",
-                    "org_id": "${ORG_ID}",
-                    "project_id": "${PROJECT_ID}",
+        spec = TargetSpec(
+            type="streaming_http",
+            params={
+                "url": "${API_HOST}/chat/unified?orgIdentifier=${ORG_ID}&projectIdentifier=${PROJECT_ID}",
+                "body_template": {
+                    "prompt": None,
+                    "stream": True,
+                    "harness_context": {
+                        "account_id": "${ACCOUNT_ID}",
+                        "org_id": "${ORG_ID}",
+                        "project_id": "${PROJECT_ID}",
+                    },
                 },
             },
-        })
+        )
 
         target = await build_target(spec)
         from harness_evals.targets.streaming_http import StreamingHttpTarget
@@ -196,10 +223,13 @@ class TestBuildTarget:
         prompt_path = tmp_path / "prompt.txt"
         prompt_path.write_text("Answer {{input}}", encoding="utf-8")
 
-        spec = TargetSpec(type="prompt", params={
-            "prompt": str(prompt_path),
-            "model": {"provider": "openai", "name": "gpt-4o"},
-        })
+        spec = TargetSpec(
+            type="prompt",
+            params={
+                "prompt": str(prompt_path),
+                "model": {"provider": "openai", "name": "gpt-4o"},
+            },
+        )
 
         with patch("harness_evals.config.runner.build_llm") as mock_build_llm:
             mock_build_llm.return_value = AsyncMock()
@@ -310,10 +340,13 @@ class TestRunConfig:
         cfg = EvalConfig(
             name="test",
             dataset=ResourceRef(source="local", id=str(dataset_path)),
-            target=TargetSpec(type="prompt", params={
-                "prompt": str(prompt_path),
-                "model": mock,
-            }),
+            target=TargetSpec(
+                type="prompt",
+                params={
+                    "prompt": str(prompt_path),
+                    "model": mock,
+                },
+            ),
             metrics=[MetricSpec(kind="exact_match")],
             sinks=[],
         )

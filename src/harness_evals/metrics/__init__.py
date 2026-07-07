@@ -63,6 +63,12 @@ from harness_evals.metrics.rag.context_entity_recall import ContextEntityRecallM
 from harness_evals.metrics.rag.context_precision import ContextPrecisionMetric
 from harness_evals.metrics.rag.context_recall import ContextRecallMetric
 from harness_evals.metrics.rag.context_relevancy import ContextRelevancyMetric
+from harness_evals.metrics.rag.conversational import (
+    TurnContextualPrecisionMetric,
+    TurnContextualRecallMetric,
+    TurnContextualRelevancyMetric,
+    TurnFaithfulnessMetric,
+)
 from harness_evals.metrics.rag.faithfulness import FaithfulnessMetric
 from harness_evals.metrics.reliability.brier_score import BrierScoreMetric
 from harness_evals.metrics.reliability.calibration import CalibrationMetric
@@ -170,6 +176,10 @@ __all__ = [
     "ContextEntityRecallMetric",
     "AnswerSimilarityMetric",
     "AnswerCorrectnessMetric",
+    "TurnFaithfulnessMetric",
+    "TurnContextualPrecisionMetric",
+    "TurnContextualRecallMetric",
+    "TurnContextualRelevancyMetric",
     "DAGMetric",
     "DeepAcyclicGraph",
     "TaskNode",

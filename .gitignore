@@ -43,3 +43,6 @@ examples/*.local.*
 
 # Research papers / large binaries
 *.pdf
+
+# Local scratch for authoring PR descriptions (not part of the package)
+PR_BODY.md

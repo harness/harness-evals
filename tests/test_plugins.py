@@ -165,6 +165,25 @@ def test_load_plugins_unknown_module_raises_clear_error() -> None:
 
 
 @pytest.mark.unit
+def test_catalog_includes_turn_level_rag_metrics() -> None:
+    # Regression (PR #38 medium finding): the four turn-level RAG metrics must
+    # be discoverable via the catalog, categorized under RAG and flagged as
+    # LLM-judged.
+    by_kind = {entry.kind: entry for entry in catalog()}
+    for kind, cls_name in [
+        ("turn_faithfulness", "TurnFaithfulnessMetric"),
+        ("turn_contextual_precision", "TurnContextualPrecisionMetric"),
+        ("turn_contextual_recall", "TurnContextualRecallMetric"),
+        ("turn_contextual_relevancy", "TurnContextualRelevancyMetric"),
+    ]:
+        assert kind in by_kind, f"{kind} missing from catalog"
+        entry = by_kind[kind]
+        assert entry.name == cls_name
+        assert entry.category == "rag"
+        assert entry.requires_llm is True
+
+
+@pytest.mark.unit
 def test_catalog_includes_registered_metric() -> None:
     @plugins.register_metric("custom_plugin_metric")
     class CustomPluginMetric(BaseMetric):

@@ -7,6 +7,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0]
+
+### Added
+
+- **Turn-level (conversational) RAG metrics**: `TurnFaithfulnessMetric`,
+  `TurnContextualPrecisionMetric`, `TurnContextualRecallMetric`, and
+  `TurnContextualRelevancyMetric`. Each scores every assistant turn against *that turn's own*
+  retrieved context, aggregates to a conversation-level mean, and exposes the per-turn breakdown in
+  `Score.metadata["turn_scores"]`. Registered in the catalog as `turn_faithfulness`,
+  `turn_contextual_precision`, `turn_contextual_recall`, and `turn_contextual_relevancy`.
+- `Message.retrieval_context: list[str] | None` and `Message.expected: str | None` — set on the
+  assistant message of a turn to carry per-turn retrieval and gold answers through
+  `evaluate_conversation()`.
+
+### Changed
+
+- Turn-level RAG metrics treat an assistant turn missing required inputs (retrieval context, or a
+  required query/expected) as a **localized failure** scored `0.0`, so a per-turn retriever failure
+  drags the conversation score down instead of vanishing from the average. Pass `allow_skips=True`
+  to exclude such turns instead; skipped turns are still surfaced in `turn_scores` with
+  `"skipped": True` and counted in `metadata["n_skipped_turns"]`.
+
 ## [0.10.0]
 
 ### Removed

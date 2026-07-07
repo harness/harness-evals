@@ -44,6 +44,12 @@ class Message:
     token_count: int | None = None
     cost_usd: float | None = None
 
+    # RAG turn data — the chunks retrieved to answer this turn and the
+    # expected answer for it. Set on the assistant message of a turn so
+    # turn-level RAG metrics can score each turn's retrieval/answer pair.
+    retrieval_context: list[str] | None = field(default=None)
+    expected: str | None = None
+
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role}
         if self.content is not None:
@@ -56,6 +62,10 @@ class Message:
             d["token_count"] = self.token_count
         if self.cost_usd is not None:
             d["cost_usd"] = self.cost_usd
+        if self.retrieval_context is not None:
+            d["retrieval_context"] = self.retrieval_context
+        if self.expected is not None:
+            d["expected"] = self.expected
         return d
 
     @classmethod
@@ -70,4 +80,6 @@ class Message:
             latency_ms=data.get("latency_ms"),
             token_count=data.get("token_count"),
             cost_usd=data.get("cost_usd"),
+            retrieval_context=data.get("retrieval_context"),
+            expected=data.get("expected"),
         )

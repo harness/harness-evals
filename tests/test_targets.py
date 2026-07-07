@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from urllib.error import URLError
 from urllib.request import Request
@@ -34,8 +35,12 @@ class StubLLM(BaseLLM):
 
     def __init__(self, response: str = "model output") -> None:
         self._response = response
+        self.prompts: list[str] = []
+        self.system_prompts: list[object | None] = []
 
     async def generate(self, prompt: str, **kwargs) -> str:
+        self.prompts.append(prompt)
+        self.system_prompts.append(kwargs.get("system_prompt"))
         return self._response
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
@@ -133,6 +138,19 @@ async def test_prompt_target_metadata_as_template_vars() -> None:
 
 
 @pytest.mark.unit
+async def test_prompt_target_passes_system_prompt_separately() -> None:
+    prompt = PromptTemplate(template="{{input}}", input_variables=["input"])
+    model = StubLLM("policy answer")
+    target = PromptTarget(prompt=prompt, model=model, system_prompt="You are a policy assistant.")
+
+    result = await target.ainvoke(Golden(input="What is the return policy?"))
+
+    assert result.output == "policy answer"
+    assert model.prompts == ["What is the return policy?"]
+    assert model.system_prompts == ["You are a policy assistant."]
+
+
+@pytest.mark.unit
 async def test_prompt_target_preserves_golden_fields() -> None:
     prompt = PromptTemplate(template="{{input}}", input_variables=["input"])
     target = PromptTarget(prompt=prompt, model=StubLLM("out"))
@@ -150,6 +168,34 @@ async def test_prompt_target_preserves_golden_fields() -> None:
     assert result.context == ["ctx1"]
     assert result.tags == {"env": "test"}
     assert result.metadata == {"key": "val"}
+
+
+@pytest.mark.unit
+async def test_prompt_target_synthesizes_trajectory() -> None:
+    prompt = PromptTemplate(template="Answer: {{input}}", input_variables=["input"])
+    target = PromptTarget(prompt=prompt, model=StubLLM("42"))
+
+    golden = Golden(input="What is 6*7?", expected="42")
+    result = await target.ainvoke(golden)
+
+    assert result.messages is not None
+    assert [(m.role, m.content) for m in result.messages] == [
+        ("user", "What is 6*7?"),
+        ("assistant", "42"),
+    ]
+
+
+@pytest.mark.unit
+async def test_prompt_target_trajectory_json_encodes_dict_input() -> None:
+    prompt = PromptTemplate(template="Process: {{input}}", input_variables=["input"])
+    target = PromptTarget(prompt=prompt, model=StubLLM("done"))
+
+    golden = Golden(input={"query": "hello", "lang": "en"})
+    result = await target.ainvoke(golden)
+
+    assert result.messages is not None
+    assert result.messages[0].role == "user"
+    assert json.loads(result.messages[0].content) == {"query": "hello", "lang": "en"}
 
 
 @pytest.mark.unit
@@ -207,14 +253,23 @@ async def test_http_target_with_body_template(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
 
+    captured_requests: list[Request] = []
+
+    def fake_urlopen_capture(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured_requests.append(request)
+        return FakeHTTPResponse(json.dumps({"output": "ok"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen_capture)
+
     target = HttpTarget(
         url="http://localhost:8080/api",
-        body_template={"data": {"query": None, "mode": "eval"}},
-        input_path="$.data.query",
+        body_template={"data": {"query": "{{input}}", "mode": "eval"}},
     )
     golden = Golden(input="test query")
     result = await target.ainvoke(golden)
     assert result.output == "ok"
+    sent = json.loads(captured_requests[0].data.decode())
+    assert sent == {"data": {"query": "test query", "mode": "eval"}}
 
 
 @pytest.mark.unit
@@ -327,9 +382,214 @@ async def test_http_target_extracts_all_optional_fields(monkeypatch: pytest.Monk
 
 
 @pytest.mark.unit
-def test_http_target_rejects_bracket_input_path() -> None:
-    with pytest.raises(ValueError, match="dot notation"):
-        HttpTarget(url="http://localhost:8080/run", input_path="$.data[0].query")
+async def test_http_target_reported_messages_take_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    response_data = {
+        "output": "answer",
+        "trace": [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "thinking"},
+            {"role": "assistant", "content": "answer"},
+        ],
+    }
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps(response_data))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run", messages_path="$.trace")
+    result = await target.ainvoke(Golden(input="q"))
+
+    # A reported trajectory is authoritative — used verbatim (coerced from the
+    # extracted dicts into Message objects), not synthesized.
+    assert result.messages is not None
+    assert len(result.messages) == 3
+    assert [m.content for m in result.messages] == ["q", "thinking", "answer"]
+
+
+@pytest.mark.unit
+async def test_http_target_malformed_reported_messages_not_synthesized_over(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from harness_evals.targets import http as target_http
+
+    # messages_path resolves to a value that can't be coerced (list of strings,
+    # not message dicts). This is an instrumentation failure — the target must
+    # NOT silently fall back to a fabricated [user, assistant] trace over it.
+    response_data = {"output": "answer", "trace": ["not", "a", "trajectory"]}
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps(response_data))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run", messages_path="$.trace")
+    with caplog.at_level(logging.WARNING, logger="harness_evals.targets.trajectory"):
+        result = await target.ainvoke(Golden(input="q"))
+
+    # Empty (not a synthesized 2-message exchange) so metrics surface "no messages".
+    assert result.messages == []
+    assert any("could not be coerced" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.unit
+async def test_http_target_empty_reported_messages_is_not_treated_as_malformed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from harness_evals.targets import http as target_http
+
+    # An endpoint that reports an explicitly-empty trajectory (messages: []) is
+    # valid "no turns" — it must stay [] with no coercion warning, not synthesize.
+    response_data = {"output": "answer", "trace": []}
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps(response_data))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run", messages_path="$.trace")
+    with caplog.at_level(logging.WARNING, logger="harness_evals.targets.trajectory"):
+        result = await target.ainvoke(Golden(input="q"))
+
+    assert result.messages == []
+    assert not any("could not be coerced" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.unit
+async def test_http_target_synthesizes_trajectory_when_not_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"output": "agent response"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run")
+    result = await target.ainvoke(Golden(input="hello"))
+
+    assert result.messages is not None
+    assert [(m.role, m.content) for m in result.messages] == [
+        ("user", "hello"),
+        ("assistant", "agent response"),
+    ]
+
+
+@pytest.mark.unit
+async def test_http_target_synthesized_trajectory_includes_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    response_data = {
+        "output": "done",
+        "tools": [{"name": "search", "input": {"q": "cats"}, "output": "found"}],
+    }
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps(response_data))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run", tool_calls_path="$.tools")
+    result = await target.ainvoke(Golden(input="find cats"))
+
+    assert result.messages is not None
+    # user, assistant(tool_calls), assistant(output)
+    assert [m.role for m in result.messages] == ["user", "assistant", "assistant"]
+    assert result.messages[1].tool_calls is not None
+    assert result.messages[1].tool_calls[0].name == "search"
+    assert result.messages[2].content == "done"
+    # tool_calls are also coerced into ToolCall objects on the eval case.
+    assert result.tool_calls is not None
+    assert result.tool_calls[0].name == "search"
+
+
+@pytest.mark.unit
+async def test_http_target_default_body_wraps_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured.append(request)
+        return FakeHTTPResponse(json.dumps({"output": "ok"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    # No body_template → the whole golden.input is wrapped as {"input": ...}.
+    target = HttpTarget(url="http://localhost:8080/run")
+    await target.ainvoke(Golden(input={"question": "hi", "k": 3}))
+
+    sent = json.loads(captured[0].data.decode())
+    assert sent == {"input": {"question": "hi", "k": 3}}
+
+
+@pytest.mark.unit
+async def test_http_target_scatters_input_fields_via_templating(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured.append(request)
+        return FakeHTTPResponse(json.dumps({"output": "ok"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        body_template={
+            "query": "{{input.question}}",
+            "top_k": "{{input.k}}",
+            "greeting": "Hello {{metadata.user}}",
+        },
+    )
+    await target.ainvoke(Golden(input={"question": "cats?", "k": 5}, metadata={"user": "srikar"}))
+
+    sent = json.loads(captured[0].data.decode())
+    # Whole-string placeholder preserves native type (int stays int); embedded
+    # placeholder is string-interpolated.
+    assert sent == {"query": "cats?", "top_k": 5, "greeting": "Hello srikar"}
+
+
+@pytest.mark.unit
+async def test_http_target_unresolved_placeholder_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"output": "ok"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        body_template={"query": "{{input.missing}}"},
+    )
+    with pytest.raises(ValueError, match="did not resolve"):
+        await target.ainvoke(Golden(input={"question": "hi"}))
+
+
+@pytest.mark.unit
+async def test_http_target_templates_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured.append(request)
+        return FakeHTTPResponse(json.dumps({"output": "ok"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        headers={"Authorization": "Bearer {{input.token}}", "X-Tenant": "{{metadata.tenant}}"},
+    )
+    await target.ainvoke(Golden(input={"token": "abc123"}, metadata={"tenant": "acme"}))
+
+    # urllib title-cases header names on the Request object.
+    assert captured[0].headers["Authorization"] == "Bearer abc123"
+    assert captured[0].headers["X-tenant"] == "acme"
 
 
 # ---------------------------------------------------------------------------

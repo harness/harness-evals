@@ -13,6 +13,7 @@ from harness_evals.llm.base import BaseLLM
 from harness_evals.plugins import register_target
 from harness_evals.prompts.template import PromptTemplate
 from harness_evals.targets.base import BaseTarget
+from harness_evals.targets.trajectory import synthesize_messages
 
 
 @register_target("prompt")
@@ -27,6 +28,7 @@ class PromptTarget(BaseTarget):
 
     prompt: PromptTemplate
     model: BaseLLM
+    system_prompt: str | None = None
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
         input_str = golden.input if isinstance(golden.input, str) else json.dumps(golden.input, ensure_ascii=False)
@@ -34,10 +36,13 @@ class PromptTarget(BaseTarget):
         rendered = self.prompt.render(input=input_str, **extra_vars)
 
         t0 = perf_counter()
-        output = await self.model.generate(rendered)
+        output = await self.model.generate(rendered, system_prompt=self.system_prompt)
         latency_ms = (perf_counter() - t0) * 1000
 
-        return EvalCase.from_golden(golden, output=output, latency_ms=latency_ms)
+        # A prompt call has no agent loop, but we still record the observed
+        # exchange as a trajectory so agent/trajectory metrics can grade it.
+        messages = synthesize_messages(golden.input, output)
+        return EvalCase.from_golden(golden, output=output, latency_ms=latency_ms, messages=messages)
 
     async def close(self) -> None:
         close = getattr(self.model, "close", None)

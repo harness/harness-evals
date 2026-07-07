@@ -52,11 +52,20 @@ class ConversationSimulator:
     """Drives a multi-turn conversation between a simulated user and agent-under-test."""
 
     def __init__(
-        self, simulator_llm: BaseLLM, *, max_concurrent: int = 5, graph: SimulationGraph | None = None
+        self, simulator_llm: BaseLLM | None = None, *, max_concurrent: int = 5, graph: SimulationGraph | None = None
     ) -> None:
         self.simulator_llm = simulator_llm
         self.max_concurrent = max_concurrent
         self.graph = graph
+
+    def _require_llm(self) -> BaseLLM:
+        if self.simulator_llm is None:
+            raise ValueError(
+                "simulator_llm is required for SIMULATE/GRAPH conversation modes. "
+                "Pass simulator_llm=<BaseLLM instance> when constructing the simulator "
+                "or calling evaluate_dataset()."
+            )
+        return self.simulator_llm
 
     def simulate_sync(
         self,
@@ -121,7 +130,7 @@ class ConversationSimulator:
             context_section=context_section,
             history=history_text,
         )
-        return await self.simulator_llm.generate(prompt)
+        return await self._require_llm().generate(prompt)
 
     async def _should_stop(self, golden: ConversationGolden, history: list[Message]) -> bool:
         history_text = "\n".join(f"[{m.role}]: {m.content or ''}" for m in history)
@@ -129,7 +138,7 @@ class ConversationSimulator:
             expected_outcome=golden.expected_outcome,
             history=history_text,
         )
-        result = await self.simulator_llm.generate_json(prompt, _STOP_SCHEMA)
+        result = await self._require_llm().generate_json(prompt, _STOP_SCHEMA)
         return bool(result.get("achieved", False))
 
     async def _scripted(
@@ -240,7 +249,7 @@ class ConversationSimulator:
             context_section=context_section,
             history=history_text,
         )
-        return await self.simulator_llm.generate(prompt)
+        return await self._require_llm().generate(prompt)
 
     def _build_eval_case(self, golden: ConversationGolden, history: list[Message]) -> EvalCase:
         last_assistant = ""

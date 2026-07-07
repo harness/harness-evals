@@ -23,10 +23,21 @@ class ToolCall:
 
     @classmethod
     def from_dict(cls, data: dict) -> ToolCall:
+        # Accept common field aliases so tool-call dicts from popular providers
+        # work without pre-processing:
+        #   OpenAI/LangChain: ``arguments`` (the tool input), ``result`` (output)
+        #   Anthropic:        ``input`` (native match — no alias needed)
+        # Explicit ``input``/``output`` keys always take precedence.
+        input_val = data.get("input")
+        if input_val is None:
+            input_val = data.get("arguments")
+        output_val = data.get("output")
+        if output_val is None:
+            output_val = data.get("result")
         return cls(
             name=data["name"],
-            input=data.get("input"),
-            output=data.get("output"),
+            input=input_val,
+            output=output_val,
         )
 
 

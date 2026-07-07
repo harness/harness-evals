@@ -7,15 +7,15 @@ or a configured subset), and selects a final output from the stream. Non-streami
 responses fall back to buffered JSON/text parsing, matching ``HttpTarget`` semantics.
 
 This target makes no assumptions about any specific product's request or response
-shape — request bodies are built from ``body_template`` + ``input_path`` and all
-output extraction uses the shared ``extract_path`` (JSONPath) utility.
+shape — request bodies are built from ``body_template`` with ``{{input}}`` /
+``{{input.foo}}`` placeholders, and all output extraction uses the shared
+``extract_path`` (JSONPath) utility.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import copy
 import json
 import logging
 import ssl
@@ -35,6 +35,12 @@ from harness_evals.core.golden import Golden
 from harness_evals.plugins import register_target
 from harness_evals.targets.auth import AuthConfig, NoAuth
 from harness_evals.targets.base import BaseTarget
+from harness_evals.targets.templating import render_headers, render_request_body
+from harness_evals.targets.trajectory import (
+    normalize_trajectory_fields,
+    reconstruct_stream_messages,
+    synthesize_messages,
+)
 from harness_evals.utils.path import extract_path
 
 logger = logging.getLogger(__name__)
@@ -70,6 +76,14 @@ class StreamingHttpTarget(BaseTarget):
             empty and a warning is logged — set ``output_event`` for such streams.
             Independent of ``capture_events``: all other events remain available
             to metrics via ``sse_events``.
+
+    Trajectory: unless the agent reports a consolidated trajectory via
+    ``messages_path`` (which stays authoritative), ``EvalCase.messages`` is
+    rebuilt from the stream in event order — interleaving assistant text
+    (``output_path``), tool calls, and tool results (``tool_calls_path``) as
+    they were emitted. Streams that carry no such structure fall back to a
+    plain ``[user, assistant]`` envelope. Raw events are still captured to
+    ``sse_events`` regardless.
     """
 
     url: str
@@ -79,7 +93,6 @@ class StreamingHttpTarget(BaseTarget):
     timeout_s: float = 60.0
     verify_tls: bool = True
 
-    input_path: str = "$.input"
     body_template: dict | None = None
 
     retries: int = 2
@@ -100,9 +113,6 @@ class StreamingHttpTarget(BaseTarget):
     output_event: str | None = None
 
     _async_client: object | None = field(default=None, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        _validate_input_path(self.input_path)
 
     async def __aenter__(self) -> StreamingHttpTarget:
         if httpx is None:
@@ -130,11 +140,14 @@ class StreamingHttpTarget(BaseTarget):
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
         body = self._build_request_body(golden)
+        headers = render_headers(self.headers, golden)
         if self._async_client is not None:
-            raw_body, content_type, latency_ms, error = await self._execute_async(body)
+            raw_body, content_type, latency_ms, error = await self._execute_async(body, headers)
         else:
             logger.debug("StreamingHttpTarget used without context manager — falling back to sync thread pool")
-            raw_body, content_type, latency_ms, error = await asyncio.to_thread(self._execute_with_retries, body)
+            raw_body, content_type, latency_ms, error = await asyncio.to_thread(
+                self._execute_with_retries, body, headers
+            )
 
         if error is not None:
             return EvalCase.from_golden(
@@ -144,8 +157,15 @@ class StreamingHttpTarget(BaseTarget):
                 metadata_extra={"http_error": error},
             )
 
-        output, kwargs, metadata_extra, extract_source = self._process_response(raw_body, content_type)
+        output, kwargs, metadata_extra, extract_source = self._process_response(
+            raw_body, content_type, golden.input
+        )
         extracted_context = kwargs.pop("context", None)
+        # A reported trajectory (messages_path) is authoritative; otherwise
+        # assemble a best-effort trace from the input, any captured tool calls,
+        # and the output so agent/trajectory metrics have something to grade.
+        if kwargs.get("messages") is None:
+            kwargs["messages"] = synthesize_messages(golden.input, output, kwargs.get("tool_calls"))
         if self.latency_ms_path is None:
             kwargs["latency_ms"] = latency_ms
         else:
@@ -157,12 +177,14 @@ class StreamingHttpTarget(BaseTarget):
             eval_case.context = extracted_context
         return eval_case
 
-    async def _execute_async(self, body: bytes) -> tuple[object, str, float, str | None]:
+    async def _execute_async(
+        self, body: bytes, user_headers: dict[str, str]
+    ) -> tuple[object, str, float, str | None]:
         """Async streaming HTTP call using httpx with retries. Returns (raw_text, content_type, latency_ms, error)."""
         client = self._async_client
         assert client is not None
 
-        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **self.headers}
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **user_headers}
         params: dict[str, str] = {}
         self.auth.apply(headers, params)
 
@@ -209,9 +231,11 @@ class StreamingHttpTarget(BaseTarget):
 
         return None, "", last_latency_ms, last_error
 
-    def _execute_with_retries(self, body: bytes) -> tuple[object, str, float, str | None]:
+    def _execute_with_retries(
+        self, body: bytes, user_headers: dict[str, str]
+    ) -> tuple[object, str, float, str | None]:
         """Synchronous HTTP call with retry logic. Returns (raw_text, content_type, latency_ms, error)."""
-        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **self.headers}
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **user_headers}
         params: dict[str, str] = {}
         self.auth.apply(headers, params)
 
@@ -252,18 +276,17 @@ class StreamingHttpTarget(BaseTarget):
         return None, "", last_attempt_latency_ms, last_error
 
     def _build_request_body(self, golden: Golden) -> bytes:
-        if self.body_template is not None:
-            payload = copy.deepcopy(self.body_template)
-            _set_by_path(payload, self.input_path, golden.input)
-        else:
-            payload = {"input": golden.input}
+        payload = render_request_body(self.body_template, golden)
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    def _process_response(self, raw: object, content_type: str) -> tuple[object, dict, dict | None, object]:
+    def _process_response(
+        self, raw: object, content_type: str, input_value: object
+    ) -> tuple[object, dict, dict | None, object]:
         """Turn a raw response body into (output, optional_field_kwargs, metadata_extra, extract_source).
 
         ``extract_source`` is the object that ``latency_ms_path`` (and, for SSE,
-        the optional-field paths) are evaluated against.
+        the optional-field paths) are evaluated against. ``input_value`` seeds
+        the leading user turn when a trajectory is reconstructed from the stream.
         """
         if raw is None:
             return "", {}, None, None
@@ -281,6 +304,18 @@ class StreamingHttpTarget(BaseTarget):
         final_payload = self._final_payload(decoded)
         output = self._final_output(decoded, final_payload)
         kwargs = self._extract_optional_fields(final_payload) if final_payload is not None else {}
+        # Rebuild an ordered trajectory from the stream (interleaved assistant
+        # text / tool calls / tool results) unless the agent already reported a
+        # consolidated trajectory via messages_path — that stays authoritative.
+        if kwargs.get("messages") is None:
+            reconstructed = reconstruct_stream_messages(
+                decoded,
+                input_value,
+                output_path=self.output_path,
+                tool_calls_path=self.tool_calls_path,
+            )
+            if reconstructed is not None:
+                kwargs["messages"] = reconstructed
         return output, kwargs, metadata_extra, final_payload
 
     def _capture(self, decoded: list[tuple[str, object]]) -> dict | None:
@@ -378,6 +413,7 @@ class StreamingHttpTarget(BaseTarget):
         _extract_float(kwargs, response_body, "retry_count", self.retry_count_path, int)
         _extract_float(kwargs, response_body, "confidence", self.confidence_path, float)
 
+        normalize_trajectory_fields(kwargs, self.messages_path)
         return kwargs
 
 
@@ -444,31 +480,6 @@ def _parse_response(raw: str, content_type: str) -> object:
         return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         return raw
-
-
-def _validate_input_path(path: str) -> None:
-    if "[" in path or "]" in path:
-        raise ValueError("input_path supports dot notation only; array indices and bracket syntax are not supported")
-
-
-def _set_by_path(obj: dict, path: str, value: object) -> None:
-    """Set a value in a nested dict using dot-separated path notation.
-
-    Supports paths like ``$.input``, ``$.data.query``, or bare ``input``.
-    Does not handle array indices or JSONPath wildcards/filters.
-    """
-    if path.startswith("$."):
-        path = path[2:]
-    elif path.startswith("$"):
-        path = path[1:]
-
-    parts = path.split(".")
-    current = obj
-    for part in parts[:-1]:
-        if part not in current or not isinstance(current[part], dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
 
 
 def _extract_field(kwargs: dict, body: object, key: str, path: str | None) -> None:

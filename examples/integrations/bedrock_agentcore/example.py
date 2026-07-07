@@ -82,8 +82,7 @@ def build_http_target() -> HttpTarget:
         ),
         method="POST",
         auth=BearerAuth(os.environ["AGENTCORE_JWT"]),
-        body_template={"prompt": ""},
-        input_path="$.prompt",
+        body_template={"prompt": "{{input}}"},
         output_path=f"$.{os.environ.get('AGENTCORE_OUTPUT_KEY', 'result')}",
         timeout_s=120.0,
     )

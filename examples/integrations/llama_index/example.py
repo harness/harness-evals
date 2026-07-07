@@ -53,8 +53,7 @@ def build_target() -> HttpTarget:
     return HttpTarget(
         url=os.environ.get("LLAMAINDEX_ENDPOINT", "http://localhost:8000/query"),
         method="POST",
-        body_template={"query": ""},
-        input_path="$.query",
+        body_template={"query": "{{input}}"},
         output_path="$.response",
         context_path="$.context",
     )

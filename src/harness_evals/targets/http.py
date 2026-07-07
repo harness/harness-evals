@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import copy
 import json
 import logging
 import ssl
@@ -24,6 +23,8 @@ from harness_evals.core.golden import Golden
 from harness_evals.plugins import register_target
 from harness_evals.targets.auth import AuthConfig, NoAuth
 from harness_evals.targets.base import BaseTarget
+from harness_evals.targets.templating import render_headers, render_request_body
+from harness_evals.targets.trajectory import normalize_trajectory_fields, synthesize_messages
 from harness_evals.utils.path import extract_path
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,6 @@ class HttpTarget(BaseTarget):
     timeout_s: float = 60.0
     verify_tls: bool = True
 
-    input_path: str = "$.input"
     body_template: dict | None = None
 
     retries: int = 2
@@ -63,9 +63,6 @@ class HttpTarget(BaseTarget):
     latency_ms_path: str | None = None
 
     _async_client: object | None = field(default=None, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        _validate_input_path(self.input_path)
 
     async def __aenter__(self) -> HttpTarget:
         if httpx is None:
@@ -93,13 +90,14 @@ class HttpTarget(BaseTarget):
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
         body = self._build_request_body(golden)
+        headers = render_headers(self.headers, golden)
 
         if self._async_client is not None:
-            response_body, content_type, latency_ms, error = await self._execute_async(body)
+            response_body, content_type, latency_ms, error = await self._execute_async(body, headers)
         else:
             logger.debug("HttpTarget used without context manager — falling back to sync thread pool")
             response_body, content_type, latency_ms, error = await asyncio.to_thread(
-                self._execute_with_retries, body
+                self._execute_with_retries, body, headers
             )
 
         if error is not None:
@@ -113,6 +111,11 @@ class HttpTarget(BaseTarget):
         output = self._extract_output(response_body, content_type)
         kwargs = self._extract_optional_fields(response_body)
         extracted_context = kwargs.pop("context", None)
+        # A reported trajectory (messages_path) is authoritative; otherwise
+        # assemble a best-effort trace from the input, any captured tool calls,
+        # and the output so agent/trajectory metrics have something to grade.
+        if kwargs.get("messages") is None:
+            kwargs["messages"] = synthesize_messages(golden.input, output, kwargs.get("tool_calls"))
         if self.latency_ms_path is None:
             kwargs["latency_ms"] = latency_ms
         else:
@@ -124,12 +127,14 @@ class HttpTarget(BaseTarget):
             eval_case.context = extracted_context
         return eval_case
 
-    async def _execute_async(self, body: bytes) -> tuple[object, str, float, str | None]:
+    async def _execute_async(
+        self, body: bytes, user_headers: dict[str, str]
+    ) -> tuple[object, str, float, str | None]:
         """Async HTTP call using httpx with connection pooling and retries."""
         client = self._async_client
         assert client is not None
 
-        headers = {"Content-Type": "application/json", "Accept": "application/json", **self.headers}
+        headers = {"Content-Type": "application/json", "Accept": "application/json", **user_headers}
         params: dict[str, str] = {}
         self.auth.apply(headers, params)
 
@@ -179,16 +184,14 @@ class HttpTarget(BaseTarget):
         return None, "", last_latency_ms, last_error
 
     def _build_request_body(self, golden: Golden) -> bytes:
-        if self.body_template is not None:
-            payload = copy.deepcopy(self.body_template)
-            _set_by_path(payload, self.input_path, golden.input)
-        else:
-            payload = {"input": golden.input}
+        payload = render_request_body(self.body_template, golden)
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    def _execute_with_retries(self, body: bytes) -> tuple[object, str, float, str | None]:
+    def _execute_with_retries(
+        self, body: bytes, user_headers: dict[str, str]
+    ) -> tuple[object, str, float, str | None]:
         """Synchronous HTTP call with retry logic. Returns (parsed_body, content_type, latency_ms, error)."""
-        headers = {"Content-Type": "application/json", "Accept": "application/json", **self.headers}
+        headers = {"Content-Type": "application/json", "Accept": "application/json", **user_headers}
         params: dict[str, str] = {}
         self.auth.apply(headers, params)
 
@@ -261,6 +264,7 @@ class HttpTarget(BaseTarget):
         _extract_float(kwargs, response_body, "retry_count", self.retry_count_path, int)
         _extract_float(kwargs, response_body, "confidence", self.confidence_path, float)
 
+        normalize_trajectory_fields(kwargs, self.messages_path)
         return kwargs
 
 
@@ -279,31 +283,6 @@ def _parse_response(raw: str, content_type: str) -> object:
         return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         return raw
-
-
-def _validate_input_path(path: str) -> None:
-    if "[" in path or "]" in path:
-        raise ValueError("input_path supports dot notation only; array indices and bracket syntax are not supported")
-
-
-def _set_by_path(obj: dict, path: str, value: object) -> None:
-    """Set a value in a nested dict using dot-separated path notation.
-
-    Supports paths like ``$.input``, ``$.data.query``, or bare ``input``.
-    Does not handle array indices or JSONPath wildcards/filters.
-    """
-    if path.startswith("$."):
-        path = path[2:]
-    elif path.startswith("$"):
-        path = path[1:]
-
-    parts = path.split(".")
-    current = obj
-    for part in parts[:-1]:
-        if part not in current or not isinstance(current[part], dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
 
 
 def _extract_field(kwargs: dict, body: object, key: str, path: str | None) -> None:

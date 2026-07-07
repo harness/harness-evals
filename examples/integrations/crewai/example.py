@@ -46,8 +46,7 @@ def build_target() -> HttpTarget:
         url=os.environ.get("CREWAI_ENDPOINT", "http://localhost:8000/run"),
         method="POST",
         auth=BearerAuth(os.environ["CREWAI_API_KEY"]) if os.environ.get("CREWAI_API_KEY") else NoAuth(),
-        body_template={"input": ""},
-        input_path="$.input",
+        body_template={"input": "{{input}}"},
         output_path="$.output",
     )
 

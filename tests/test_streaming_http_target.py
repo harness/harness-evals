@@ -320,13 +320,12 @@ async def test_accepts_event_stream_and_applies_auth(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.unit
-async def test_body_template_and_input_path(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_body_template_with_input_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
 
     target = StreamingHttpTarget(
         url="http://localhost:8080/api",
-        body_template={"data": {"query": None, "mode": "eval"}},
-        input_path="$.data.query",
+        body_template={"data": {"query": "{{input}}", "mode": "eval"}, "stream": True},
     )
     result = await target.ainvoke(Golden(input="test query"))
 
@@ -334,13 +333,38 @@ async def test_body_template_and_input_path(monkeypatch: pytest.MonkeyPatch) -> 
     import json
 
     body = json.loads(captured[0].data.decode())
-    assert body == {"data": {"query": "test query", "mode": "eval"}}
+    assert body == {"data": {"query": "test query", "mode": "eval"}, "stream": True}
 
 
 @pytest.mark.unit
-def test_rejects_bracket_input_path() -> None:
-    with pytest.raises(ValueError, match="dot notation"):
-        StreamingHttpTarget(url="http://localhost:8080/run", input_path="$.data[0].query")
+async def test_body_template_scatters_input_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/api",
+        body_template={"prompt": "{{input.text}}", "max_tokens": "{{input.limit}}", "stream": True},
+    )
+    await target.ainvoke(Golden(input={"text": "hi", "limit": 128}))
+
+    import json
+
+    body = json.loads(captured[0].data.decode())
+    assert body == {"prompt": "hi", "max_tokens": 128, "stream": True}
+
+
+@pytest.mark.unit
+async def test_templates_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/api",
+        headers={"Authorization": "Bearer {{input.token}}", "X-Session": "{{input.sid}}"},
+    )
+    await target.ainvoke(Golden(input={"token": "abc123", "sid": 42}))
+
+    # urllib title-cases header names; whole-placeholder header values stringify.
+    assert captured[0].headers["Authorization"] == "Bearer abc123"
+    assert captured[0].headers["X-session"] == "42"
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +576,95 @@ async def test_async_retries_then_succeeds() -> None:
 
     assert result.output == "recovered"
     assert len(client.calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Trajectory synthesis / precedence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_sse_synthesizes_trajectory_when_not_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse("event: message\ndata: {\"output\": \"final answer\"}")
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run")
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.messages is not None
+    assert [(m.role, m.content) for m in result.messages] == [
+        ("user", "q"),
+        ("assistant", "final answer"),
+    ]
+
+
+@pytest.mark.unit
+async def test_sse_reported_messages_take_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse(
+        'event: message\ndata: {"output": "final answer", '
+        '"trace": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "final answer"}]}'
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", messages_path="$.trace")
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.messages is not None
+    # Coerced from extracted dicts into Message objects, used verbatim.
+    assert all(isinstance(m.role, str) for m in result.messages)
+    assert [m.content for m in result.messages] == ["q", "final answer"]
+
+
+@pytest.mark.unit
+async def test_sse_reconstructs_interleaved_trajectory(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Agent streams text, then a tool call, then a tool result, then more text,
+    # across separate SSE events with no consolidated messages array.
+    body = _sse(
+        'event: message\ndata: {"output": "let me look that up"}',
+        'event: tool\ndata: {"tools": [{"name": "search", "input": {"q": "cats"}}]}',
+        'event: tool\ndata: {"tools": [{"name": "search", "output": "found 3"}]}',
+        'event: message\ndata: {"output": "here are the results"}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", tool_calls_path="$.tools")
+    result = await target.ainvoke(Golden(input="find cats"))
+
+    assert result.messages is not None
+    assert [(m.role, m.content) for m in result.messages] == [
+        ("user", "find cats"),
+        ("assistant", "let me look that up"),
+        ("assistant", None),
+        ("tool", "found 3"),
+        ("assistant", "here are the results"),
+    ]
+    tool_call = result.messages[2]
+    assert tool_call.tool_calls is not None
+    assert tool_call.tool_calls[0].name == "search"
+    # Raw events are still captured to metadata alongside the reconstruction.
+    assert result.meta("sse_events") is not None
+
+
+@pytest.mark.unit
+async def test_sse_reconstruction_yields_to_reported_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Even with a rich interleaved stream, an explicit messages_path wins.
+    body = _sse(
+        'event: message\ndata: {"output": "streamed text"}',
+        'event: tool\ndata: {"tools": [{"name": "search", "input": {}}]}',
+        'event: final\ndata: {"trace": [{"role": "assistant", "content": "canonical"}]}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        tool_calls_path="$.tools",
+        messages_path="$.trace",
+        output_event="final",
+    )
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.messages is not None
+    assert [m.content for m in result.messages] == ["canonical"]
 
 
 # ---------------------------------------------------------------------------

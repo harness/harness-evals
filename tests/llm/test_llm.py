@@ -103,14 +103,12 @@ class TestOpenAILLMParams:
 
     @pytest.fixture(autouse=True)
     def _patch_openai(self, monkeypatch):
-        import types
-
         self.mock_create = MagicMock()
 
         async def fake_create(**kwargs):
             self.mock_create(**kwargs)
             choice = MagicMock()
-            choice.message.content = "ok"
+            choice.message.content = '{"score": 1}' if "response_format" in kwargs else "ok"
             resp = MagicMock()
             resp.choices = [choice]
             return resp
@@ -157,6 +155,26 @@ class TestOpenAILLMParams:
         assert kw["frequency_penalty"] == 0.4
         assert kw["presence_penalty"] == 0.2
 
+    async def test_system_prompt_uses_chat_system_role(self):
+        llm = self._make()
+        await llm.generate("What is the return policy?", system_prompt="You are a policy assistant.")
+        assert self.mock_create.call_args[1]["messages"] == [
+            {"role": "system", "content": "You are a policy assistant."},
+            {"role": "user", "content": "What is the return policy?"},
+        ]
+
+    async def test_generate_json_system_prompt_uses_chat_system_role(self):
+        llm = self._make()
+        await llm.generate_json(
+            "Score this answer.",
+            {"type": "object", "properties": {"score": {"type": "number"}}},
+            system_prompt="You are a judge.",
+        )
+        assert self.mock_create.call_args[1]["messages"] == [
+            {"role": "system", "content": "You are a judge."},
+            {"role": "user", "content": "Score this answer."},
+        ]
+
     def test_positional_arg_backward_compat(self):
         """Existing callers using positional args still work."""
         from harness_evals.llm.openai import OpenAILLM
@@ -179,7 +197,7 @@ class TestAnthropicLLMParams:
         async def fake_create(**kwargs):
             self.mock_create(**kwargs)
             block = MagicMock()
-            block.text = "ok"
+            block.text = '{"score": 1}' if "output_config" in kwargs else "ok"
             resp = MagicMock()
             resp.content = [block]
             return resp
@@ -218,6 +236,24 @@ class TestAnthropicLLMParams:
         kw = self.mock_create.call_args[1]
         assert kw["top_p"] == 0.95
         assert kw["top_k"] == 50
+
+    async def test_system_prompt_uses_native_system_param(self):
+        llm = self._make()
+        await llm.generate("What is the return policy?", system_prompt="You are a policy assistant.")
+        kw = self.mock_create.call_args[1]
+        assert kw["messages"] == [{"role": "user", "content": "What is the return policy?"}]
+        assert kw["system"] == "You are a policy assistant."
+
+    async def test_generate_json_system_prompt_uses_native_system_param(self):
+        llm = self._make()
+        await llm.generate_json(
+            "Score this answer.",
+            {"type": "object", "properties": {"score": {"type": "number"}}},
+            system_prompt="You are a judge.",
+        )
+        kw = self.mock_create.call_args[1]
+        assert kw["messages"] == [{"role": "user", "content": "Score this answer."}]
+        assert kw["system"] == "You are a judge."
 
     def test_positional_arg_backward_compat(self):
         from harness_evals.llm.anthropic import AnthropicLLM

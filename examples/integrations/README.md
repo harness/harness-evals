@@ -70,7 +70,7 @@ Use when the agent is deployed as an HTTP service:
 - **Google ADK**: `adk api_server` or Cloud Run
 - **Bedrock AgentCore**: AWS managed runtime with SigV4/OAuth auth
 
-Configure `output_path` to extract the agent's text from the JSON response, and `body_template` + `input_path` to format the request.
+Configure `output_path` to extract the agent's text from the JSON response, and `body_template` with `{{input}}` / `{{input.field}}` placeholders to format the request.
 
 ## Production Sinks
 

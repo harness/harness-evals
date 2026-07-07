@@ -303,7 +303,7 @@ async def _evaluate_dataset_conversation(
     sinks: list[BaseSink] | None = None,
     *,
     concurrency: int | None = None,
-    simulator_llm: BaseLLM,
+    simulator_llm: BaseLLM | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of ConversationGolden instances."""
     from harness_evals.conversation.simulator import ConversationSimulator
@@ -338,9 +338,10 @@ async def evaluate_dataset(
     :class:`~harness_evals.conversation.golden.ConversationGolden`
     (multi-turn). Mixed lists raise :exc:`TypeError`.
 
-    For ``ConversationGolden`` inputs, ``simulator_llm`` must be provided;
-    it drives the simulated user turns via
-    :class:`~harness_evals.conversation.simulator.ConversationSimulator`.
+    For ``ConversationGolden`` inputs in SIMULATE or GRAPH mode,
+    ``simulator_llm`` must be provided; it drives the simulated user turns
+    via :class:`~harness_evals.conversation.simulator.ConversationSimulator`.
+    SCRIPTED and REPLAY modes do not require a ``simulator_llm``.
 
     ``agent_fn`` is async because agent calls are I/O-bound. For
     single-turn goldens it receives a ``Golden`` and returns an
@@ -360,12 +361,13 @@ async def evaluate_dataset(
         concurrency: Max concurrent agent calls (single-turn) or
             conversations (multi-turn). ``None`` = unlimited / default 10.
         simulator_llm: LLM used to simulate user turns. Required when
-            ``goldens`` contains ``ConversationGolden`` instances.
+            ``goldens`` contains ``ConversationGolden`` instances in
+            SIMULATE or GRAPH mode.
 
     Raises:
         ValueError: If ``concurrency`` is less than 1 or if
-            ``ConversationGolden`` inputs are provided without
-            ``simulator_llm``.
+            ``ConversationGolden`` inputs in SIMULATE/GRAPH mode are
+            provided without ``simulator_llm``.
         TypeError: If ``goldens`` contains a mix of ``Golden`` and
             ``ConversationGolden`` instances.
     """
@@ -385,10 +387,16 @@ async def evaluate_dataset(
         )
 
     if issubclass(next(iter(types)), _ConvGolden):
-        if simulator_llm is None:
+        from harness_evals.conversation.golden import ConversationMode as _ConvMode
+
+        needs_llm = any(
+            g.mode in (_ConvMode.SIMULATE, _ConvMode.GRAPH)  # type: ignore[union-attr]
+            for g in goldens
+        )
+        if needs_llm and simulator_llm is None:
             raise ValueError(
-                "ConversationGolden inputs require a simulator_llm. "
-                "Pass simulator_llm=<BaseLLM instance> to evaluate_dataset()."
+                "ConversationGolden inputs with SIMULATE or GRAPH mode require a "
+                "simulator_llm. Pass simulator_llm=<BaseLLM instance> to evaluate_dataset()."
             )
         return await _evaluate_dataset_conversation(
             goldens,  # type: ignore[arg-type]

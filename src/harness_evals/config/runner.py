@@ -92,7 +92,9 @@ def _resolve_env_in_value(key: str, value: Any, *, warn_on_none: bool = False) -
     if isinstance(value, str) and "${" in value:
         return _resolve_env_value(value)
     if isinstance(value, dict):
-        return {nested_key: _resolve_env_in_value(nested_key, nested_value) for nested_key, nested_value in value.items()}
+        return {
+            nested_key: _resolve_env_in_value(nested_key, nested_value) for nested_key, nested_value in value.items()
+        }
     if isinstance(value, list):
         return [_resolve_env_in_value(key, item) for item in value]
     if value is None and warn_on_none:
@@ -100,7 +102,7 @@ def _resolve_env_in_value(key: str, value: Any, *, warn_on_none: bool = False) -
 
         warnings.warn(
             f"Parameter {key!r} resolved to None. If you intended environment variable "
-            f"interpolation, ensure the value is quoted in YAML: {key}: \"${{{key.upper()}}}\"",
+            f'interpolation, ensure the value is quoted in YAML: {key}: "${{{key.upper()}}}"',
             UserWarning,
             stacklevel=2,
         )
@@ -161,7 +163,9 @@ async def _build_prompt_target(params: dict[str, Any]) -> BaseTarget:
     elif isinstance(raw_prompt, PromptTemplate):
         prompt = raw_prompt
     else:
-        raise HarnessEvalsError(f"PromptTarget 'prompt' must be a ref string or PromptTemplate, got {type(raw_prompt).__name__}")
+        raise HarnessEvalsError(
+            f"PromptTarget 'prompt' must be a ref string or PromptTemplate, got {type(raw_prompt).__name__}"
+        )
 
     if isinstance(raw_model, dict):
         model_spec = ModelSpec(
@@ -175,7 +179,8 @@ async def _build_prompt_target(params: dict[str, Any]) -> BaseTarget:
     else:
         raise HarnessEvalsError(f"PromptTarget 'model' must be a dict or BaseLLM, got {type(raw_model).__name__}")
 
-    return PromptTarget(prompt=prompt, model=model)
+    system_prompt = params.get("system_prompt") or params.get("system_message")
+    return PromptTarget(prompt=prompt, model=model, system_prompt=str(system_prompt) if system_prompt else None)
 
 
 def _build_http_target(params: dict[str, Any]) -> BaseTarget:

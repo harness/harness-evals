@@ -55,9 +55,8 @@ target:
   type: streaming_http
   url: "${SSE_ENDPOINT_URL}"
   body_template:
-    prompt: null
+    prompt: "{{input}}"
     stream: true
-  input_path: $.prompt
   output_event: final
   output_path: $.answer
   capture_events:
@@ -65,7 +64,9 @@ target:
     - usage
 ```
 
-`body_template` is the JSON request body template. The golden input is inserted at `input_path`.
+`body_template` is the JSON request body template. `{{input}}` placeholders are replaced per request with the golden's input. Use `{{input.field}}` (dotted paths, including list indices like `{{input.items.0}}`) to scatter fields of a structured input across the body, and `{{metadata.key}}` for golden metadata. A whole-string placeholder (`"{{input}}"`) keeps the value's native type; an embedded one (`"Hello {{input.name}}"`) is string-interpolated. A placeholder that doesn't resolve raises an error rather than silently sending null.
+
+The same `{{...}}` placeholders work in `headers` values (e.g. `Authorization: "Bearer {{input.token}}"`), so per-golden auth tokens or session ids can be carried in a header. Header values are always string-interpolated; header names are never templated.
 
 `output_event` selects which SSE event becomes the gradeable output. Here the `final` event carries the answer. If you omit `output_event`, the target grades the last JSON `data` payload instead (or, for a plain token stream with no JSON, the concatenated text of `data` lines).
 

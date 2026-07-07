@@ -30,11 +30,11 @@ target:
   headers:
     Content-Type: application/json
 
-  # Request body. `prompt` is filled from each golden's input via input_path.
+  # Request body. `{{input}}` is replaced with each golden's input; use
+  # `{{input.field}}` to scatter fields of a structured input across the body.
   body_template:
-    prompt: null
+    prompt: "{{input}}"
     stream: true
-  input_path: $.prompt
 
   # The service emits a `final` event carrying the answer; grade that field.
   # Omit `output_event` to instead grade the last JSON `data` payload, or the

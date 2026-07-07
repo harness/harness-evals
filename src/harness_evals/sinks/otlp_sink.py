@@ -7,7 +7,10 @@ import threading
 import uuid
 import warnings
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opentelemetry.metrics import Meter
 
 try:
     from opentelemetry import trace as trace_api
@@ -178,7 +181,7 @@ class OtlpSink(BaseSink):
         parent_context: Context | None = None,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
-        on_write: Callable[[Any, list[Score], EvalCase], None] | None = None,
+        on_write: "Callable[[Meter, list[Score], EvalCase], None] | None" = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")
@@ -222,6 +225,11 @@ class OtlpSink(BaseSink):
         # --- Metrics ---
         # Exposed publicly so callers can create custom instruments without
         # subclassing (e.g. ``sink.meter.create_counter(...)``).
+        # Thread-safety: the OTel Meter is safe for concurrent instrument creation,
+        # but callers must use distinct instrument names per logical metric —
+        # creating the same-named instrument with different units/descriptions
+        # across threads yields undefined behavior per the OTel spec.
+        meter: Meter
         meter = self.meter = self._meter_provider.get_meter(service_name)
 
         self._score_gauge = meter.create_gauge(

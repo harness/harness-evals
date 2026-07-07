@@ -33,6 +33,7 @@ class AnthropicLLM(BaseLLM):
         temperature: float = 0.0,
         max_tokens: int = 4096,
         *,
+        base_url: str | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
     ) -> None:
@@ -49,7 +50,10 @@ class AnthropicLLM(BaseLLM):
         resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not resolved_key:
             raise ValueError("No API key: pass api_key= or set ANTHROPIC_API_KEY")
-        self._client = anthropic.AsyncAnthropic(api_key=resolved_key)
+        client_kwargs: dict[str, Any] = {"api_key": resolved_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self._client = anthropic.AsyncAnthropic(**client_kwargs)
 
     def _optional_params(self) -> dict[str, Any]:
         params: dict[str, Any] = {}
@@ -60,24 +64,32 @@ class AnthropicLLM(BaseLLM):
         return params
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
+        optional_params = self._optional_params()
+        system_prompt = kwargs.get("system_prompt")
+        if system_prompt:
+            optional_params["system"] = str(system_prompt)
         response = await self._client.messages.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            **self._optional_params(),
+            **optional_params,
         )
         _record_anthropic_usage(response)
         return response.content[0].text if response.content else ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
         strict_schema = make_strict_schema(schema, strip_keywords=ANTHROPIC_UNSUPPORTED)
+        optional_params = self._optional_params()
+        system_prompt = kwargs.get("system_prompt")
+        if system_prompt:
+            optional_params["system"] = str(system_prompt)
         response = await self._client.messages.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            **self._optional_params(),
+            **optional_params,
             output_config={
                 "format": {
                     "type": "json_schema",

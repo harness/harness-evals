@@ -42,8 +42,7 @@ def build_target() -> HttpTarget:
         url=os.environ.get("LANGCHAIN_ENDPOINT", "http://localhost:8000/invoke"),
         method="POST",
         auth=BearerAuth(os.environ["LANGCHAIN_API_KEY"]) if os.environ.get("LANGCHAIN_API_KEY") else NoAuth(),
-        body_template={"input": ""},
-        input_path="$.input",
+        body_template={"input": "{{input}}"},
         output_path="$.output",
     )
 

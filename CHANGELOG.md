@@ -7,6 +7,51 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1]
+
+### Added
+
+- **Request templating (`{{input}}` / `{{input.foo}}`)** — `HttpTarget` and
+  `StreamingHttpTarget` resolve `{{...}}` placeholders per request against the
+  golden, in both `body_template` values **and header values**: `{{input}}`
+  (whole value, native type preserved in the body), `{{input.field}}` /
+  `{{input.items.0}}` (dotted paths with list indices), and `{{metadata.key}}`.
+  In the body a whole-string placeholder keeps the value's type; an embedded one
+  is string-interpolated. Header values are always string-interpolated (a header
+  can't carry a dict), and header names are never templated — e.g.
+  `headers={"Authorization": "Bearer {{input.token}}"}`. Unresolved placeholders
+  raise rather than silently sending null. This is separate from `${VAR}` env
+  interpolation (config-load time).
+- **Best-effort trajectory for all targets** — `EvalCase.messages` is now always
+  populated. `PromptTarget` records the `[user, assistant]` exchange; `HttpTarget`
+  and `StreamingHttpTarget` synthesize a trace from the input, any captured
+  `tool_calls`, and the output when the agent does not report its own trajectory
+  via `messages_path` (which stays authoritative). Extracted `messages`/`tool_calls`
+  are coerced into `Message`/`ToolCall` objects so agent/trajectory metrics receive
+  attribute-accessible instances rather than raw dicts. A reported trajectory that
+  fails to coerce is left empty (and logged) rather than silently replaced by a
+  fabricated trace, so instrumentation failures surface instead of grading clean.
+  `ToolCall.from_dict` now honors `arguments`/`result` field aliases so extracted
+  tool calls don't lose input/output.
+- **SSE trajectory reconstruction** — `StreamingHttpTarget` rebuilds an ordered,
+  interleaved trajectory (assistant text / tool calls / tool results) from the
+  event stream in emission order, using the existing `output_path` /
+  `tool_calls_path`. Streams with no assemblable structure fall back to the plain
+  envelope; raw events are still captured to `sse_events`.
+
+### Changed
+
+- **BREAKING (pre-1.0): removed `input_path` from `HttpTarget` / `StreamingHttpTarget`.**
+  Single-value injection at a path is replaced by `{{input}}` placeholders in
+  `body_template`. Migration: `body_template={"prompt": null}, input_path="$.prompt"`
+  becomes `body_template={"prompt": "{{input}}"}`. Omitting `body_template` still
+  wraps the input as `{"input": <golden.input>}`.
+- **`evaluate_dataset()` no longer requires `simulator_llm` for SCRIPTED/REPLAY
+  conversations** — the LLM is now only required when at least one
+  `ConversationGolden` uses SIMULATE or GRAPH mode. `ConversationSimulator` accepts
+  `simulator_llm=None` and raises a clear error at point of use if an LLM-dependent
+  code path is reached without one.
+
 ## [0.11.0]
 
 ### Added

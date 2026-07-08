@@ -50,10 +50,6 @@ class StdoutSink(BaseSink):
         if result.by_dimension:
             print("  Dimensions:")
             for ds in result.by_dimension.values():
-                status = (
-                    f"{result.safety_violations} violation(s)"
-                    if ds.is_safety
-                    else f"pass_rate={ds.pass_rate:.0%}"
-                )
+                status = f"{result.safety_violations} violation(s)" if ds.is_safety else f"pass_rate={ds.pass_rate:.0%}"
                 print(f"    {ds.dimension:<13} mean={ds.mean:.2f}  {status}  (n={ds.metric_count})")
         self._all_scores.clear()

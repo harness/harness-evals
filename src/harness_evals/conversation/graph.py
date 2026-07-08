@@ -94,9 +94,7 @@ class SimulationGraph:
             if edge.predicate is None:
                 default_edges[edge.source] = default_edges.get(edge.source, 0) + 1
                 if default_edges[edge.source] > 1:
-                    raise ValueError(
-                        f"node '{edge.source}' has multiple unconditional edges; at most one is allowed"
-                    )
+                    raise ValueError(f"node '{edge.source}' has multiple unconditional edges; at most one is allowed")
 
         self._detect_cycles()
 
@@ -224,10 +222,7 @@ class SimulationGraph:
             elif ntype == "branch":
                 nodes[nid] = BranchNode()
 
-        edges = [
-            Edge(source=e["source"], target=e["target"], predicate=e.get("predicate"))
-            for e in data["edges"]
-        ]
+        edges = [Edge(source=e["source"], target=e["target"], predicate=e.get("predicate")) for e in data["edges"]]
 
         if not predicates:
             predicated = [e.predicate for e in edges if e.predicate is not None]

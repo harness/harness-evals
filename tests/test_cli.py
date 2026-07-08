@@ -27,9 +27,7 @@ def _write_config(tmp_path, goldens_content='{"input": "hi", "expected": "hello"
     prompt_path = tmp_path / "prompt.txt"
     prompt_path.write_text(prompt_content, encoding="utf-8")
     config_path = tmp_path / "eval.yaml"
-    config_path.write_text(
-        _MINIMAL_CONFIG.format(dataset_path=str(dataset_path), prompt_path=str(prompt_path))
-    )
+    config_path.write_text(_MINIMAL_CONFIG.format(dataset_path=str(dataset_path), prompt_path=str(prompt_path)))
     return str(config_path)
 
 
@@ -87,7 +85,7 @@ class TestCmdRun:
         assert exit_code == 1
 
     def test_run_baseline_regression_exit_code(self, tmp_path, capsys) -> None:
-        config_path = _write_config(tmp_path, goldens_content='{"input": "4", "expected": "4"}\n')
+        _write_config(tmp_path, goldens_content='{"input": "4", "expected": "4"}\n')
 
         from tests.conftest import MockLLM
 
@@ -129,7 +127,7 @@ class TestCmdRun:
         assert "Baseline regression" in captured.err
 
     def test_run_baseline_and_fail_under_both_reported(self, tmp_path, capsys) -> None:
-        config_path = _write_config(tmp_path)
+        _write_config(tmp_path)
 
         from tests.conftest import MockLLM
 
@@ -214,10 +212,14 @@ metrics: [exact_match]
     def test_skips_hidden_directories(self, tmp_path, capsys) -> None:
         hidden = tmp_path / ".git" / "hooks"
         hidden.mkdir(parents=True)
-        (hidden / "pre-commit.eval.yaml").write_text("name: shouldskip\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n")
+        (hidden / "pre-commit.eval.yaml").write_text(
+            "name: shouldskip\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n"
+        )
         visible = tmp_path / "evals"
         visible.mkdir()
-        (visible / "real.eval.yaml").write_text("name: real\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n")
+        (visible / "real.eval.yaml").write_text(
+            "name: real\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n"
+        )
         exit_code = main(["discover", str(tmp_path)])
         assert exit_code == 0
         captured = capsys.readouterr()

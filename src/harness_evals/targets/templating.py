@@ -116,8 +116,7 @@ def _resolve(expr: str, context: dict[str, Any]) -> Any:
         current = _step(current, part)
         if current is _MISSING:
             raise ValueError(
-                f"template placeholder {{{{{expr}}}}} did not resolve against the golden "
-                f"(no value at {part!r})"
+                f"template placeholder {{{{{expr}}}}} did not resolve against the golden (no value at {part!r})"
             )
     return current
 

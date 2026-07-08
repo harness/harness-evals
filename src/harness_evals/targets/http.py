@@ -126,9 +126,7 @@ class HttpTarget(BaseTarget):
             eval_case.context = extracted_context
         return eval_case
 
-    async def _execute_async(
-        self, body: bytes, user_headers: dict[str, str]
-    ) -> tuple[object, str, float, str | None]:
+    async def _execute_async(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
         """Async HTTP call using httpx with connection pooling and retries."""
         client = self._async_client
         assert client is not None
@@ -186,9 +184,7 @@ class HttpTarget(BaseTarget):
         payload = render_request_body(self.body_template, golden)
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    def _execute_with_retries(
-        self, body: bytes, user_headers: dict[str, str]
-    ) -> tuple[object, str, float, str | None]:
+    def _execute_with_retries(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
         """Synchronous HTTP call with retry logic. Returns (parsed_body, content_type, latency_ms, error)."""
         headers = {"Content-Type": "application/json", "Accept": "application/json", **user_headers}
         params: dict[str, str] = {}

@@ -168,9 +168,7 @@ class TestMessage:
         assert "expected" not in d
 
     def test_message_from_dict_reads_rag_fields(self):
-        msg = Message.from_dict(
-            {"role": "assistant", "content": "a", "retrieval_context": ["c1"], "expected": "e"}
-        )
+        msg = Message.from_dict({"role": "assistant", "content": "a", "retrieval_context": ["c1"], "expected": "e"})
         assert msg.retrieval_context == ["c1"]
         assert msg.expected == "e"
 

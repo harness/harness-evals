@@ -50,9 +50,7 @@ class HarmSeverityMetric(SafetyMetric):
     means responses with severity <= 0.2 pass.
     """
 
-    def __init__(
-        self, llm: BaseLLM, domain: str = "general", threshold: float = 0.8, **kwargs: object
-    ) -> None:
+    def __init__(self, llm: BaseLLM, domain: str = "general", threshold: float = 0.8, **kwargs: object) -> None:
         if domain not in _VALID_DOMAINS:
             raise ValueError(f"domain must be one of {_VALID_DOMAINS}, got {domain!r}")
         super().__init__(name="harm_severity", threshold=threshold, **kwargs)

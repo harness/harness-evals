@@ -536,9 +536,7 @@ class TestExistingModesUnchanged:
             Message(role="user", content="Hello"),
             Message(role="assistant", content="Hi!"),
         ]
-        golden = ConversationGolden(
-            scenario="Greeting", expected_outcome="Greet", turns=turns
-        )
+        golden = ConversationGolden(scenario="Greeting", expected_outcome="Greet", turns=turns)
 
         async def noop_agent(messages: list[Message]) -> Message:
             return Message(role="assistant", content="unused")

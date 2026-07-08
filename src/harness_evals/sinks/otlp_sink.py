@@ -181,7 +181,7 @@ class OtlpSink(BaseSink):
         parent_context: Context | None = None,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
-        on_write: "Callable[[Meter, list[Score], EvalCase], None] | None" = None,
+        on_write: Callable[[Meter, list[Score], EvalCase], None] | None = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")

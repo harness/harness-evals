@@ -51,9 +51,7 @@ class TestEvaluateDatasetWithConversationGolden:
                 turns=[Message(role="user", content="Hi")],
             )
         ]
-        results = await evaluate_dataset(
-            goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None
-        )
+        results = await evaluate_dataset(goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None)
         assert len(results) == 1
         assert isinstance(results[0], list)
 
@@ -70,9 +68,7 @@ class TestEvaluateDatasetWithConversationGolden:
                 ],
             )
         ]
-        results = await evaluate_dataset(
-            goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None
-        )
+        results = await evaluate_dataset(goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None)
         assert len(results) == 1
         assert isinstance(results[0], list)
 
@@ -92,9 +88,7 @@ class TestEvaluateDatasetWithConversationGolden:
                 turns=[Message(role="user", content="Hi"), Message(role="assistant", content="Yo")],
             ),
         ]
-        results = await evaluate_dataset(
-            goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None
-        )
+        results = await evaluate_dataset(goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None)
         assert len(results) == 2
 
     async def test_graph_mode_requires_simulator_llm(self):

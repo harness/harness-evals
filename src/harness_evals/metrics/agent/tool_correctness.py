@@ -59,7 +59,11 @@ class ToolCorrectnessMetric(BaseMetric):
 
         if not expected_tools:
             value = 1.0 if not tools_called else 0.0
-            reason = "Perfect match — no tools were expected and none were called" if value == 1.0 else "Agent called tools but none were expected"
+            reason = (
+                "Perfect match — no tools were expected and none were called"
+                if value == 1.0
+                else "Agent called tools but none were expected"
+            )
             return Score(
                 name=self.name,
                 value=value,

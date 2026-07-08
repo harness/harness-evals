@@ -56,7 +56,11 @@ class ConversationGolden:
         if mode in (ConversationMode.REPLAY, ConversationMode.SCRIPTED) and not self.turns:
             raise ValueError(f"mode={mode.value!r} requires 'turns' to be provided")
 
-        if mode == ConversationMode.SCRIPTED and self.turns is not None and not any(t.role == "user" for t in self.turns):
+        if (
+            mode == ConversationMode.SCRIPTED
+            and self.turns is not None
+            and not any(t.role == "user" for t in self.turns)
+        ):
             raise ValueError("mode='scripted' requires at least one user-role message in 'turns'")
 
     def to_dict(self) -> dict:

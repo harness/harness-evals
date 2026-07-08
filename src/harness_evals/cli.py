@@ -37,7 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     discover_parser = sub.add_parser("discover", help="Discover eval configs in a directory")
     discover_parser.add_argument("path", nargs="?", default=".", help="Directory to search (default: .)")
     discover_parser.add_argument(
-        "--glob", default=None,
+        "--glob",
+        default=None,
         help="Custom glob pattern (default: **/*.eval.yaml for YAML configs, **/eval_*.py for Python eval files)",
     )
 
@@ -187,9 +188,10 @@ def _cmd_import(args: argparse.Namespace) -> int:
 def _eval_config_to_dict(cfg) -> dict:
     """Serialize an EvalConfig back to a dict suitable for YAML output."""
 
-
     d: dict = {"name": cfg.name}
-    d["dataset"] = f"{cfg.dataset.source}://{cfg.dataset.id}" + (f"@{cfg.dataset.version}" if cfg.dataset.version else "")
+    d["dataset"] = f"{cfg.dataset.source}://{cfg.dataset.id}" + (
+        f"@{cfg.dataset.version}" if cfg.dataset.version else ""
+    )
     d["target"] = {"type": cfg.target.type, **cfg.target.params}
     d["metrics"] = []
     for m in cfg.metrics:
@@ -227,7 +229,9 @@ def _cmd_list_metrics() -> int:
     print("-" * len(header))
     for e in entries:
         llm_flag = "yes" if e.requires_llm else ""
-        print(f"{e.kind:<{col_kind}}{e.category:<{col_cat}}{e.dimension.value:<{col_dim}}{e.default_threshold:>10.2f}  {llm_flag:>3}")
+        print(
+            f"{e.kind:<{col_kind}}{e.category:<{col_cat}}{e.dimension.value:<{col_dim}}{e.default_threshold:>10.2f}  {llm_flag:>3}"
+        )
 
     print(f"\n{len(entries)} metrics available")
     return 0

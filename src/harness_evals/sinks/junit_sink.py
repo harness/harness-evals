@@ -16,9 +16,7 @@ from harness_evals.core.sink import BaseSink
 # malformed. LLM output and score reasons routinely contain them. The legal set
 # is tab, newline, carriage return, and everything from 0x20 up (minus the
 # surrogate/FFFE-FFFF gaps).
-_XML_ILLEGAL_RE = re.compile(
-    "[^\x09\x0a\x0d\x20-퟿-�\U00010000-\U0010ffff]"
-)
+_XML_ILLEGAL_RE = re.compile("[^\x09\x0a\x0d\x20-퟿-�\U00010000-\U0010ffff]")
 
 
 def _xml_safe(text: str) -> str:
@@ -69,11 +67,7 @@ class JUnitSink(BaseSink):
     def finalize(self) -> None:
         """Write accumulated test cases to the JUnit XML file."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        total_time = sum(
-            float(tc.attrib["time"])
-            for tc in self._testcases
-            if "time" in tc.attrib
-        )
+        total_time = sum(float(tc.attrib["time"]) for tc in self._testcases if "time" in tc.attrib)
         suite_attrs: dict[str, str] = {
             "name": self.suite_name,
             "tests": str(self._tests),

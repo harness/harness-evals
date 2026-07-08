@@ -88,7 +88,11 @@ class ToolArgumentMatchMetric(BaseMetric):
 
         if not expected_calls:
             value = 1.0 if not actual_calls else 0.0
-            reason = "Perfect match — no tool calls were expected and none were made" if value == 1.0 else "Agent made tool calls but none were expected"
+            reason = (
+                "Perfect match — no tool calls were expected and none were made"
+                if value == 1.0
+                else "Agent made tool calls but none were expected"
+            )
             return Score(
                 name=self.name,
                 value=value,

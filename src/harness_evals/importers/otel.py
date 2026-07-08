@@ -180,10 +180,7 @@ def _find_root(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def _is_llm_span(name: str, attrs: dict) -> bool:
     return (
-        "gen_ai" in name.lower()
-        or "llm" in name.lower()
-        or "gen_ai.system" in attrs
-        or "gen_ai.request.model" in attrs
+        "gen_ai" in name.lower() or "llm" in name.lower() or "gen_ai.system" in attrs or "gen_ai.request.model" in attrs
     )
 
 

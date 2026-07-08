@@ -70,10 +70,18 @@ class EvalConfig:
     plugins: list[str] = field(default_factory=list)
 
 
-_KNOWN_TOP_LEVEL_KEYS = frozenset({
-    "name", "dataset", "target", "metrics", "judge_llm",
-    "sinks", "baseline", "plugins",
-})
+_KNOWN_TOP_LEVEL_KEYS = frozenset(
+    {
+        "name",
+        "dataset",
+        "target",
+        "metrics",
+        "judge_llm",
+        "sinks",
+        "baseline",
+        "plugins",
+    }
+)
 
 
 def load_config(path: str) -> EvalConfig:

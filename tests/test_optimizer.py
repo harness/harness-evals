@@ -405,11 +405,13 @@ class TestPromptOptimizerEdgeCases:
 
         optimizer = PromptOptimizer(
             model=StubModel(),
-            judge=StubJudge(candidates=[
-                ["Try A: {{input}}"],
-                ["Try B: {{input}}"],
-                ["Try C: {{input}}"],
-            ]),
+            judge=StubJudge(
+                candidates=[
+                    ["Try A: {{input}}"],
+                    ["Try B: {{input}}"],
+                    ["Try C: {{input}}"],
+                ]
+            ),
             metrics=[ScoreControlMetric(score_fn)],
             target_score=0.95,
             max_iterations=3,
@@ -500,9 +502,11 @@ class TestPromptOptimizerConcurrency:
 
         optimizer = PromptOptimizer(
             model=TrackedModel(),
-            judge=StubJudge(candidates=[
-                ["Candidate A: {{input}}", "Candidate B: {{input}}", "Candidate C: {{input}}"],
-            ]),
+            judge=StubJudge(
+                candidates=[
+                    ["Candidate A: {{input}}", "Candidate B: {{input}}", "Candidate C: {{input}}"],
+                ]
+            ),
             metrics=[FixedScoreMetric(0.3)],
             target_score=0.9,
             max_iterations=1,

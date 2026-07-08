@@ -49,9 +49,7 @@ class HarmfulAdviceMetric(SafetyMetric):
     detected, 0.0 when clearly harmful advice is present.
     """
 
-    def __init__(
-        self, llm: BaseLLM, threshold: float = 0.9, domain: str | None = None, **kwargs: object
-    ) -> None:
+    def __init__(self, llm: BaseLLM, threshold: float = 0.9, domain: str | None = None, **kwargs: object) -> None:
         super().__init__(name="harmful_advice", threshold=threshold, **kwargs)
         self.llm = llm
         self.domain = domain

@@ -109,9 +109,7 @@ def test_reconstruct_interleaves_text_tool_call_result() -> None:
         ("message", {"tools": [{"name": "search", "output": "found 3"}]}),
         ("message", {"output": "here are the results"}),
     ]
-    messages = reconstruct_stream_messages(
-        decoded, "find cats", output_path="$.output", tool_calls_path="$.tools"
-    )
+    messages = reconstruct_stream_messages(decoded, "find cats", output_path="$.output", tool_calls_path="$.tools")
     assert messages is not None
     assert [(m.role, m.content) for m in messages] == [
         ("user", "find cats"),
@@ -134,9 +132,7 @@ def test_reconstruct_buffers_consecutive_text_deltas() -> None:
         ("token", {"output": "lo "}),
         ("token", {"output": "world"}),
     ]
-    messages = reconstruct_stream_messages(
-        decoded, "hi", output_path="$.output", tool_calls_path=None
-    )
+    messages = reconstruct_stream_messages(decoded, "hi", output_path="$.output", tool_calls_path=None)
     assert messages is not None
     assert [(m.role, m.content) for m in messages] == [
         ("user", "hi"),
@@ -148,9 +144,7 @@ def test_reconstruct_buffers_consecutive_text_deltas() -> None:
 def test_reconstruct_returns_none_when_no_structure() -> None:
     # Trailing telemetry-only events carry neither output_path nor tool_calls.
     decoded = [("model_usage", {"tokens": 42}), ("done", {"status": "ok"})]
-    assert reconstruct_stream_messages(
-        decoded, "hi", output_path="$.output", tool_calls_path="$.tools"
-    ) is None
+    assert reconstruct_stream_messages(decoded, "hi", output_path="$.output", tool_calls_path="$.tools") is None
 
 
 @pytest.mark.unit
@@ -159,9 +153,7 @@ def test_reconstruct_coalesces_arguments_and_result_aliases() -> None:
         ("message", {"tools": [{"name": "lookup", "arguments": {"id": 1}}]}),
         ("message", {"tools": [{"name": "lookup", "result": "ok"}]}),
     ]
-    messages = reconstruct_stream_messages(
-        decoded, "q", output_path="$.output", tool_calls_path="$.tools"
-    )
+    messages = reconstruct_stream_messages(decoded, "q", output_path="$.output", tool_calls_path="$.tools")
     assert messages is not None
     call = messages[1]
     assert call.tool_calls is not None
@@ -177,9 +169,7 @@ def test_reconstruct_preserves_falsey_tool_result() -> None:
     # result becomes empty content.
     for raw_output, expected_content in [(0, "0"), (False, "false"), ([], "[]"), ("", "")]:
         decoded = [("message", {"tools": [{"name": "calc", "result": raw_output}]})]
-        messages = reconstruct_stream_messages(
-            decoded, "q", output_path="$.output", tool_calls_path="$.tools"
-        )
+        messages = reconstruct_stream_messages(decoded, "q", output_path="$.output", tool_calls_path="$.tools")
         assert messages is not None
         result = messages[1]
         assert result.role == "tool"

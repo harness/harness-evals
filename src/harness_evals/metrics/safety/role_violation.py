@@ -49,9 +49,7 @@ class RoleViolationMetric(SafetyMetric):
     violation is detected, 0.0 when a clear violation is present.
     """
 
-    def __init__(
-        self, llm: BaseLLM, role_description: str, threshold: float = 0.9, **kwargs: object
-    ) -> None:
+    def __init__(self, llm: BaseLLM, role_description: str, threshold: float = 0.9, **kwargs: object) -> None:
         super().__init__(name="role_violation", threshold=threshold, **kwargs)
         self.llm = llm
         self.role_description = role_description

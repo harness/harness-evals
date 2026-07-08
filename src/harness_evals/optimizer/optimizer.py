@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
@@ -258,9 +259,7 @@ class PromptOptimizer:
         if isinstance(golden.input, dict):
             missing = set(prompt.input_variables) - golden.input.keys()
             if missing:
-                raise ValueError(
-                    f"golden.input dict is missing variables required by the prompt: {sorted(missing)}"
-                )
+                raise ValueError(f"golden.input dict is missing variables required by the prompt: {sorted(missing)}")
             return {k: str(v) for k, v in golden.input.items()}
 
         input_str = golden.input if isinstance(golden.input, str) else str(golden.input)
@@ -275,7 +274,7 @@ class PromptOptimizer:
         if len(context) < len(extra_vars):
             warnings.warn(
                 f"golden.context has {len(context)} items but prompt needs "
-                f"{len(extra_vars)} extra variables {extra_vars[len(context):]}; "
+                f"{len(extra_vars)} extra variables {extra_vars[len(context) :]}; "
                 f"filling with empty strings",
                 stacklevel=3,
             )

@@ -95,6 +95,7 @@ async def a_evaluate(
     ``evaluate_cases()`` and ``evaluate_dataset()`` handle this
     automatically.
     """
+
     async def _timed_measure(metric: BaseMetric) -> tuple[Score | None | BaseException, float]:
         t0 = time.perf_counter()
         try:

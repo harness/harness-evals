@@ -8,7 +8,6 @@ from harness_evals.metrics.safety.compliance import ComplianceMetric
 from harness_evals.metrics.safety.harm_severity import HarmSeverityMetric
 from tests.conftest import MockLLM
 
-
 # ---------------------------------------------------------------------------
 # ComplianceMetric
 # ---------------------------------------------------------------------------
@@ -127,9 +126,7 @@ class TestComplianceMetric:
 @pytest.mark.unit
 class TestHarmSeverityMetric:
     async def test_no_harm_passes(self):
-        llm = MockLLM(
-            default={"reasoning": "No harm detected", "severity": 0.0, "harm_category": "none"}
-        )
+        llm = MockLLM(default={"reasoning": "No harm detected", "severity": 0.0, "harm_category": "none"})
         metric = HarmSeverityMetric(llm=llm, threshold=0.8)
         ec = EvalCase(input="What is 2+2?", output="4")
         score = await metric.a_measure(ec)
@@ -139,9 +136,7 @@ class TestHarmSeverityMetric:
         assert score.metadata["harm_category"] == "none"
 
     async def test_low_severity_passes(self):
-        llm = MockLLM(
-            default={"reasoning": "Minor issue", "severity": 0.1, "harm_category": "minor_inaccuracy"}
-        )
+        llm = MockLLM(default={"reasoning": "Minor issue", "severity": 0.1, "harm_category": "minor_inaccuracy"})
         metric = HarmSeverityMetric(llm=llm, threshold=0.8)
         ec = EvalCase(input="q", output="a")
         score = await metric.a_measure(ec)
@@ -166,9 +161,7 @@ class TestHarmSeverityMetric:
         assert score.metadata["harm_category"] == "dangerous_medical_advice"
 
     async def test_maximum_severity(self):
-        llm = MockLLM(
-            default={"reasoning": "Maximum harm", "severity": 1.0, "harm_category": "lethal_instructions"}
-        )
+        llm = MockLLM(default={"reasoning": "Maximum harm", "severity": 1.0, "harm_category": "lethal_instructions"})
         metric = HarmSeverityMetric(llm=llm, threshold=0.8)
         ec = EvalCase(input="q", output="dangerous content")
         score = await metric.a_measure(ec)
@@ -177,9 +170,7 @@ class TestHarmSeverityMetric:
         assert score.metadata["severity"] == 1.0
 
     async def test_medical_domain(self):
-        llm = MockLLM(
-            default={"reasoning": "Medical context safe", "severity": 0.05, "harm_category": "none"}
-        )
+        llm = MockLLM(default={"reasoning": "Medical context safe", "severity": 0.05, "harm_category": "none"})
         metric = HarmSeverityMetric(llm=llm, domain="medical", threshold=0.8)
         ec = EvalCase(input="symptoms?", output="Consult your doctor.")
         score = await metric.a_measure(ec)
@@ -187,9 +178,7 @@ class TestHarmSeverityMetric:
         assert metric.domain == "medical"
 
     async def test_financial_domain(self):
-        llm = MockLLM(
-            default={"reasoning": "Financial context", "severity": 0.3, "harm_category": "risky_advice"}
-        )
+        llm = MockLLM(default={"reasoning": "Financial context", "severity": 0.3, "harm_category": "risky_advice"})
         metric = HarmSeverityMetric(llm=llm, domain="financial", threshold=0.8)
         ec = EvalCase(input="invest?", output="Put everything in one stock.")
         score = await metric.a_measure(ec)

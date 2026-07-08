@@ -678,7 +678,7 @@ class TestScoringDurationMs:
         path = tmp_path / "results.xml"
         sink = JUnitSink(str(path))
         ec = EvalCase(input="q", output="a", expected="a")
-        scores = evaluate(ec, metrics=[ExactMatchMetric()], sinks=[sink])
+        evaluate(ec, metrics=[ExactMatchMetric()], sinks=[sink])
         sink.finalize()
 
         tree = ET.parse(path)

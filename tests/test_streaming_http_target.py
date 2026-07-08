@@ -40,7 +40,9 @@ def _sse(*blocks: str) -> str:
     return "\n\n".join(blocks) + "\n\n"
 
 
-def _patch_response(monkeypatch: pytest.MonkeyPatch, body: str, content_type: str = "text/event-stream") -> list[Request]:
+def _patch_response(
+    monkeypatch: pytest.MonkeyPatch, body: str, content_type: str = "text/event-stream"
+) -> list[Request]:
     from harness_evals.targets import streaming_http as target_mod
 
     captured: list[Request] = []
@@ -98,8 +100,8 @@ async def test_stream_disabled_uses_buffered_parse(monkeypatch: pytest.MonkeyPat
 @pytest.mark.unit
 async def test_sse_output_from_last_json_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse(
-        "event: token\ndata: {\"chunk\": \"partial\"}",
-        "event: message\ndata: {\"output\": \"final answer\"}",
+        'event: token\ndata: {"chunk": "partial"}',
+        'event: message\ndata: {"output": "final answer"}',
     )
     _patch_response(monkeypatch, body)
 
@@ -112,8 +114,8 @@ async def test_sse_output_from_last_json_payload(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.unit
 async def test_sse_output_via_output_event(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse(
-        "event: message\ndata: {\"output\": \"ignored\"}",
-        "event: final\ndata: {\"output\": \"chosen\"}",
+        'event: message\ndata: {"output": "ignored"}',
+        'event: final\ndata: {"output": "chosen"}',
     )
     _patch_response(monkeypatch, body)
 
@@ -151,7 +153,7 @@ async def test_sse_multiline_data_is_joined(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.unit
 async def test_sse_default_event_name_is_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse("data: {\"output\": \"hi\"}")
+    body = _sse('data: {"output": "hi"}')
     _patch_response(monkeypatch, body)
 
     target = StreamingHttpTarget(url="http://localhost:8080/run", capture_events=["message"])
@@ -167,8 +169,8 @@ async def test_sse_output_skips_trailing_envelope_events(monkeypatch: pytest.Mon
     # (model_usage, done) whose payloads don't carry output_path. The backward
     # scan must pick the message, not the trailing envelopes.
     body = _sse(
-        "event: message\ndata: {\"output\": \"real answer\"}",
-        "event: model_usage\ndata: {\"input_tokens\": 17, \"output_tokens\": 4299}",
+        'event: message\ndata: {"output": "real answer"}',
+        'event: model_usage\ndata: {"input_tokens": 17, "output_tokens": 4299}',
         "event: done\ndata: {}",
     )
     _patch_response(monkeypatch, body)
@@ -187,7 +189,7 @@ async def test_sse_output_empty_when_no_event_matches_output_path(
     # grading against a usage/terminator blob, output is empty and a warning is
     # logged so the misconfiguration is visible.
     body = _sse(
-        "event: model_usage\ndata: {\"input_tokens\": 17}",
+        'event: model_usage\ndata: {"input_tokens": 17}',
         "event: done\ndata: {}",
     )
     _patch_response(monkeypatch, body)
@@ -208,10 +210,10 @@ async def test_sse_output_empty_when_no_event_matches_output_path(
 @pytest.mark.unit
 async def test_capture_events_stores_only_requested(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse(
-        "event: progress\ndata: {\"pct\": 10}",
-        "event: tool_call\ndata: {\"name\": \"search\"}",
-        "event: progress\ndata: {\"pct\": 90}",
-        "event: message\ndata: {\"output\": \"done\"}",
+        'event: progress\ndata: {"pct": 10}',
+        'event: tool_call\ndata: {"name": "search"}',
+        'event: progress\ndata: {"pct": 90}',
+        'event: message\ndata: {"output": "done"}',
     )
     _patch_response(monkeypatch, body)
 
@@ -233,9 +235,9 @@ async def test_default_captures_all_events(monkeypatch: pytest.MonkeyPatch) -> N
     # Unset capture_events -> every event is captured so metrics can evaluate
     # across the whole stream.
     body = _sse(
-        "event: progress\ndata: {\"pct\": 10}",
-        "event: tool_call\ndata: {\"name\": \"search\"}",
-        "event: message\ndata: {\"output\": \"done\"}",
+        'event: progress\ndata: {"pct": 10}',
+        'event: tool_call\ndata: {"name": "search"}',
+        'event: message\ndata: {"output": "done"}',
     )
     _patch_response(monkeypatch, body)
 
@@ -253,7 +255,7 @@ async def test_default_captures_all_events(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.unit
 async def test_empty_capture_events_stores_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     # Explicit empty list is the opt-out: capture nothing.
-    body = _sse("event: message\ndata: {\"output\": \"done\"}")
+    body = _sse('event: message\ndata: {"output": "done"}')
     _patch_response(monkeypatch, body)
 
     target = StreamingHttpTarget(url="http://localhost:8080/run", capture_events=[])
@@ -265,7 +267,7 @@ async def test_empty_capture_events_stores_nothing(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.unit
 async def test_metadata_preserves_golden_metadata_plus_sse(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse("event: progress\ndata: {\"pct\": 50}", "event: message\ndata: {\"output\": \"ok\"}")
+    body = _sse('event: progress\ndata: {"pct": 50}', 'event: message\ndata: {"output": "ok"}')
     _patch_response(monkeypatch, body)
 
     target = StreamingHttpTarget(url="http://localhost:8080/run", capture_events=["progress"])
@@ -285,8 +287,8 @@ async def test_metadata_preserves_golden_metadata_plus_sse(monkeypatch: pytest.M
 @pytest.mark.unit
 async def test_optional_fields_from_final_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     body = _sse(
-        "event: token\ndata: {\"chunk\": \"x\"}",
-        "event: message\ndata: {\"output\": \"answer\", \"cost\": 0.01, \"tokens\": 12}",
+        'event: token\ndata: {"chunk": "x"}',
+        'event: message\ndata: {"output": "answer", "cost": 0.01, "tokens": 12}',
     )
     _patch_response(monkeypatch, body)
 
@@ -309,7 +311,7 @@ async def test_optional_fields_from_final_payload(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.unit
 async def test_accepts_event_stream_and_applies_auth(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
+    captured = _patch_response(monkeypatch, _sse('event: message\ndata: {"output": "ok"}'))
 
     target = StreamingHttpTarget(url="http://localhost:8080/run", auth=BearerAuth(token="tok123"))
     await target.ainvoke(Golden(input="q"))
@@ -322,7 +324,7 @@ async def test_accepts_event_stream_and_applies_auth(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.unit
 async def test_body_template_with_input_placeholder(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
+    captured = _patch_response(monkeypatch, _sse('event: message\ndata: {"output": "ok"}'))
 
     target = StreamingHttpTarget(
         url="http://localhost:8080/api",
@@ -339,7 +341,7 @@ async def test_body_template_with_input_placeholder(monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.unit
 async def test_body_template_scatters_input_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
+    captured = _patch_response(monkeypatch, _sse('event: message\ndata: {"output": "ok"}'))
 
     target = StreamingHttpTarget(
         url="http://localhost:8080/api",
@@ -355,7 +357,7 @@ async def test_body_template_scatters_input_fields(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.unit
 async def test_templates_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _patch_response(monkeypatch, _sse("event: message\ndata: {\"output\": \"ok\"}"))
+    captured = _patch_response(monkeypatch, _sse('event: message\ndata: {"output": "ok"}'))
 
     target = StreamingHttpTarget(
         url="http://localhost:8080/api",
@@ -400,7 +402,7 @@ async def test_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
         call_count += 1
         if call_count < 3:
             raise URLError("Connection refused")
-        return FakeHTTPResponse(_sse("event: message\ndata: {\"output\": \"recovered\"}"))
+        return FakeHTTPResponse(_sse('event: message\ndata: {"output": "recovered"}'))
 
     monkeypatch.setattr(target_mod, "urlopen", fake_urlopen)
     monkeypatch.setattr(time, "sleep", lambda _: None)
@@ -483,8 +485,8 @@ class _FakeAsyncClient:
 @pytest.mark.unit
 async def test_async_sse_line_reassembly_and_output() -> None:
     body = _sse(
-        "event: token\ndata: {\"chunk\": \"partial\"}",
-        "event: message\ndata: {\"output\": \"final answer\"}",
+        'event: token\ndata: {"chunk": "partial"}',
+        'event: message\ndata: {"output": "final answer"}',
     )
     client = _FakeAsyncClient([_FakeStreamResponse(body)])
 
@@ -507,9 +509,9 @@ async def test_async_sse_line_reassembly_and_output() -> None:
 @pytest.mark.unit
 async def test_async_captures_events_and_selects_output_event() -> None:
     body = _sse(
-        "event: progress\ndata: {\"pct\": 10}",
-        "event: message\ndata: {\"output\": \"ignored\"}",
-        "event: final\ndata: {\"output\": \"chosen\"}",
+        'event: progress\ndata: {"pct": 10}',
+        'event: message\ndata: {"output": "ignored"}',
+        'event: final\ndata: {"output": "chosen"}',
     )
     client = _FakeAsyncClient([_FakeStreamResponse(body)])
 
@@ -561,7 +563,7 @@ async def test_async_raise_for_status_retries_then_fails() -> None:
 
 @pytest.mark.unit
 async def test_async_retries_then_succeeds() -> None:
-    ok = _FakeStreamResponse(_sse("event: message\ndata: {\"output\": \"recovered\"}"))
+    ok = _FakeStreamResponse(_sse('event: message\ndata: {"output": "recovered"}'))
     client = _FakeAsyncClient([URLError("boom"), ok])
 
     target = StreamingHttpTarget(url="http://localhost:8080/run", retries=2, backoff_s=0.0)
@@ -580,7 +582,7 @@ async def test_async_retries_then_succeeds() -> None:
 
 @pytest.mark.unit
 async def test_sse_synthesizes_trajectory_when_not_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = _sse("event: message\ndata: {\"output\": \"final answer\"}")
+    body = _sse('event: message\ndata: {"output": "final answer"}')
     _patch_response(monkeypatch, body)
 
     target = StreamingHttpTarget(url="http://localhost:8080/run")

@@ -29,8 +29,7 @@ def __getattr__(name: str) -> object:
         mod = importlib.import_module(module_path)
         cls = getattr(mod, class_name)
         warnings.warn(
-            f"harness_evals.sources.{name} is deprecated — "
-            f"use {module_path}.{class_name} instead.",
+            f"harness_evals.sources.{name} is deprecated — use {module_path}.{class_name} instead.",
             DeprecationWarning,
             stacklevel=2,
         )

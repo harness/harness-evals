@@ -156,9 +156,7 @@ class StreamingHttpTarget(BaseTarget):
                 latency_ms=latency_ms,
             )
 
-        output, kwargs, metadata_extra, extract_source = self._process_response(
-            raw_body, content_type, golden.input
-        )
+        output, kwargs, metadata_extra, extract_source = self._process_response(raw_body, content_type, golden.input)
         extracted_context = kwargs.pop("context", None)
         # A reported trajectory (messages_path) is authoritative; otherwise
         # assemble a best-effort trace from the input, any captured tool calls,
@@ -168,7 +166,9 @@ class StreamingHttpTarget(BaseTarget):
         if self.latency_ms_path is None:
             kwargs["latency_ms"] = latency_ms
         else:
-            extracted_latency = extract_path(extract_source, self.latency_ms_path) if extract_source is not None else None
+            extracted_latency = (
+                extract_path(extract_source, self.latency_ms_path) if extract_source is not None else None
+            )
             kwargs["latency_ms"] = float(extracted_latency) if extracted_latency is not None else latency_ms
 
         eval_case = EvalCase.from_golden(golden, output=output, metadata_extra=metadata_extra, **kwargs)
@@ -176,9 +176,7 @@ class StreamingHttpTarget(BaseTarget):
             eval_case.context = extracted_context
         return eval_case
 
-    async def _execute_async(
-        self, body: bytes, user_headers: dict[str, str]
-    ) -> tuple[object, str, float, str | None]:
+    async def _execute_async(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
         """Async streaming HTTP call using httpx with retries. Returns (raw_text, content_type, latency_ms, error)."""
         client = self._async_client
         assert client is not None
@@ -230,9 +228,7 @@ class StreamingHttpTarget(BaseTarget):
 
         return None, "", last_latency_ms, last_error
 
-    def _execute_with_retries(
-        self, body: bytes, user_headers: dict[str, str]
-    ) -> tuple[object, str, float, str | None]:
+    def _execute_with_retries(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
         """Synchronous HTTP call with retry logic. Returns (raw_text, content_type, latency_ms, error)."""
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **user_headers}
         params: dict[str, str] = {}

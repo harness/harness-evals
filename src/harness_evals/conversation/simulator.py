@@ -6,14 +6,20 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-_logger = logging.getLogger(__name__)
-
 from harness_evals._async_compat import _run_async
 from harness_evals.conversation.golden import ConversationGolden, ConversationMode
-from harness_evals.conversation.graph import BranchNode, LLMNode, ScriptedNode, SimulationGraph, StopNode
+from harness_evals.conversation.graph import (
+    BranchNode,
+    LLMNode,
+    ScriptedNode,
+    SimulationGraph,
+    StopNode,
+)
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
+
+_logger = logging.getLogger(__name__)
 
 _USER_PROMPT = """You are simulating a user in a conversation. Your goal is to achieve the following scenario:
 
@@ -199,8 +205,7 @@ class ConversationSimulator:
                 repeat_count += 1
                 if repeat_count == 3 and isinstance(node, ScriptedNode):
                     _logger.warning(
-                        "ScriptedNode '%s' has repeated %d times (no edge matched); "
-                        "conversation may be stuck",
+                        "ScriptedNode '%s' has repeated %d times (no edge matched); conversation may be stuck",
                         current,
                         repeat_count,
                     )

@@ -38,12 +38,8 @@ class BaseEvalCaseSource(ABC):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
-        if not getattr(cls, "__abstractmethods__", None) and not isinstance(
-            cls.__dict__.get("name"), str
-        ):
-            raise TypeError(
-                f"{cls.__name__} must define a class-level 'name: str' attribute"
-            )
+        if not getattr(cls, "__abstractmethods__", None) and not isinstance(cls.__dict__.get("name"), str):
+            raise TypeError(f"{cls.__name__} must define a class-level 'name: str' attribute")
 
     @abstractmethod
     async def fetch(self, ref: ResourceRef) -> list[EvalCase]:
@@ -86,12 +82,8 @@ class BaseEvalConfigSource(ABC):
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
-        if not getattr(cls, "__abstractmethods__", None) and not isinstance(
-            cls.__dict__.get("name"), str
-        ):
-            raise TypeError(
-                f"{cls.__name__} must define a class-level 'name: str' attribute"
-            )
+        if not getattr(cls, "__abstractmethods__", None) and not isinstance(cls.__dict__.get("name"), str):
+            raise TypeError(f"{cls.__name__} must define a class-level 'name: str' attribute")
 
     @abstractmethod
     async def fetch(self, ref: ResourceRef) -> EvalConfig:

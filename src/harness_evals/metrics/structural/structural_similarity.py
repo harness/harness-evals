@@ -194,7 +194,7 @@ class StructuralSimilarityMetric(BaseMetric):
         ):
             value *= self.extra_keys_penalty
 
-        reason = None
+        reason = "No structural differences found between output and expected"
         if diff:
             changes = {k: v for k, v in diff.items() if k != "deep_distance"}
             if changes:

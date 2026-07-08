@@ -32,6 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
+from harness_evals.errors import TargetInvocationError
 from harness_evals.plugins import register_target
 from harness_evals.targets.auth import AuthConfig, NoAuth
 from harness_evals.targets.base import BaseTarget
@@ -150,11 +151,9 @@ class StreamingHttpTarget(BaseTarget):
             )
 
         if error is not None:
-            return EvalCase.from_golden(
-                golden,
-                output="",
+            raise TargetInvocationError(
+                f"StreamingHttpTarget invocation failed: {error}",
                 latency_ms=latency_ms,
-                metadata_extra={"http_error": error},
             )
 
         output, kwargs, metadata_extra, extract_source = self._process_response(

@@ -63,11 +63,8 @@ class ResourceConsistencyMetric(ReliabilityMetric):
             )
 
         mean = statistics.mean(values)
-        if mean == 0:
-            cv = 0.0
-        else:
-            stdev = statistics.stdev(values)
-            cv = stdev / mean
+        stdev = statistics.stdev(values)
+        cv = 0.0 if mean == 0 else stdev / mean
 
         score_value = max(0.0, 1.0 - cv)
 
@@ -75,11 +72,12 @@ class ResourceConsistencyMetric(ReliabilityMetric):
             name=self.name,
             value=score_value,
             threshold=self.threshold,
+            reason=f"Resource '{self.resource_key}' had coefficient of variation {cv:g} across {len(values)} runs",
             metadata={
                 "k": len(runs),
                 "resource_key": self.resource_key,
                 "mean": mean,
-                "stdev": statistics.stdev(values),
+                "stdev": stdev,
                 "cv": cv,
             },
         )

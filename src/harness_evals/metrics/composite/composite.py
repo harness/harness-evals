@@ -149,5 +149,6 @@ class CompositeMetric(BaseMetric):
             name=self.name,
             value=final_score,
             threshold=self.threshold,
+            reason=f"Composite score aggregated {len(details['sub_scores'])} sub-scores with total active weight {active_weight_sum:g}",
             metadata=details,
         )

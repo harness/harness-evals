@@ -40,6 +40,7 @@ class SchemaValidationMetric(BaseMetric):
                 name=self.name,
                 value=1.0,
                 threshold=self.threshold,
+                reason="Output conforms to the expected JSON Schema",
             )
         except jsonschema.ValidationError as e:
             return Score(

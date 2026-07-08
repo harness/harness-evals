@@ -41,5 +41,6 @@ class LatencyMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Latency was {latency:g}ms against max {self.max_ms:g}ms",
             metadata={"latency_ms": latency, "max_ms": self.max_ms},
         )

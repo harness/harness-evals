@@ -25,7 +25,9 @@ class TestExactMatch:
     )
     def test_exact_match(self, output, expected, case_sensitive, should_pass):
         ec = EvalCase(input="q", output=output, expected=expected)
-        assert ExactMatchMetric(case_sensitive=case_sensitive).measure(ec).passed == should_pass
+        score = ExactMatchMetric(case_sensitive=case_sensitive).measure(ec)
+        assert score.passed == should_pass
+        assert score.reason
 
 
 @pytest.mark.unit
@@ -41,7 +43,9 @@ class TestContains:
     )
     def test_contains(self, output, expected, case_sensitive, should_pass):
         ec = EvalCase(input="q", output=output, expected=expected)
-        assert ContainsMetric(case_sensitive=case_sensitive).measure(ec).passed == should_pass
+        score = ContainsMetric(case_sensitive=case_sensitive).measure(ec)
+        assert score.passed == should_pass
+        assert score.reason
 
 
 @pytest.mark.unit
@@ -56,7 +60,9 @@ class TestRegex:
     )
     def test_regex(self, output, pattern, should_pass):
         ec = EvalCase(input="q", output=output, expected=pattern)
-        assert RegexMetric().measure(ec).passed == should_pass
+        score = RegexMetric().measure(ec)
+        assert score.passed == should_pass
+        assert score.reason
 
     def test_invalid_regex(self):
         ec = EvalCase(input="q", output="test", expected="[invalid")
@@ -80,6 +86,7 @@ class TestNumericDiff:
         ec = EvalCase(input="q", output=output, expected=expected)
         score = NumericDiffMetric(threshold=threshold).measure(ec)
         assert check(score)
+        assert score.reason
 
     def test_non_numeric(self):
         ec = EvalCase(input="q", output="abc", expected="42")

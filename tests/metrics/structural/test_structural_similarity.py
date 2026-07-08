@@ -15,6 +15,7 @@ def test_structural_similarity_raw_json():
     score = metric.measure(ec)
     assert score.passed
     assert score.value == 1.0
+    assert "No structural differences" in score.reason
 
 
 @pytest.mark.unit

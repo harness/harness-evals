@@ -64,6 +64,10 @@ class TurnLatencyMetric(BaseMetric):
             name=self.name,
             value=mean_score,
             threshold=self.threshold,
+            reason=(
+                f"Mean assistant turn latency was {mean_latency:g}ms across {len(latencies)} scored turns "
+                f"against max {self.max_ms_per_turn:g}ms per turn"
+            ),
             metadata={
                 "turn_latencies": latencies,
                 "mean_latency_ms": mean_latency,

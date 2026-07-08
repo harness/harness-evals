@@ -33,7 +33,7 @@ from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.datasets import Dataset, load_dataset, loads_dataset, save_dataset
-from harness_evals.errors import HarnessEvalsError, MissingAdapterError
+from harness_evals.errors import HarnessEvalsError, MissingAdapterError, TargetInvocationError
 from harness_evals.eval import run_eval
 from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
 from harness_evals.input_generator import InputGenerator
@@ -77,6 +77,7 @@ __all__ = [
     "resolve",
     "HarnessEvalsError",
     "MissingAdapterError",
+    "TargetInvocationError",
     # Importers
     "BaseEvalCaseSource",
     "BaseEvalConfigSource",

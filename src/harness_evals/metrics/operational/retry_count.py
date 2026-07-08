@@ -41,5 +41,6 @@ class RetryCountMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Retry count was {retries} against max {self.max_retries}",
             metadata={"retry_count": retries, "max_retries": self.max_retries},
         )

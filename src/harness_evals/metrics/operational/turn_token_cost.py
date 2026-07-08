@@ -64,6 +64,10 @@ class TurnTokenCostMetric(BaseMetric):
             name=self.name,
             value=mean_score,
             threshold=self.threshold,
+            reason=(
+                f"Mean assistant turn token count was {mean_token_count:g} across {len(token_counts)} scored turns "
+                f"against max {self.max_tokens_per_turn} tokens per turn"
+            ),
             metadata={
                 "turn_token_counts": token_counts,
                 "mean_token_count": mean_token_count,

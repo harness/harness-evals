@@ -13,6 +13,7 @@ import pytest
 from harness_evals import plugins
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
+from harness_evals.errors import TargetInvocationError
 from harness_evals.llm.base import BaseLLM
 from harness_evals.prompts.template import PromptTemplate
 from harness_evals.targets import (
@@ -323,12 +324,9 @@ async def test_http_target_transport_failure(monkeypatch: pytest.MonkeyPatch) ->
 
     target = HttpTarget(url="http://localhost:8080/run", retries=1, backoff_s=0.01)
     golden = Golden(input="test")
-    result = await target.ainvoke(golden)
 
-    assert result.output == ""
-    assert result.metadata is not None
-    assert "http_error" in result.metadata
-    assert "Connection refused" in result.metadata["http_error"]
+    with pytest.raises(TargetInvocationError, match="Connection refused"):
+        await target.ainvoke(golden)
 
 
 @pytest.mark.unit
@@ -345,9 +343,11 @@ async def test_http_target_failure_latency_uses_last_attempt(monkeypatch: pytest
     monkeypatch.setattr(time, "sleep", lambda _: None)
 
     target = HttpTarget(url="http://localhost:8080/run", retries=1, backoff_s=0.01)
-    result = await target.ainvoke(Golden(input="test"))
 
-    assert result.latency_ms == pytest.approx(20.0)
+    with pytest.raises(TargetInvocationError) as exc_info:
+        await target.ainvoke(Golden(input="test"))
+
+    assert exc_info.value.latency_ms == pytest.approx(20.0)
 
 
 @pytest.mark.unit

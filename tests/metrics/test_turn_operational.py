@@ -31,6 +31,7 @@ class TestTurnLatencyMetric:
         assert score.value == pytest.approx(0.4)  # mean of (1-200/500, 1-400/500) = mean(0.6, 0.2) = 0.4
         assert score.metadata["turn_latencies"] == [200.0, 400.0]
         assert score.metadata["mean_latency_ms"] == 300.0
+        assert "Mean assistant turn latency" in score.reason
 
     def test_over_budget(self):
         ec = EvalCase(input="q", output="a", messages=MESSAGES_WITH_LATENCY)
@@ -90,6 +91,7 @@ class TestTurnTokenCostMetric:
         assert score.value == pytest.approx(0.5)  # mean of (1-50/200, 1-150/200) = mean(0.75, 0.25) = 0.5
         assert score.metadata["turn_token_counts"] == [50, 150]
         assert score.metadata["mean_token_count"] == pytest.approx(100.0)
+        assert "Mean assistant turn token count" in score.reason
 
     def test_over_budget(self):
         ec = EvalCase(input="q", output="a", messages=MESSAGES_WITH_TOKENS)

@@ -43,4 +43,5 @@ class RegexMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason="Output matched the expected regex pattern" if match else "Output did not match the expected regex pattern",
         )

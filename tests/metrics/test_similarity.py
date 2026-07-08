@@ -42,6 +42,7 @@ class TestLevenshteinMetric:
         ec = EvalCase(input="q", output="", expected="")
         score = LevenshteinMetric().measure(ec)
         assert score.value == 1.0
+        assert score.reason
 
     def test_one_empty(self):
         ec = EvalCase(input="q", output="hello", expected="")

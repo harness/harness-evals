@@ -11,6 +11,7 @@ import pytest
 
 from harness_evals import plugins
 from harness_evals.core.golden import Golden
+from harness_evals.errors import TargetInvocationError
 from harness_evals.targets import BearerAuth, StreamingHttpTarget
 
 # ---------------------------------------------------------------------------
@@ -373,7 +374,7 @@ async def test_templates_headers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.unit
-async def test_transport_failure_returns_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_transport_failure_raises_target_invocation_error(monkeypatch: pytest.MonkeyPatch) -> None:
     from harness_evals.targets import streaming_http as target_mod
 
     def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
@@ -383,12 +384,9 @@ async def test_transport_failure_returns_http_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(time, "sleep", lambda _: None)
 
     target = StreamingHttpTarget(url="http://localhost:8080/run", retries=1, backoff_s=0.01)
-    result = await target.ainvoke(Golden(input="test"))
 
-    assert result.output == ""
-    assert result.metadata is not None
-    assert "http_error" in result.metadata
-    assert "Connection refused" in result.metadata["http_error"]
+    with pytest.raises(TargetInvocationError, match="Connection refused"):
+        await target.ainvoke(Golden(input="test"))
 
 
 @pytest.mark.unit
@@ -545,7 +543,7 @@ async def test_async_non_event_stream_uses_buffered_text_path() -> None:
 @pytest.mark.unit
 async def test_async_raise_for_status_retries_then_fails() -> None:
     # Every attempt returns a 500 whose raise_for_status raises; after retries
-    # are exhausted the error is surfaced on the EvalCase.
+    # are exhausted the error is raised for the caller to classify.
     responses = [
         _FakeStreamResponse("", content_type="text/event-stream", status_code=500),
         _FakeStreamResponse("", content_type="text/event-stream", status_code=500),
@@ -555,12 +553,9 @@ async def test_async_raise_for_status_retries_then_fails() -> None:
     target = StreamingHttpTarget(url="http://localhost:8080/run", retries=1, backoff_s=0.0)
     target._async_client = client
 
-    result = await target.ainvoke(Golden(input="q"))
+    with pytest.raises(TargetInvocationError, match="HTTP 500"):
+        await target.ainvoke(Golden(input="q"))
 
-    assert result.output == ""
-    assert result.metadata is not None
-    assert "http_error" in result.metadata
-    assert "HTTP 500" in result.metadata["http_error"]
     assert len(client.calls) == 2  # initial attempt + one retry
 
 

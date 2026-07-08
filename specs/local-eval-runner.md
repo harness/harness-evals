@@ -457,9 +457,9 @@ class HttpTarget(BaseTarget):
 
 All JSONPath extraction uses `jsonpath-ng` (existing core dependency).
 
-**Transport failure:** after `retries` attempts, record an `EvalCase` with empty
-output and `metadata["http_error"]` — the run continues, the row fails its metrics
-visibly.
+**Transport failure:** after `retries` attempts, raise `TargetInvocationError`.
+`evaluate_dataset()` catches target exceptions so the run continues and marks the
+row with `metadata["target_error"]` on its failed scores.
 
 **Non-JSON response:** if `output_path == "$"` and `Content-Type` is `text/*`, the
 raw body becomes `output`.

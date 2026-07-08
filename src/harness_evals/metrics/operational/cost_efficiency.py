@@ -41,5 +41,6 @@ class CostEfficiencyMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Cost was ${cost:g} against max ${self.max_cost_usd:g}",
             metadata={"cost_usd": cost, "max_cost_usd": self.max_cost_usd},
         )

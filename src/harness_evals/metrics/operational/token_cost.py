@@ -41,5 +41,6 @@ class TokenCostMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Token count was {tokens} against max {self.max_tokens}",
             metadata={"token_count": tokens, "max_tokens": self.max_tokens},
         )

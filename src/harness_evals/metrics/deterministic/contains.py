@@ -36,4 +36,9 @@ class ContainsMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=(
+                "Output contained the expected substring"
+                if value == 1.0
+                else "Output did not contain the expected substring"
+            ),
         )

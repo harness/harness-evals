@@ -75,6 +75,7 @@ class TestTrajectoryConsistencyDistributional:
         score = TrajectoryConsistencyMetric(mode="distributional").measure(ec)
         assert score.value == pytest.approx(1.0)
         assert score.passed
+        assert "distributional trajectory similarity" in score.reason
 
     def test_completely_different_trajectories(self):
         runs = [
@@ -111,6 +112,7 @@ class TestTrajectoryConsistencySequential:
         ec = EvalCase(input="task", output="result", runs=runs)
         score = TrajectoryConsistencyMetric(mode="sequential").measure(ec)
         assert score.value == pytest.approx(1.0)
+        assert "sequential trajectory similarity" in score.reason
 
     def test_completely_different_order(self):
         runs = [

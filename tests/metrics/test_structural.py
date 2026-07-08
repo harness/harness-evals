@@ -12,6 +12,7 @@ class TestJsonDiff:
         score = JsonDiffMetric().measure(json_eval_case)
         assert score.value == 1.0
         assert score.passed
+        assert "No structural differences" in score.reason
 
     def test_different(self):
         ec = EvalCase(
@@ -43,7 +44,9 @@ class TestSchemaValidation:
     def test_valid(self):
         schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
         ec = EvalCase(input="q", output={"name": "test"})
-        assert SchemaValidationMetric(schema=schema).measure(ec).passed
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert score.passed
+        assert "conforms" in score.reason
 
     def test_invalid(self):
         schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}

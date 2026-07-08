@@ -77,7 +77,11 @@ class WebhookMetric(BaseMetric):
 
         if self.use_status_code:
             value = 1.0 if 200 <= response.status_code < 300 else 0.0
-            reason = None if value == 1.0 else f"Webhook returned non-success HTTP status {response.status_code}"
+            reason = (
+                f"Webhook returned success HTTP status {response.status_code}"
+                if value == 1.0
+                else f"Webhook returned non-success HTTP status {response.status_code}"
+            )
             return Score(name=self.name, value=value, threshold=self.threshold, reason=reason)
 
         try:
@@ -129,7 +133,12 @@ class WebhookMetric(BaseMetric):
         else:
             value = 1.0 if passed else 0.0
 
-        return Score(name=self.name, value=value, threshold=self.threshold)
+        return Score(
+            name=self.name,
+            value=value,
+            threshold=self.threshold,
+            reason=f"Webhook response key '{self.response_key}' was {passed}",
+        )
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

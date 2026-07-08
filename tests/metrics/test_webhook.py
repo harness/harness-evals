@@ -82,6 +82,7 @@ class TestWebhookMetricResponseKey:
             score = await metric.a_measure(ec)
             assert score.passed
             assert score.value == 1.0
+            assert "is_valid" in score.reason
 
     @pytest.mark.asyncio
     async def test_response_key_fail(self):
@@ -99,6 +100,7 @@ class TestWebhookMetricResponseKey:
             score = await metric.a_measure(ec)
             assert not score.passed
             assert score.value == 0.0
+            assert "is_valid" in score.reason
 
     @pytest.mark.asyncio
     async def test_response_key_missing(self):
@@ -219,7 +221,7 @@ class TestWebhookMetricStatusCode:
             score = await metric.a_measure(ec)
             assert score.passed
             assert score.value == 1.0
-            assert score.reason is None
+            assert "200" in score.reason
 
     @pytest.mark.asyncio
     async def test_status_code_failure(self):

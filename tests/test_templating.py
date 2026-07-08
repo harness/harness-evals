@@ -179,3 +179,38 @@ def test_headers_name_is_never_templated() -> None:
 def test_headers_unresolved_placeholder_raises() -> None:
     with pytest.raises(ValueError, match="did not resolve"):
         render_headers({"X-Id": "{{input.missing}}"}, Golden(input={"present": 1}))
+
+
+# ---------------------------------------------------------------------------
+# env.* placeholders
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_env_placeholder_resolves_from_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVAL_TARGET_API_KEY", "secret123")
+    g = Golden(input="q")
+    headers = render_headers({"Authorization": "Bearer {{env.EVAL_TARGET_API_KEY}}"}, g)
+    assert headers == {"Authorization": "Bearer secret123"}
+
+
+@pytest.mark.unit
+def test_env_placeholder_in_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MY_TOKEN", "tok")
+    g = Golden(input={"q": "hi"})
+    body = render_request_body({"key": "{{env.MY_TOKEN}}", "query": "{{input.q}}"}, g)
+    assert body == {"key": "tok", "query": "hi"}
+
+
+@pytest.mark.unit
+def test_env_placeholder_missing_var_raises() -> None:
+    g = Golden(input="q")
+    with pytest.raises(ValueError, match="not set"):
+        render_headers({"Authorization": "Bearer {{env.NONEXISTENT_VAR_XYZ}}"}, g)
+
+
+@pytest.mark.unit
+def test_env_placeholder_bare_env_raises() -> None:
+    g = Golden(input="q")
+    with pytest.raises(ValueError, match="requires a variable name"):
+        render_request_body({"v": "{{env}}"}, g)

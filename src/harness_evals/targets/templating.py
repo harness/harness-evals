@@ -8,6 +8,7 @@ current golden. Placeholders address golden fields by dotted path:
     {{input.question}}   -> golden.input["question"]
     {{input.items.0}}    -> golden.input["items"][0]
     {{metadata.user_id}} -> (golden.metadata or {})["user_id"]
+    {{env.VAR}}          -> os.environ["VAR"] (for secrets injected at runtime)
 
 A string that is *exactly* one placeholder resolves to the referenced value with
 its native type — so ``{{input}}`` where the input is a dict yields a dict, not a
@@ -22,6 +23,7 @@ variables at config-load time*; ``{{...}}`` resolves *golden fields per request*
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
@@ -106,10 +108,25 @@ def _resolve(expr: str, context: dict[str, Any]) -> Any:
     """Resolve a dotted placeholder path against the context, raising if missing."""
     parts = expr.split(".")
     root = parts[0]
+
+    if root == "env":
+        if len(parts) < 2:
+            raise ValueError(
+                f"template placeholder {{{{{expr}}}}} — 'env' requires a variable name (e.g. {{{{env.MY_VAR}}}})"
+            )
+        var_name = parts[1]
+        value = os.environ.get(var_name)
+        if value is None:
+            raise ValueError(
+                f"template placeholder {{{{{expr}}}}} references environment variable {var_name!r} "
+                f"which is not set"
+            )
+        return value
+
     if root not in context:
         raise ValueError(
             f"template placeholder {{{{{expr}}}}} references unknown root {root!r} "
-            f"(available: {', '.join(sorted(context))})"
+            f"(available: {', '.join(sorted(context))}, env)"
         )
     current: Any = context[root]
     for part in parts[1:]:

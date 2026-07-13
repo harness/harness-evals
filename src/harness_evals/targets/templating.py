@@ -118,8 +118,7 @@ def _resolve(expr: str, context: dict[str, Any]) -> Any:
         value = os.environ.get(var_name)
         if value is None:
             raise ValueError(
-                f"template placeholder {{{{{expr}}}}} references environment variable {var_name!r} "
-                f"which is not set"
+                f"template placeholder {{{{{expr}}}}} references environment variable {var_name!r} which is not set"
             )
         return value
 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and structured outputs. It provides a `pip install`-able scoring engine with ~37 metrics across deterministic, structural, operational, reliability, RAG, safety, agent, and conversational categories.
+**harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and structured outputs. It provides a `pip install`-able scoring engine with 70+ metrics across deterministic, structural, operational, reliability, predictability, MCP, similarity, LLM-judged, RAG, safety, agent, conversation, and security categories.
 
 **Core principle**: An eval always produces a `Score`. Every metric is a single class with a `measure()` method.
 
@@ -16,13 +16,17 @@
 ## Build System
 
 ```bash
-pip install -e "."              # Core only (Phase 1 metrics, no LLM key needed)
-pip install -e ".[llm]"         # + OpenAI, Anthropic for LLM-judged metrics
-pip install -e ".[dev]"         # + pytest, ruff, pre-commit
-pip install -e ".[all,dev]"     # Everything
+pip install -e "."                # Core only (deterministic metrics, no LLM key needed)
+pip install -e ".[llm]"           # + OpenAI, Anthropic for LLM-judged metrics
+pip install -e ".[otlp]"          # + OTLP metrics & traces export
+pip install -e ".[langfuse]"      # + Langfuse source/sink
+pip install -e ".[similarity]"    # + BLEU metric (nltk)
+pip install -e ".[harness]"       # + Harness AI Service LLM provider
+pip install -e ".[all]"           # Everything
+pip install -e ".[all,dev]"       # Everything + dev tools
 ```
 
-**Build tool**: setuptools via `pyproject.toml`
+**Build tool**: Poetry via `pyproject.toml` (backend: `poetry-core`)
 **No compiled extensions** — pure Python.
 
 ## Testing
@@ -96,39 +100,153 @@ Follow semver: patch for fixes, minor for new metrics/features, major for breaki
 
 ```
 harness-evals/
-├── pyproject.toml                   # Package config, dependencies, tool settings
+├── pyproject.toml                   # Package config (Poetry), dependencies, tool settings
 ├── README.md                        # User-facing documentation
 ├── AGENTS.md                        # This file
-├── PLAN.md                          # Full vision spec with all phases
+├── PLAN.md                          # Full vision spec
+├── CHANGELOG.md                     # Version history
 ├── LICENSE                          # Apache 2.0
-├── .gitignore
-├── .pre-commit-config.yaml
-├── .github/workflows/ci.yml
+├── .harness/publish.yaml            # CI pipeline for publishing
 │
 ├── src/harness_evals/
-│   ├── __init__.py                  # Public API: Golden, EvalCase, Score, evaluate, assert_test, etc.
+│   ├── __init__.py                  # Public API re-exports
 │   ├── py.typed                     # PEP 561 marker
+│   ├── cli.py                       # CLI entry point (harness-evals command)
+│   ├── eval.py                      # run_eval() one-liner
+│   ├── catalog.py                   # Metric catalog/registry
+│   ├── plugins.py                   # Plugin registration (decorators + entry points)
+│   ├── refs.py                      # ResourceRef URI system
+│   ├── errors.py                    # Custom exceptions
+│   ├── summary.py                   # Score summarization & aggregation
+│   ├── http_utils.py               # Shared HTTP utilities
 │   │
 │   ├── core/
-│   │   ├── __init__.py
 │   │   ├── golden.py                # Golden dataclass (authored data)
 │   │   ├── eval_case.py             # EvalCase dataclass (what metrics receive)
 │   │   ├── score.py                 # Score dataclass (passed auto-computed)
-│   │   ├── metric.py                # BaseMetric, ReliabilityMetric ABCs
+│   │   ├── metric.py                # BaseMetric, ReliabilityMetric, SafetyMetric ABCs
+│   │   ├── types.py                 # Message, ToolCall dataclasses
 │   │   ├── sink.py                  # BaseSink ABC
 │   │   └── runner.py                # evaluate(), assert_test(), evaluate_cases(), evaluate_dataset()
 │   │
 │   ├── metrics/
-│   │   ├── __init__.py              # Re-exports all metrics
-│   │   ├── deterministic/           # ExactMatch, Contains, Regex, NumericDiff
-│   │   ├── structural/              # JsonDiff, SchemaValidation
-│   │   ├── operational/             # Latency, TokenCost, CostEfficiency, RetryCount
-│   │   └── reliability/             # OutcomeConsistency, ResourceConsistency
+│   │   ├── deterministic/           # ExactMatch, Contains, Regex, NumericDiff, ListContains, Webhook
+│   │   ├── structural/              # JsonDiff, SchemaValidation, StructuralSimilarity
+│   │   ├── operational/             # Latency, TokenCost, CostEfficiency, RetryCount, TurnLatency, TurnTokenCost
+│   │   ├── reliability/             # OutcomeConsistency, ResourceConsistency, TrajectoryConsistency,
+│   │   │                            # PromptRobustness, EnvironmentRobustness, FaultRobustness,
+│   │   │                            # BrierScore, Calibration, Discrimination
+│   │   ├── similarity/              # Levenshtein, BLEU, EmbeddingSimilarity
+│   │   ├── llm_judge/              # GEval, RubricJudge, Pairwise, DAG, PromptAlignment, Summarization
+│   │   ├── rag/                     # Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall,
+│   │   │                            # AnswerCorrectness, AnswerSimilarity, ContextEntityRecall,
+│   │   │                            # ContextRelevancy, Conversational (turn-level RAG)
+│   │   ├── safety/                  # PII, Toxicity, PromptInjection, Hallucination, Bias, Compliance,
+│   │   │                            # HarmSeverity, HarmfulAdvice, MisuseDetection, RoleViolation
+│   │   ├── agent/                   # ToolCorrectness, ToolArgumentMatch, TaskCompletion,
+│   │   │                            # ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency
+│   │   ├── conversation/            # Coherence, Resolution, Completeness, TurnEfficiency, TurnRelevancy,
+│   │   │                            # KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy,
+│   │   │                            # ToolUse, ConversationalGEval
+│   │   ├── mcp/                     # ToolSelectionAccuracy, MCPTraceCompleteness
+│   │   ├── security/               # VulnerabilityCorrectness, SecurityCompleteness, CodeSafety,
+│   │   │                            # CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability
+│   │   └── composite/              # CompositeMetric (combine metrics with operators)
 │   │
-│   └── sinks/
-│       ├── __init__.py
-│       ├── stdout.py                # StdoutSink
-│       └── json_sink.py             # JsonSink
+│   ├── llm/                         # LLM provider abstraction
+│   │   ├── base.py                  # BaseLLM ABC
+│   │   ├── openai.py               # OpenAILLM
+│   │   ├── anthropic.py            # AnthropicLLM
+│   │   ├── harness_ai.py           # HarnessAILLM
+│   │   ├── embedding.py            # Embedding base
+│   │   └── openai_embedding.py     # OpenAI embeddings
+│   │
+│   ├── targets/                     # System-under-test adapters
+│   │   ├── base.py                  # BaseTarget ABC
+│   │   ├── prompt.py               # PromptTarget (template + LLM)
+│   │   ├── http.py                 # HttpTarget (POST to endpoint)
+│   │   ├── streaming_http.py       # StreamingHttpTarget (SSE)
+│   │   ├── auth.py                 # Auth configs (Bearer, ApiKey, Basic)
+│   │   ├── templating.py           # Request template rendering
+│   │   └── trajectory.py           # Trajectory capture
+│   │
+│   ├── datasets/                    # Dataset I/O and sources
+│   │   ├── io.py                    # load_dataset(), save_dataset()
+│   │   ├── base.py                  # BaseDatasetSource ABC
+│   │   ├── local.py                # LocalDatasetSource
+│   │   ├── http.py                 # HttpDatasetSource
+│   │   └── langfuse.py            # LangfuseDatasetSource
+│   │
+│   ├── prompts/                     # Prompt template system
+│   │   ├── template.py             # PromptTemplate ({{var}} placeholders)
+│   │   ├── base.py                 # BasePromptSource ABC
+│   │   ├── local.py                # LocalPromptSource
+│   │   ├── http.py                 # HttpPromptSource
+│   │   └── langfuse.py            # LangfusePromptSource
+│   │
+│   ├── importers/                   # Production trace → EvalCase
+│   │   ├── base.py                  # BaseEvalCaseSource, BaseEvalConfigSource ABCs
+│   │   ├── langfuse.py             # LangfuseEvalCaseSource
+│   │   └── otel.py                 # OTELEvalCaseSource
+│   │
+│   ├── config/                      # YAML eval config system
+│   │   ├── schema.py               # EvalConfig dataclass
+│   │   └── runner.py               # run_config(), load_config()
+│   │
+│   ├── conversation/                # Multi-turn conversation evaluation
+│   │   ├── golden.py               # ConversationGolden, ConversationMode
+│   │   ├── simulator.py            # ConversationSimulator
+│   │   ├── graph.py                # SimulationGraph, ScriptedNode, LLMNode, BranchNode, StopNode
+│   │   └── runner.py               # evaluate_conversation(), evaluate_conversations()
+│   │
+│   ├── baseline/                    # Score regression detection
+│   │   ├── store.py                # BaselineStore ABC
+│   │   ├── json_store.py           # JsonBaselineStore
+│   │   └── compare.py             # compare_to_baseline()
+│   │
+│   ├── optimizer/                   # Prompt optimization loop
+│   │   └── optimizer.py            # PromptOptimizer
+│   │
+│   ├── synthesizer/                 # Dataset generation from documents
+│   │   ├── base.py                 # Synthesizer
+│   │   ├── conversation.py         # ConversationSynthesizer, ScriptedConversationSynthesizer
+│   │   ├── extraction.py           # Extraction-style synthesis
+│   │   ├── qa.py                   # QA-style synthesis
+│   │   ├── structured.py          # Structured output synthesis
+│   │   └── summarization.py       # Summarization synthesis
+│   │
+│   ├── input_generator/             # Input variation generation
+│   │   ├── base.py                 # InputGenerator
+│   │   ├── rephrase.py            # Rephrasings
+│   │   ├── adversarial.py         # Adversarial rewrites
+│   │   ├── complexity_ladder.py   # Difficulty scaling
+│   │   └── use_case.py            # Use-case variations
+│   │
+│   ├── perturbations/               # Input perturbation for robustness metrics
+│   │   ├── base.py                 # BasePerturbation
+│   │   ├── rephrase.py            # Rephrase perturbation
+│   │   ├── typo.py                # Typo injection
+│   │   ├── json_reorder.py        # JSON key reordering
+│   │   └── schema_variation.py    # Schema variations
+│   │
+│   ├── testing/                     # Fault injection for robustness testing
+│   │   └── fault_injector.py      # FaultInjector, Fault
+│   │
+│   ├── reporting/                   # HTML report generation
+│   │   ├── html_reporter.py       # HtmlReporter
+│   │   └── html_sink.py           # HtmlSink
+│   │
+│   ├── sinks/                       # Output destinations
+│   │   ├── stdout.py              # StdoutSink
+│   │   ├── json_sink.py           # JsonSink
+│   │   ├── csv_sink.py            # CsvSink
+│   │   ├── junit_sink.py          # JUnitSink
+│   │   ├── langfuse_sink.py       # LangfuseSink
+│   │   └── otlp_sink.py           # OtlpSink
+│   │
+│   └── sources/                     # Deprecated import path shims
+│       ├── langfuse.py            # → importers.langfuse (DeprecationWarning)
+│       └── otel.py                # → importers.otel (DeprecationWarning)
 │
 ├── tests/
 │   ├── conftest.py                  # Shared fixtures
@@ -136,24 +254,26 @@ harness-evals/
 │   └── metrics/                     # One test file per metric category
 │
 └── examples/
-    └── basic_eval.py                # Minimal working example
+    └── integrations/                # Framework integration examples
 ```
 
 ## How to Add a New Metric
 
 This is the most common task an AI agent will do. Follow these steps:
 
-1. **Pick the category** — deterministic, structural, operational, reliability, etc.
+1. **Pick the category** — deterministic, structural, operational, reliability, similarity, llm_judge, rag, safety, agent, conversation, mcp, security, or composite.
 2. **Create the file** — `src/harness_evals/metrics/<category>/<metric_name>.py`
-3. **Implement the class** — extend `BaseMetric` (or `ReliabilityMetric` for multi-run):
+3. **Implement the class** — extend `BaseMetric` (or `ReliabilityMetric` for multi-run, `SafetyMetric` for safety):
 
 ```python
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.core.eval_case import EvalCase
 
 
 class MyMetric(BaseMetric):
+    dimension = Dimension.CORRECTNESS  # or GROUNDEDNESS, SAFETY, TRAJECTORY, PERFORMANCE
+
     def __init__(self, threshold: float = 1.0, **kwargs):
         super().__init__(name="my_metric", threshold=threshold, **kwargs)
 
@@ -202,6 +322,7 @@ class Golden:
     input: str | dict | list
     expected: str | dict | list | None = None
     context: list[str] | None = None
+    expected_tools: list[str] | None = None
     metadata: dict[str, Any] | None = None
     tags: dict[str, str] | None = None
 ```
@@ -215,14 +336,38 @@ class EvalCase:
     output: str | dict | list
     expected: str | dict | list | None = None
     context: list[str] | None = None
-    latency_ms: float | None = None         # typed operational fields
+    messages: list[Message] | None = None
+    tool_calls: list[ToolCall] | None = None
+    expected_tools: list[str] | None = None
+    expected_tool_calls: list[ToolCall] | None = None
+    latency_ms: float | None = None
     token_count: int | None = None
     cost_usd: float | None = None
     retry_count: int | None = None
     confidence: float | None = None
     tags: dict[str, str] | None = None
-    metadata: dict[str, Any] | None = None  # extensible for custom keys
-    runs: list["EvalCase"] | None = None    # K runs for reliability metrics
+    metadata: dict[str, Any] | None = None
+    runs: list["EvalCase"] | None = None
+```
+
+### Message (conversation turn)
+
+```python
+@dataclass
+class Message:
+    role: str
+    content: str
+    tool_calls: list[ToolCall] | None = None
+```
+
+### ToolCall (tool/function invocation)
+
+```python
+@dataclass
+class ToolCall:
+    name: str
+    input: dict[str, Any] | None = None
+    output: str | dict | None = None
 ```
 
 ### Score
@@ -245,6 +390,7 @@ class Score:
 class BaseMetric(ABC):
     name: str
     threshold: float
+    dimension: Dimension   # CORRECTNESS, GROUNDEDNESS, SAFETY, TRAJECTORY, PERFORMANCE
 
     @abstractmethod
     def measure(self, eval_case: EvalCase) -> Score: ...
@@ -271,12 +417,19 @@ class ReliabilityMetric(BaseMetric):
                      reason="No runs provided")
 ```
 
-## Phased Implementation
+### SafetyMetric (for safety — never averaged)
 
-See `PLAN.md` for the full vision with 6 phases and ~37 metrics. Phase 1 (this skeleton) covers core framework + 12 metrics. Each subsequent phase adds metrics, capabilities, and directory structure as described in `PLAN.md`.
+```python
+class SafetyMetric(BaseMetric):
+    dimension = Dimension.SAFETY
+```
 
 ## Dependencies
 
-**Core (Phase 1)**: `deepdiff>=7.0`, `jsonschema>=4.0` — two dependencies total.
-**LLM (Phase 2+)**: `openai>=1.0`, `anthropic>=0.30` — optional.
-**Dev**: `pytest>=8.0`, `ruff>=0.4`, `pytest-cov`, `pytest-asyncio`, `pre-commit`.
+**Core**: `deepdiff>=7.0`, `jsonschema>=4.0`, `jsonpath-ng>=1.6`, `pyyaml>=6.0`
+**LLM**: `openai>=1.40`, `anthropic>=0.30` — optional `[llm]`
+**OTLP**: `opentelemetry-sdk>=1.20`, `opentelemetry-exporter-otlp-proto-grpc>=1.20`, `opentelemetry-exporter-otlp-proto-http>=1.20` — optional `[otlp]`
+**Similarity**: `nltk>=3.9.4` — optional `[similarity]`
+**Harness**: `httpx>=0.27`, `pyjwt>=2.13.0` — optional `[harness]`
+**Langfuse**: `langfuse>=2.0` — optional `[langfuse]`
+**Dev**: `pytest>=8.0`, `ruff>=0.15`, `pytest-cov`, `pytest-asyncio`, `pre-commit`, `build`

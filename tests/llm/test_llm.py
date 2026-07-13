@@ -267,6 +267,191 @@ class TestAnthropicLLMParams:
 
 
 @pytest.mark.unit
+class TestBedrockAnthropicLLM:
+    """BedrockAnthropicLLM routes to AsyncAnthropicBedrock with bearer auth + region,
+    reusing AnthropicLLM's request logic."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_anthropic(self, monkeypatch):
+        self.mock_create = MagicMock()
+        self.client_kwargs: dict = {}
+
+        async def fake_create(**kwargs):
+            self.mock_create(**kwargs)
+            block = MagicMock()
+            block.text = '{"ok": true}'
+            resp = MagicMock()
+            resp.content = [block]
+            return resp
+
+        def fake_bedrock_ctor(**kwargs):
+            self.client_kwargs = kwargs
+            client = MagicMock()
+            client.messages.create = fake_create
+            return client
+
+        mock_anthropic = MagicMock()
+        mock_anthropic.AsyncAnthropicBedrock.side_effect = fake_bedrock_ctor
+        monkeypatch.setitem(sys.modules, "anthropic", mock_anthropic)
+        # Bedrock must not depend on a direct-Anthropic key or ambient AWS env.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+        monkeypatch.delenv("AWS_REGION", raising=False)
+
+    def _make(self, **kwargs):
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        kwargs.setdefault("api_key", "bedrock-bearer-token")
+        kwargs.setdefault("aws_region", "us-east-2")
+        return BedrockAnthropicLLM(model="global.anthropic.claude-sonnet-4-5-20250929-v1:0", **kwargs)
+
+    def test_builds_bedrock_client_with_bearer_and_region(self):
+        self._make()
+        assert self.client_kwargs.get("api_key") == "bedrock-bearer-token"
+        assert self.client_kwargs.get("aws_region") == "us-east-2"
+
+    def test_requires_bearer_key(self):
+        # Bearer-only: no api_key and no AWS_BEARER_TOKEN_BEDROCK must raise, rather than let the
+        # SDK fall through to an AWS IAM/SigV4 path (which needs boto3) and fail confusingly.
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        with pytest.raises(ValueError, match="No Bedrock API key"):
+            BedrockAnthropicLLM(model="m", api_key=None)
+
+    def test_does_not_require_anthropic_api_key(self):
+        # A bearer is sufficient; ANTHROPIC_API_KEY is neither needed nor used.
+        self._make()  # passes a bearer via _make's default api_key
+        assert self.client_kwargs.get("api_key") == "bedrock-bearer-token"
+
+    async def test_generate_reuses_parent_path(self):
+        llm = self._make()
+        out = await llm.generate("hi")
+        assert out == '{"ok": true}'
+        assert self.mock_create.call_args[1]["model"] == "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+    async def test_generate_json_uses_output_config(self):
+        llm = self._make()
+        result = await llm.generate_json("hi", {"type": "object", "properties": {"ok": {"type": "boolean"}}})
+        assert result == {"ok": True}
+        assert "output_config" in self.mock_create.call_args[1]
+
+    async def test_sampling_params_forwarded(self):
+        llm = self._make(top_p=0.9, top_k=40)
+        await llm.generate("hi")
+        kw = self.mock_create.call_args[1]
+        assert kw["top_p"] == 0.9
+        assert kw["top_k"] == 40
+
+    def test_env_fallback_for_bearer_and_region(self, monkeypatch):
+        # With no constructor api_key/aws_region, the SDK client gets the values from env.
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bearer")
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        BedrockAnthropicLLM(model="m")
+        assert self.client_kwargs.get("api_key") == "env-bearer"
+        assert self.client_kwargs.get("aws_region") == "eu-west-1"
+
+    def test_constructor_args_override_env(self, monkeypatch):
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bearer")
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        BedrockAnthropicLLM(model="m", api_key="ctor-bearer", aws_region="us-east-2")
+        assert self.client_kwargs.get("api_key") == "ctor-bearer"
+        assert self.client_kwargs.get("aws_region") == "us-east-2"
+
+
+@pytest.mark.unit
+class TestBedrockOpenAILLM:
+    """BedrockOpenAILLM points the OpenAI SDK at the Bedrock OpenAI-compatible endpoint
+    and extracts JSON robustly (Bedrock doesn't enforce json_schema)."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_openai(self, monkeypatch):
+        self.mock_create = MagicMock()
+        self.client_kwargs: dict = {}
+        # content is set per-test via self.content
+        self.content = "pong"
+
+        async def fake_create(**kwargs):
+            self.mock_create(**kwargs)
+            msg = MagicMock()
+            msg.content = self.content
+            choice = MagicMock()
+            choice.message = msg
+            resp = MagicMock()
+            resp.choices = [choice]
+            resp.usage = None
+            return resp
+
+        def fake_ctor(**kwargs):
+            self.client_kwargs = kwargs
+            client = MagicMock()
+            client.chat.completions.create = fake_create
+            return client
+
+        mock_openai = MagicMock()
+        mock_openai.AsyncOpenAI.side_effect = fake_ctor
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+        monkeypatch.delenv("AWS_REGION", raising=False)
+
+    def _make(self, **kwargs):
+        from harness_evals.llm.bedrock import BedrockOpenAILLM
+
+        kwargs.setdefault("api_key", "bedrock-bearer-token")
+        kwargs.setdefault("aws_region", "us-east-1")
+        return BedrockOpenAILLM(model="arn:aws:bedrock:us-east-1:1:application-inference-profile/x", **kwargs)
+
+    def test_points_at_bedrock_openai_endpoint_with_bearer(self):
+        self._make(aws_region="us-west-2")
+        assert self.client_kwargs.get("api_key") == "bedrock-bearer-token"
+        assert self.client_kwargs.get("base_url") == "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
+
+    async def test_generate_json_extracts_reasoning_wrapped_json(self):
+        # gpt-oss on Bedrock emits reasoning + non-strict JSON; extractor must recover it.
+        self.content = '<reasoning>The answer is correct.</reasoning>**{ "score": 1.0, "reason": "correct" }'
+        llm = self._make()
+        result = await llm.generate_json("score it", {"type": "object", "properties": {"score": {"type": "number"}}})
+        assert result == {"score": 1.0, "reason": "correct"}
+        # No strict json_schema response_format is relied upon.
+        assert "response_format" not in self.mock_create.call_args[1]
+
+    async def test_generate_json_plain_json(self):
+        self.content = '{"score": 0.5, "reason": "partial"}'
+        llm = self._make()
+        assert await llm.generate_json("x", {"type": "object"}) == {"score": 0.5, "reason": "partial"}
+
+    def test_requires_bearer_key(self):
+        # No api_key and no AWS_BEARER_TOKEN_BEDROCK: must raise rather than let the OpenAI SDK
+        # silently fall back to OPENAI_API_KEY (which would send a direct-OpenAI key to Bedrock).
+        from harness_evals.llm.bedrock import BedrockOpenAILLM
+
+        with pytest.raises(ValueError, match="No Bedrock API key"):
+            BedrockOpenAILLM(model="arn:aws:bedrock:us-east-1:1:application-inference-profile/x", api_key=None)
+
+    def test_env_fallback_for_bearer_and_region(self, monkeypatch):
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bearer")
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        from harness_evals.llm.bedrock import BedrockOpenAILLM
+
+        BedrockOpenAILLM(model="m")
+        assert self.client_kwargs.get("api_key") == "env-bearer"
+        assert self.client_kwargs.get("base_url") == "https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1"
+
+    def test_constructor_args_override_env(self, monkeypatch):
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "env-bearer")
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        from harness_evals.llm.bedrock import BedrockOpenAILLM
+
+        BedrockOpenAILLM(model="m", api_key="ctor-bearer", aws_region="us-east-2")
+        assert self.client_kwargs.get("api_key") == "ctor-bearer"
+        assert self.client_kwargs.get("base_url") == "https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1"
+
+
+@pytest.mark.unit
 class TestMakeStrictSchema:
     def test_adds_additional_properties_false(self):
         schema = {

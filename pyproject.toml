@@ -32,7 +32,7 @@ jsonschema = ">=4.0"
 jsonpath-ng = ">=1.6"
 pyyaml = ">=6.0"
 openai = { version = ">=1.40", optional = true }
-anthropic = { version = ">=0.30", optional = true }
+anthropic = { version = ">=0.60", optional = true }  # >=0.60 for AWS Bedrock API-key (bearer) auth
 opentelemetry-sdk = { version = ">=1.20", optional = true }
 opentelemetry-exporter-otlp-proto-grpc = { version = ">=1.20", optional = true }
 opentelemetry-exporter-otlp-proto-http = { version = ">=1.20", optional = true }

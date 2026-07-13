@@ -7,6 +7,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.5]
+
+### Added
+
+- **AWS Bedrock LLM clients (#47)**: new `harness_evals.llm.bedrock` module with two deferred-import
+  clients for judge/eval use. `BedrockAnthropicLLM` runs Claude via `anthropic.AsyncAnthropicBedrock`;
+  `BedrockOpenAILLM` runs OpenAI-compatible models (e.g. gpt-oss) via Bedrock's OpenAI-compatible
+  endpoint (`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`). Both authenticate with a
+  Bedrock **API key (bearer)** — `api_key=` or `AWS_BEARER_TOKEN_BEDROCK` — and fail fast with a clear
+  error if it is missing (no silent fallback to `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`); region via
+  `aws_region` / `AWS_REGION`. `BedrockOpenAILLM.generate_json` appends the schema to the prompt and
+  robustly extracts the JSON object (strips `<reasoning>` wrappers and markdown fences, balanced-brace
+  fallback) since Bedrock's OpenAI models don't reliably enforce `json_schema`. Both clients subclass
+  their direct-API counterparts, so `OpenAILLM` / `AnthropicLLM` are unchanged. Requires the `llm` extra.
+
+### Changed
+
+- `anthropic` dependency floor raised `>=0.30` → `>=0.60` (needed for `AsyncAnthropicBedrock` bearer auth).
+
 ## [0.11.4]
 
 ### Added

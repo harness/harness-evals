@@ -3,7 +3,13 @@ from __future__ import annotations
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
-from harness_evals.summary import summarize
+from harness_evals.summary import UNKNOWN_DIMENSION, order_dimensions, summarize
+
+
+def _bar(value: float, width: int = 10) -> str:
+    """A fixed-width unicode progress bar for a 0–1 value."""
+    filled = round(max(0.0, min(1.0, value)) * width)
+    return "█" * filled + "░" * (width - filled)
 
 
 class StdoutSink(BaseSink):
@@ -47,9 +53,20 @@ class StdoutSink(BaseSink):
             print(f"  Safety: {result.safety_violations} violation(s), pass rate {result.safety_pass_rate:.1%}")
 
         # Per-dimension breakdown (ADR-009): where the target is strong/weak.
-        if result.by_dimension:
+        # Canonical dimension order (shared with the HTML radar) so a run renders
+        # dimensions consistently across outputs. The "unknown" bucket is excluded
+        # from the block and noted in a footnote instead.
+        ordered = [d for d in order_dimensions(list(result.by_dimension)) if d != UNKNOWN_DIMENSION]
+        if ordered:
             print("  Dimensions:")
-            for ds in result.by_dimension.values():
+            for dim in ordered:
+                ds = result.by_dimension[dim]
                 status = f"{result.safety_violations} violation(s)" if ds.is_safety else f"pass_rate={ds.pass_rate:.0%}"
-                print(f"    {ds.dimension:<13} mean={ds.mean:.2f}  {status}  (n={ds.metric_count})")
+                print(f"    {ds.dimension:<13} {_bar(ds.mean)} {ds.mean:.2f}  {status}  (n={ds.metric_count})")
+            # Footnote only makes sense alongside the block it annotates.
+            unknown = result.by_dimension.get(UNKNOWN_DIMENSION)
+            if unknown is not None:
+                print(
+                    f"  ({unknown.metric_count} metric(s) with no declared dimension, shown as '{UNKNOWN_DIMENSION}')"
+                )
         self._all_scores.clear()

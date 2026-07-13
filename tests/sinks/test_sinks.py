@@ -86,6 +86,71 @@ class TestStdoutSink:
         # Safety surfaced separately as a hard constraint.
         assert "Safety: 1 violation(s)" in captured
         assert "violation(s)" in captured
+        # Each dimension line carries a visual progress bar.
+        assert "█" in captured or "░" in captured
+
+    def test_finalize_dimension_bar_reflects_mean(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write(
+            [Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"})],
+            ec,
+        )
+        capsys.readouterr()
+        sink.finalize()
+        captured = capsys.readouterr().out
+        # mean 1.0 -> a fully filled 10-wide bar, no empty cells.
+        assert "██████████" in captured
+        assert "░" not in captured.split("Dimensions:")[1]
+
+    def test_finalize_unknown_dimension_footnoted_not_in_block(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write(
+            [
+                Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+                Score(name="mystery", value=0.5, threshold=0.7),  # no dimension -> unknown
+            ],
+            ec,
+        )
+        capsys.readouterr()
+        sink.finalize()
+        captured = capsys.readouterr().out
+        # "unknown" is not a row in the Dimensions block...
+        dimensions_block = captured.split("Dimensions:")[1]
+        assert "unknown" not in dimensions_block.split("no declared dimension")[0]
+        # ...but is acknowledged in a footnote.
+        assert "no declared dimension" in captured
+        assert "1 metric(s)" in captured
+
+    def test_finalize_dimensions_in_canonical_order(self, capsys):
+        # Scores added in non-canonical order must print in ADR-009 order.
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write(
+            [
+                Score(name="lat", value=0.9, threshold=0.5, metadata={"dimension": "performance"}),
+                Score(name="em", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+                Score(name="pii", value=0.0, threshold=1.0, metadata={"dimension": "safety"}),
+            ],
+            ec,
+        )
+        capsys.readouterr()
+        sink.finalize()
+        block = capsys.readouterr().out.split("Dimensions:")[1]
+        # correctness before safety before performance, regardless of input order.
+        assert block.index("correctness") < block.index("safety") < block.index("performance")
+
+    def test_finalize_no_dimensions_block_or_footnote_when_all_unknown(self, capsys):
+        # Every score undeclared -> no block, and no dangling footnote either.
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write([Score(name="m", value=0.9, threshold=0.5)], ec)
+        capsys.readouterr()
+        sink.finalize()
+        captured = capsys.readouterr().out
+        assert "Dimensions:" not in captured
+        assert "no declared dimension" not in captured
 
     def test_finalize_no_safety_line_without_safety_scores(self, capsys):
         ec = EvalCase(input="q", output="a")

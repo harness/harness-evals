@@ -11,6 +11,19 @@ from harness_evals.core.score import Score
 SAFETY_DIMENSION = "safety"
 # Bucket for scores whose metric did not declare a dimension.
 UNKNOWN_DIMENSION = "unknown"
+# The five canonical evaluation dimensions in ADR-009 display order.
+CANONICAL_DIMENSIONS = ("correctness", "groundedness", "safety", "trajectory", "performance")
+
+
+def order_dimensions(dimensions: list[str]) -> list[str]:
+    """Order dimensions for display: canonical five first (ADR-009 order),
+    then any extras sorted alphabetically. Shared by every output surface
+    (HTML radar, stdout) so a given run renders dimensions in one order.
+    """
+    present = set(dimensions)
+    ordered = [d for d in CANONICAL_DIMENSIONS if d in present]
+    extras = sorted(d for d in present if d not in CANONICAL_DIMENSIONS)
+    return ordered + extras
 
 
 @dataclass

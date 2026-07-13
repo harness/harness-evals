@@ -7,6 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.4]
+
+### Added
+
+- **Dimension radar chart (ADR-009, closes #23)**: `HtmlReporter` now renders a self-contained SVG
+  radar chart of `ScoreSummary.by_dimension` (one axis per dimension, radius = mean score) with no
+  external dependencies, suitable for email/PR/CI artifacts. When the report has multiple variants,
+  each variant is drawn as its own polygon on shared axes (in its variant color) rather than averaged
+  into one shape; a single-variant report shows one polygon with a per-dimension legend. The safety
+  axis is drawn in red (violation counts annotated on the axis for a single variant, or per variant
+  in the legend), and scores with no declared dimension (the `"unknown"` bucket) are omitted from the
+  axes and noted in a footnote. The viewBox is fitted to the labels so none are clipped.
+- **StdoutSink**: the per-dimension summary block now shows a visual progress bar per dimension, and
+  moves the `"unknown"` bucket to a footnote instead of listing it as an axis.
+
 ## [0.11.1]
 
 ### Added

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from harness_evals.cli import main
+from harness_evals.logging_config import ENV_VAR
 
 _MINIMAL_CONFIG = """\
 name: cli-test
@@ -29,6 +31,21 @@ def _write_config(tmp_path, goldens_content='{"input": "hi", "expected": "hello"
     config_path = tmp_path / "eval.yaml"
     config_path.write_text(_MINIMAL_CONFIG.format(dataset_path=str(dataset_path), prompt_path=str(prompt_path)))
     return str(config_path)
+
+
+@pytest.fixture(autouse=True)
+def reset_harness_logger(monkeypatch):
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    logger = logging.getLogger("harness_evals")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    original_propagate = logger.propagate
+    logger.handlers.clear()
+    yield
+    logger.handlers.clear()
+    logger.handlers.extend(original_handlers)
+    logger.setLevel(original_level)
+    logger.propagate = original_propagate
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +72,26 @@ class TestCmdRun:
             exit_code = main(["run", config_path])
 
         assert exit_code == 0
+
+    def test_run_log_level_debug_outputs_framework_logs(self, tmp_path, capsys) -> None:
+        config_path = _write_config(tmp_path, goldens_content='{"input": "4", "expected": "4"}\n')
+
+        from tests.conftest import MockLLM
+
+        mock = MockLLM()
+
+        async def fake_generate(prompt, **kwargs):
+            return "4"
+
+        mock.generate = fake_generate
+
+        with patch("harness_evals.config.runner.build_llm", return_value=mock):
+            exit_code = main(["run", config_path, "--log-level", "debug"])
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "DEBUG harness_evals.config.runner: Loaded dataset local://" in captured.err
+        assert "DEBUG harness_evals.core.runner: [1/1] input='4' output='4' metrics=[exact_match]" in captured.err
 
     def test_run_file_not_found(self) -> None:
         exit_code = main(["run", "/nonexistent/config.yaml"])

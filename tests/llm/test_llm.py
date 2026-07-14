@@ -103,6 +103,7 @@ class TestOpenAILLMParams:
 
     @pytest.fixture(autouse=True)
     def _patch_openai(self, monkeypatch):
+
         self.mock_create = MagicMock()
 
         async def fake_create(**kwargs):

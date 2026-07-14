@@ -22,6 +22,7 @@ pip install -e ".[otlp]"          # + OTLP metrics & traces export
 pip install -e ".[langfuse]"      # + Langfuse source/sink
 pip install -e ".[similarity]"    # + BLEU metric (nltk)
 pip install -e ".[harness]"       # + Harness AI Service LLM provider
+pip install -e ".[benchmarks]"    # + Academic benchmarks (MMLU, GSM8K, HumanEval, etc.)
 pip install -e ".[all]"           # Everything
 pip install -e ".[all,dev]"       # Everything + dev tools
 ```
@@ -153,6 +154,23 @@ harness-evals/
 │   │   │                            # CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability
 │   │   └── composite/              # CompositeMetric (combine metrics with operators)
 │   │
+│   ├── benchmarks/                  # Academic benchmark evaluation suites
+│   │   ├── __init__.py              # Public exports (all benchmark classes)
+│   │   ├── base.py                  # BaseBenchmark ABC, BenchmarkResult
+│   │   ├── dataset_cache.py         # HuggingFace dataset fetching + local caching
+│   │   ├── sandbox.py               # Process-isolated Python code execution (subprocess)
+│   │   ├── _answer_utils.py         # Shared answer extraction (choice, number, F1)
+│   │   ├── mmlu.py                  # MMLU (57-subject knowledge)
+│   │   ├── gsm8k.py                # GSM8K (math word problems)
+│   │   ├── humaneval.py            # HumanEval (code generation, sandboxed)
+│   │   ├── truthfulqa.py           # TruthfulQA (LLM-judged truthfulness)
+│   │   ├── arc.py                  # ARC Easy + Challenge (science questions)
+│   │   ├── hellaswag.py            # HellaSwag (commonsense reasoning)
+│   │   ├── winogrande.py           # WinoGrande (pronoun resolution)
+│   │   ├── boolq.py                # BoolQ (boolean reading comprehension)
+│   │   ├── drop.py                 # DROP (numerical reasoning, F1 + EM)
+│   │   └── bbh.py                  # BBH (23 hard reasoning tasks)
+│   │
 │   ├── llm/                         # LLM provider abstraction
 │   │   ├── base.py                  # BaseLLM ABC
 │   │   ├── openai.py               # OpenAILLM
@@ -251,7 +269,8 @@ harness-evals/
 ├── tests/
 │   ├── conftest.py                  # Shared fixtures
 │   ├── test_core.py                 # Golden, EvalCase, Score, evaluate, assert_test, etc.
-│   └── metrics/                     # One test file per metric category
+│   ├── metrics/                     # One test file per metric category
+│   └── benchmarks/                  # Tests for academic benchmarks (mocked, no HF calls)
 │
 └── examples/
     └── integrations/                # Framework integration examples
@@ -431,5 +450,6 @@ class SafetyMetric(BaseMetric):
 **OTLP**: `opentelemetry-sdk>=1.20`, `opentelemetry-exporter-otlp-proto-grpc>=1.20`, `opentelemetry-exporter-otlp-proto-http>=1.20` — optional `[otlp]`
 **Similarity**: `nltk>=3.9.4` — optional `[similarity]`
 **Harness**: `httpx>=0.27`, `pyjwt>=2.13.0` — optional `[harness]`
+**Benchmarks**: `httpx>=0.27` — optional `[benchmarks]` (datasets fetched from HuggingFace Hub)
 **Langfuse**: `langfuse>=2.0` — optional `[langfuse]`
 **Dev**: `pytest>=8.0`, `ruff>=0.15`, `pytest-cov`, `pytest-asyncio`, `pre-commit`, `build`

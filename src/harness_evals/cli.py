@@ -42,11 +42,50 @@ def main(argv: list[str] | None = None) -> int:
         help="Custom glob pattern (default: **/*.eval.yaml for YAML configs, **/eval_*.py for Python eval files)",
     )
 
+
+    # --- recommend ---
+    recommend_parser = sub.add_parser("recommend", help="Recommend evals for a prompt, endpoint, or traces")
+    recommend_parser.add_argument("--prompt", default=None, help="Path to a prompt file or prompt text")
+    recommend_parser.add_argument("--endpoint", default=None, help="HTTP endpoint URL to evaluate")
+    recommend_parser.add_argument("--traces", default=None, help="Path to a traces file (JSONL)")
+    recommend_parser.add_argument("--api-key", required=True, help="LLM provider API key")
+    recommend_parser.add_argument("--provider", default="anthropic", choices=["anthropic", "openai"], help="LLM provider")
+    recommend_parser.add_argument("--model", default=None, help="Model name override")
+    recommend_parser.add_argument("-o", "--output", default=".", help="Output directory for EvalConfig and goldens")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
         parser.print_help()
         return 0
+
+    if args.command == "recommend":
+        from harness_evals.recommender.scenarios import load_scenario
+        from harness_evals.recommender.engine import recommend
+        from harness_evals.recommender.output import write_outputs, print_recommendation
+        try:
+            scenario = load_scenario(
+                prompt=getattr(args, "prompt", None),
+                endpoint=getattr(args, "endpoint", None),
+                traces=getattr(args, "traces", None),
+            )
+            recommendation = recommend(
+                scenario=scenario,
+                api_key=args.api_key,
+                provider=args.provider,
+                model=getattr(args, "model", None),
+            )
+            print_recommendation(recommendation)
+            config_path, goldens_path = write_outputs(recommendation, output_dir=args.output)
+            print(f"EvalConfig written to: {config_path}")
+            print(f"Goldens written to:    {goldens_path}")
+            return 0
+        except Exception as e:
+            import sys
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+
 
     try:
         if args.command == "run":

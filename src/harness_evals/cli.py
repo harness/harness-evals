@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     recommend_parser.add_argument("--prompt", default=None, help="Path to a prompt file or prompt text")
     recommend_parser.add_argument("--endpoint", default=None, help="HTTP endpoint URL to evaluate")
     recommend_parser.add_argument("--traces", default=None, help="Path to a traces file (JSONL)")
-    recommend_parser.add_argument("--api-key", required=True, help="LLM provider API key")
+    recommend_parser.add_argument("--api-key", default=None, help="LLM provider API key (or set ANTHROPIC_API_KEY/OPENAI_API_KEY env var)")
     recommend_parser.add_argument("--provider", default="anthropic", choices=["anthropic", "openai"], help="LLM provider")
     recommend_parser.add_argument("--model", default=None, help="Model name override")
     recommend_parser.add_argument("-o", "--output", default=".", help="Output directory for EvalConfig and goldens")
@@ -59,11 +59,27 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    if args.command == "recommend":
-        from harness_evals.recommender.scenarios import load_scenario
-        from harness_evals.recommender.engine import recommend
-        from harness_evals.recommender.output import write_outputs, print_recommendation
-        try:
+
+
+    try:
+        if args.command == "recommend":
+            import os
+            from harness_evals.recommender.scenarios import load_scenario
+            from harness_evals.recommender.engine import recommend
+            from harness_evals.recommender.output import write_outputs, print_recommendation
+
+            api_key = args.api_key
+            if not api_key:
+                if args.provider == "anthropic":
+                    api_key = os.environ.get("ANTHROPIC_API_KEY")
+                elif args.provider == "openai":
+                    api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    f"No API key provided. Pass --api-key or set "
+                    f"{'ANTHROPIC_API_KEY' if args.provider == 'anthropic' else 'OPENAI_API_KEY'} env var."
+                )
+
             scenario = load_scenario(
                 prompt=getattr(args, "prompt", None),
                 endpoint=getattr(args, "endpoint", None),
@@ -71,23 +87,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             recommendation = recommend(
                 scenario=scenario,
-                api_key=args.api_key,
+                api_key=api_key,
                 provider=args.provider,
                 model=getattr(args, "model", None),
             )
             print_recommendation(recommendation)
-            config_path, goldens_path = write_outputs(recommendation, output_dir=args.output)
+            config_path, goldens_path = write_outputs(
+                recommendation,
+                output_dir=args.output,
+                provider=args.provider,
+            )
             print(f"EvalConfig written to: {config_path}")
             print(f"Goldens written to:    {goldens_path}")
             return 0
-        except Exception as e:
-            import sys
-            print(f"Error: {e}", file=sys.stderr)
-            return 1
 
-
-
-    try:
         if args.command == "run":
             return _cmd_run(args)
         if args.command == "import":

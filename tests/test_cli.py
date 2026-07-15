@@ -278,3 +278,87 @@ class TestNoCommand:
     def test_no_args_prints_help(self, capsys) -> None:
         exit_code = main([])
         assert exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# recommend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestCmdRecommend:
+    def test_recommend_prompt_success(self, tmp_path) -> None:
+        """Test successful recommend --prompt execution with recommend() mocked."""
+        mock_recommendation = {
+            "dimensions_covered": [{"dimension": "correctness", "applies": True, "rationale": "test"}],
+            "recommended_metrics": [{"name": "exact_match", "dimension": "correctness", "rationale": "test", "threshold": 0.8}],
+            "recommended_dataset": [
+                {
+                    "input": "test",
+                    "expected": "output",
+                    "context": None,
+                    "expected_tools": None,
+                    "expected_tool_calls": None,
+                    "metadata": {},
+                    "tags": {},
+                    "metric_tested": "exact_match",
+                }
+            ],
+            "recommended_actions": "Run harness-evals run recommended.eval.yaml",
+        }
+
+        with patch("harness_evals.recommender.engine.recommend", return_value=mock_recommendation):
+            exit_code = main(["recommend", "--prompt", "You are helpful", "--api-key", "fake-key", "-o", str(tmp_path)])
+
+        assert exit_code == 0
+        assert (tmp_path / "recommended.eval.yaml").exists()
+        assert (tmp_path / "recommended.goldens.jsonl").exists()
+
+    def test_recommend_anthropic_api_key_env_fallback(self, tmp_path, monkeypatch) -> None:
+        """Test ANTHROPIC_API_KEY environment variable fallback."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
+
+        mock_recommendation = {
+            "dimensions_covered": [],
+            "recommended_metrics": [],
+            "recommended_dataset": [],
+            "recommended_actions": "test",
+        }
+
+        with patch("harness_evals.recommender.engine.recommend", return_value=mock_recommendation) as mock_recommend:
+            exit_code = main(["recommend", "--prompt", "test", "--provider", "anthropic", "-o", str(tmp_path)])
+
+        assert exit_code == 0
+        # Verify recommend was called with the env var API key
+        mock_recommend.assert_called_once()
+        assert mock_recommend.call_args[1]["api_key"] == "fake-anthropic-key"
+
+    def test_recommend_openai_api_key_env_fallback(self, tmp_path, monkeypatch) -> None:
+        """Test OPENAI_API_KEY environment variable fallback."""
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+
+        mock_recommendation = {
+            "dimensions_covered": [],
+            "recommended_metrics": [],
+            "recommended_dataset": [],
+            "recommended_actions": "test",
+        }
+
+        with patch("harness_evals.recommender.engine.recommend", return_value=mock_recommendation) as mock_recommend:
+            exit_code = main(["recommend", "--prompt", "test", "--provider", "openai", "-o", str(tmp_path)])
+
+        assert exit_code == 0
+        # Verify recommend was called with the env var API key
+        mock_recommend.assert_called_once()
+        assert mock_recommend.call_args[1]["api_key"] == "fake-openai-key"
+
+    def test_recommend_missing_api_key_returns_exit_code_2(self, tmp_path) -> None:
+        """Test missing API key returns exit code 2."""
+        exit_code = main(["recommend", "--prompt", "test", "--provider", "anthropic", "-o", str(tmp_path)])
+        assert exit_code == 2
+
+    def test_recommend_verbose_reraises_exception(self, tmp_path) -> None:
+        """Test --verbose reraises an exception."""
+        with patch("harness_evals.recommender.engine.recommend", side_effect=ValueError("Test error")):
+            with pytest.raises(ValueError, match="Test error"):
+                main(["--verbose", "recommend", "--prompt", "test", "--api-key", "fake-key", "-o", str(tmp_path)])

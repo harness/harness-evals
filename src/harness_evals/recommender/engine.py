@@ -64,7 +64,7 @@ def recommend(
     model: str | None = None,
 ) -> dict:
     if provider == "anthropic":
-        return _recommend_anthropic(scenario, api_key, model or "claude-sonnet-4-6")
+        return _recommend_anthropic(scenario, api_key, model or "claude-sonnet-4-20250514")
     elif provider == "openai":
         return _recommend_openai(scenario, api_key, model or "gpt-4o")
     else:
@@ -77,15 +77,22 @@ def _recommend_anthropic(scenario: ScenarioInput, api_key: str, model: str) -> d
     except ImportError:
         raise ImportError("Install anthropic: pip install anthropic")
 
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": _build_user_prompt(scenario)}],
-    )
-    raw = response.content[0].text
-    return json.loads(raw)
+    from harness_evals._async_compat import _run_async
+
+    async def _call_anthropic():
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        response = await client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": _build_user_prompt(scenario)}],
+        )
+        if not response.content:
+            raise ValueError("Anthropic returned empty response.")
+        raw = response.content[0].text
+        return json.loads(raw)
+
+    return _run_async(_call_anthropic())
 
 
 def _recommend_openai(scenario: ScenarioInput, api_key: str, model: str) -> dict:

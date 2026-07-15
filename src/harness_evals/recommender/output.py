@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-def write_outputs(recommendation: dict, output_dir: str = ".") -> tuple[Path, Path]:
+def write_outputs(recommendation: dict, output_dir: str = ".", provider: str = "openai") -> tuple[Path, Path]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -39,8 +39,12 @@ target:
   # Replace with your actual target
   prompt: ./your-prompt.txt
   model:
-    provider: openai
-    name: gpt-4o
+    provider: {provider}
+    name: {"claude-sonnet-4-20250514" if provider == "anthropic" else "gpt-4o"}
+
+judge_llm:
+  provider: {provider}
+  name: {"claude-sonnet-4-20250514" if provider == "anthropic" else "gpt-4o"}
 
 metrics:
 {metrics_yaml}

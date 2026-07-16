@@ -90,7 +90,13 @@ def _recommend_anthropic(scenario: ScenarioInput, api_key: str, model: str) -> d
         if not response.content:
             raise ValueError("Anthropic returned empty response.")
         raw = response.content[0].text
-        return json.loads(raw)
+        clean = raw.strip()
+        if clean.startswith("```"):
+            clean = clean.split("```")[1]
+            if clean.startswith("json"):
+                clean = clean[4:]
+            clean = clean.strip()
+        return json.loads(clean)
 
     return _run_async(_call_anthropic())
 

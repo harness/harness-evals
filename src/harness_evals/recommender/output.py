@@ -32,7 +32,7 @@ def write_outputs(recommendation: dict, output_dir: str = ".", provider: str = "
 
     config_yaml = f"""name: recommended-eval
 
-dataset: {goldens_path.resolve()}
+dataset: recommended.goldens.jsonl
 
 target:
   type: prompt
@@ -76,8 +76,8 @@ def print_recommendation(recommendation: dict) -> None:
     print("\n=== RECOMMENDED DATASET ===\n")
     for i, case in enumerate(recommendation.get("recommended_dataset", []), 1):
         print(f"  Test Case {i} (tests: {case.get('metric_tested', 'n/a')})")
-        inp = case['input'][:80]
-        exp = case['expected'][:80]
+        inp = str(case.get('input', ''))[:80]
+        exp = str(case.get('expected', ''))[:80]
         print(f"    Input:    {inp}")
         print(f"    Expected: {exp}")
 

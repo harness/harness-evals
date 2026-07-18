@@ -1,8 +1,13 @@
-"""Core recommender engine — calls an LLM with the full metric catalog and returns recommendations."""
+"""Core recommender engine — calls a ``BaseLLM`` with the full metric catalog and returns recommendations."""
 
 from __future__ import annotations
-import json
+
+import logging
+
+from harness_evals.llm.base import BaseLLM
 from harness_evals.recommender.scenarios import ScenarioInput
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """You are an AI evaluation expert with deep knowledge of the harness-evals metric catalog.
@@ -22,7 +27,7 @@ Return a JSON object with exactly these fields:
     {"name": "<exact catalog metric kind>", "dimension": "<dimension>", "rationale": "<why it applies>", "threshold": <float 0.0-1.0>}
   ],
   "recommended_dataset": [
-    {"input": "<realistic input>", "expected": "<expected output>", "context": null, "expected_tools": null, "expected_tool_calls": null, "metadata": {}, "tags": {}, "metric_tested": "<metric name>"}
+    {"input": "<realistic input>", "expected": "<expected output>", "context": null, "metric_tested": "<metric name>"}
   ],
   "recommended_actions": "<plain text next steps using harness-evals run>"
 }
@@ -35,8 +40,55 @@ Rules:
 """
 
 
+# JSON Schema for the recommendation response. Passed to ``generate_json()`` so
+# the provider enforces structured output. Kept strict-output friendly: no
+# free-form object properties, nullable fields expressed as type unions.
+RECOMMENDATION_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "dimensions_covered": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimension": {"type": "string"},
+                    "applies": {"type": "boolean"},
+                    "rationale": {"type": "string"},
+                },
+            },
+        },
+        "recommended_metrics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "dimension": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "threshold": {"type": "number"},
+                },
+            },
+        },
+        "recommended_dataset": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string"},
+                    "expected": {"type": "string"},
+                    "context": {"type": ["array", "null"], "items": {"type": "string"}},
+                    "metric_tested": {"type": "string"},
+                },
+            },
+        },
+        "recommended_actions": {"type": "string"},
+    },
+}
+
+
 def _build_catalog_text() -> str:
     from harness_evals.catalog import catalog
+
     entries = catalog()
     lines = []
     for entry in entries:
@@ -57,76 +109,29 @@ Available metrics in the harness-evals catalog:
 Return your recommendation as a JSON object following the schema in your instructions."""
 
 
-def recommend(
-    scenario: ScenarioInput,
-    api_key: str,
-    provider: str = "anthropic",
-    model: str | None = None,
-) -> dict:
-    if provider == "anthropic":
-        return _recommend_anthropic(scenario, api_key, model or "claude-sonnet-4-20250514")
-    elif provider == "openai":
-        return _recommend_openai(scenario, api_key, model or "gpt-4o")
-    else:
-        raise ValueError(f"Unsupported provider: {provider}. Choose 'anthropic' or 'openai'.")
+async def recommend(scenario: ScenarioInput, llm: BaseLLM) -> dict:
+    """Ask *llm* to recommend evals for *scenario*.
 
+    The CLI is responsible for building *llm* via ``build_llm(ModelSpec(...))``,
+    so this function stays provider-agnostic and works with any ``BaseLLM``.
+    """
 
-def _recommend_anthropic(scenario: ScenarioInput, api_key: str, model: str) -> dict:
-    try:
-        import anthropic
-    except ImportError:
-        raise ImportError("Install anthropic: pip install anthropic")
-
-    from harness_evals._async_compat import _run_async
-
-    async def _call_anthropic():
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        response = await client.messages.create(
-            model=model,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": _build_user_prompt(scenario)}],
-        )
-        if not response.content:
-            raise ValueError("Anthropic returned empty response.")
-        raw = response.content[0].text
-        clean = raw.strip()
-        if clean.startswith("```"):
-            clean = clean.split("```")[1]
-            if clean.startswith("json"):
-                clean = clean[4:]
-            clean = clean.strip()
-        return json.loads(clean)
-
-    return _run_async(_call_anthropic())
-
-
-def _recommend_openai(scenario: ScenarioInput, api_key: str, model: str) -> dict:
-    try:
-        import openai
-    except ImportError:
-        raise ImportError("Install openai: pip install openai")
-
-    client = openai.OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        max_tokens=4096,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(scenario)},
-        ],
+    prompt = _build_user_prompt(scenario)
+    # Log the scenario type and prompt size only — never the prompt content
+    # (which may contain proprietary system prompts) or any credentials.
+    logger.info(
+        "Requesting recommendation: scenario_type=%s prompt_chars=%d",
+        scenario.type.value,
+        len(prompt),
     )
-    raw = response.choices[0].message.content
-    if not raw or not raw.strip():
-        raise ValueError(f"OpenAI returned empty response. Check your API key and account credits.")
-    # Strip markdown code fences if present
-    clean = raw.strip()
-    if clean.startswith("```"):
-        clean = clean.split("```")[1]
-        if clean.startswith("json"):
-            clean = clean[4:]
-        clean = clean.strip()
-    try:
-        return json.loads(clean)
-    except json.JSONDecodeError:
-        raise ValueError(f"OpenAI returned non-JSON response: {raw[:200]}")
+    recommendation = await llm.generate_json(
+        prompt,
+        RECOMMENDATION_SCHEMA,
+        system_prompt=SYSTEM_PROMPT,
+    )
+    logger.info(
+        "Received recommendation: metrics=%d dataset_cases=%d",
+        len(recommendation.get("recommended_metrics", [])),
+        len(recommendation.get("recommended_dataset", [])),
+    )
+    return recommendation

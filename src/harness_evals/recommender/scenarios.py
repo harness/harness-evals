@@ -1,6 +1,7 @@
 """Normalize the three input scenarios into a common description for the recommender engine."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path

@@ -11,6 +11,7 @@ from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.logging_config import truncate_repr
 from harness_evals.summary import ScoreSummary, summarize
 
 if TYPE_CHECKING:
@@ -225,6 +226,7 @@ async def _evaluate_dataset_single(
 
     Pass ``concurrency=None`` for unlimited parallelism (no semaphore).
     """
+    total = len(goldens)
     sem: asyncio.Semaphore | None = asyncio.Semaphore(concurrency) if concurrency is not None else None
     sink_queue: asyncio.Queue[tuple[int, list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
 
@@ -276,8 +278,21 @@ async def _evaluate_dataset_single(
                 )
                 _enrich_score(score, metric)
                 scores.append(score)
+            target_error = True
         else:
             scores = await a_evaluate(eval_case, metrics)
+            target_error = False
+        metric_names = ", ".join(score.name for score in scores)
+        target_error_suffix = " target_error=True" if target_error else ""
+        _runner_logger.debug(
+            "[%d/%d] input=%s output=%s metrics=[%s]%s",
+            idx + 1,
+            total,
+            truncate_repr(eval_case.input),
+            truncate_repr(eval_case.output),
+            metric_names,
+            target_error_suffix,
+        )
         if sink_queue is not None:
             await sink_queue.put((idx, scores, eval_case))
         return scores

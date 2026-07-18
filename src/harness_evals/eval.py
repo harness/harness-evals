@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 from harness_evals._async_compat import _run_async
@@ -14,10 +15,13 @@ from harness_evals.core.metric import BaseMetric
 from harness_evals.core.runner import evaluate_dataset
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.logging_config import dataset_sample_summary
 from harness_evals.plugins import load_plugins
 from harness_evals.refs import ResourceRef, resolve
 from harness_evals.sinks.stdout import StdoutSink
 from harness_evals.targets.base import BaseTarget
+
+logger = logging.getLogger(__name__)
 
 
 class _CallableTarget(BaseTarget):
@@ -102,6 +106,11 @@ async def _eval_async(
 
 async def _resolve_data(data: str | ResourceRef | list[Golden]) -> list[Golden]:
     if isinstance(data, list):
+        logger.debug(
+            "Loaded dataset literal: %d goldens (samples: %s)",
+            len(data),
+            dataset_sample_summary(data),
+        )
         return data
 
     ref = data if isinstance(data, ResourceRef) else resolve(data)
@@ -111,7 +120,15 @@ async def _resolve_data(data: str | ResourceRef | list[Golden]) -> list[Golden]:
     source_cls = lookup_dataset_source(ref.source)
     source = source_cls()
     async with source:
-        return await source.fetch(ref)
+        goldens = await source.fetch(ref)
+    logger.debug(
+        "Loaded dataset %s://%s: %d goldens (samples: %s)",
+        ref.source,
+        ref.id,
+        len(goldens),
+        dataset_sample_summary(goldens),
+    )
+    return goldens
 
 
 def _resolve_baseline(baseline: BaselineSpec | str | None) -> BaselineSpec | None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 import re
 from collections import defaultdict
@@ -20,6 +21,7 @@ from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.errors import BaselineRegressionError, HarnessEvalsError, UnknownMetricError
 from harness_evals.llm.base import BaseLLM
+from harness_evals.logging_config import dataset_sample_summary
 from harness_evals.plugins import (
     baseline_store as lookup_baseline_store,
 )
@@ -46,6 +48,8 @@ _LLM_PROVIDERS: dict[str, str] = {
     "anthropic": "harness_evals.llm.anthropic.AnthropicLLM",
     "harness": "harness_evals.llm.harness_ai.HarnessAILLM",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def build_llm(spec: ModelSpec) -> BaseLLM:
@@ -356,6 +360,13 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
     source = source_cls.from_ref(cfg.dataset)
     async with source:
         goldens = await source.fetch(cfg.dataset)
+    logger.debug(
+        "Loaded dataset %s://%s: %d goldens (samples: %s)",
+        cfg.dataset.source,
+        cfg.dataset.id,
+        len(goldens),
+        dataset_sample_summary(goldens),
+    )
 
     target = await build_target(cfg.target)
 

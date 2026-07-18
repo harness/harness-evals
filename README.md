@@ -13,6 +13,7 @@ pip install harness-evals[otlp]      # + OTLP metrics & traces export
 pip install harness-evals[langfuse]  # + Langfuse source/sink
 pip install harness-evals[similarity]# + BLEU metric (nltk)
 pip install harness-evals[harness]   # + Harness AI Service LLM provider
+pip install harness-evals[benchmarks]# + academic benchmarks (MMLU, GSM8K, etc.)
 pip install harness-evals[all]       # everything
 ```
 
@@ -662,6 +663,49 @@ print(f"{result.initial_score:.2f} → {result.best_score:.2f} in {result.iterat
 print(result.best_prompt.template)
 result.save("optimized-prompt.json")
 ```
+
+## Academic Benchmarks
+
+Run standardized LLM benchmarks with a single call. Datasets are fetched from HuggingFace Hub and cached locally.
+
+```bash
+pip install harness-evals[benchmarks]  # requires httpx
+```
+
+```python
+import asyncio
+from harness_evals.benchmarks import MMLU, GSM8K, HumanEval
+from harness_evals.llm import OpenAILLM
+
+model = OpenAILLM(model="gpt-4o")
+
+# MMLU — 5-shot by default (per original paper)
+result = asyncio.run(MMLU(subjects=["abstract_algebra"]).run(model))
+print(f"MMLU accuracy: {result.accuracy:.2%}")
+
+# GSM8K — 8-shot chain-of-thought by default
+result = asyncio.run(GSM8K().run(model, limit=100))
+print(f"GSM8K accuracy: {result.accuracy:.2%}")
+
+# HumanEval — process-isolated code execution (not a full sandbox)
+result = asyncio.run(HumanEval().run(model))
+print(f"HumanEval pass@1: {result.pass_at_1:.2%}")
+```
+
+| Benchmark | Default Shots | Scoring | Dataset |
+|-----------|:---:|---------|---------|
+| **MMLU** | 5 | Accuracy (A/B/C/D) | 57 subjects, 14k questions |
+| **GSM8K** | 8 | Numeric exact match | 1.3k math word problems |
+| **HumanEval** | 0 | pass@k (process-isolated) | 164 Python tasks |
+| **TruthfulQA** | 0 | LLM-judged truthfulness + informativeness | 817 questions |
+| **ARC** | 0 | Accuracy (Easy + Challenge) | 7.7k science questions |
+| **HellaSwag** | 0 | Accuracy (4-choice) | 10k commonsense |
+| **WinoGrande** | 0 | Accuracy (1/2) | 1.7k pronoun resolution |
+| **BoolQ** | 0 | Accuracy (true/false) | 3.2k boolean RC |
+| **DROP** | 3 | F1 + exact match | 9.5k numerical reasoning |
+| **BBH** | 3 | Accuracy (CoT) | 23 hard tasks |
+
+All benchmarks support: `shots=N` override, `limit=N` for quick runs, `offline=True` for cached-only, `sinks=[...]` for output integration, and `concurrency=N` for throughput control.
 
 ## Available Metrics
 

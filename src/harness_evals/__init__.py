@@ -37,6 +37,8 @@ from harness_evals.errors import HarnessEvalsError, MissingAdapterError, TargetI
 from harness_evals.eval import run_eval
 from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
 from harness_evals.input_generator import InputGenerator
+from harness_evals.logging_config import configure_logging
+from harness_evals.logging_config import init_from_env as _init_logging_from_env
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
 from harness_evals.optimizer import OptimizationResult, PromptOptimizer
@@ -63,6 +65,9 @@ from harness_evals.targets import (
     PromptTarget,
 )
 from harness_evals.testing import Fault, FaultInjector
+
+# Honor HARNESS_EVALS_LOG_LEVEL for library consumers (no CLI) at import time.
+_init_logging_from_env()
 
 __all__ = [
     # Core types
@@ -153,4 +158,6 @@ __all__ = [
     "loads_config",
     "run_config",
     "run_eval",
+    # Logging
+    "configure_logging",
 ]

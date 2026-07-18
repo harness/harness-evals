@@ -7,6 +7,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.1]
+
+### Added
+
+- **Import-time logging auto-config**: `harness_evals` now honors the
+  `HARNESS_EVALS_LOG_LEVEL` env var at import time via the new
+  `logging_config.init_from_env()` (called from `__init__`). Library consumers
+  that don't go through the CLI (e.g. the eval-runner service, which calls
+  `run_config`/`evaluate_dataset` directly) can enable framework logs — including
+  the per-case `[i/total] input=… output=… metrics=[…] target_error=…` debug
+  line — simply by setting `HARNESS_EVALS_LOG_LEVEL=debug`, with no code change
+  on their side. When the env var is **unset**, logging is left untouched: the
+  host application's configuration (and Python's `WARNING`+ `lastResort`
+  behavior) is unchanged, so the framework never silences its own warnings. An
+  invalid env value is ignored rather than raising during import.
+  `configure_logging` is now exported from the top-level package.
+
 ## [0.11.5]
 
 ### Added

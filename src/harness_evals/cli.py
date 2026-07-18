@@ -33,6 +33,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--update-baseline", action="store_true", help="Save current scores as new baseline")
     run_parser.add_argument("--fail-under", type=float, default=None, help="Exit non-zero if any metric mean < value")
     run_parser.add_argument("--validate", action="store_true", help="Parse and validate config without running")
+    run_parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error", "critical"],
+        default=None,
+        help="Framework log level (overrides HARNESS_EVALS_LOG_LEVEL)",
+    )
 
     # --- import ---
     import_parser = sub.add_parser("import", help="Translate a platform eval definition to YAML")
@@ -150,7 +156,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         scores_to_baseline_dict,
     )
     from harness_evals.config.schema import load_config
+    from harness_evals.logging_config import configure_logging
 
+    configure_logging(args.log_level)
     cfg = load_config(args.config)
 
     if args.validate:

@@ -7,6 +7,32 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0]
+
+### Added
+
+- **AgentDojo** benchmark with separate `utility_pass_rate` and `attack_success_rate` via `BaseTarget` integration.
+
+### Changed
+
+- README **Running full datasets** subsection under AI Security Benchmarks: HF vs fixture-backed loading, cache/offline usage, and upstream manifest paths for SecCodeBench and AgentDojo.
+
+## [0.14.0]
+
+### Added
+
+- **AICGSecEval** secure code generation benchmark with bundled CWE-labeled Python tasks.
+- **SecCodeBench** thin adapter with bundled task manifest and optional `[benchmarks-seccode]` extra.
+
+## [0.13.0]
+
+### Added
+
+- **AI security benchmarks (phase 1)**: `SecurityBenchmark` base class with safety-dimension scores, taxonomy metadata on `Golden`/`EvalCase`, and category rollups.
+- **JailbreakBench**, **DoNotAnswer**, **OpenPromptInjection**, and **JailBreakV28K** adapters under `harness_evals.benchmarks`.
+- **`fetch_github_json()`** in `dataset_cache` for cached GitHub/URL dataset loading.
+- README **AI Security Benchmarks** section.
+
 ## [0.12.1]
 
 ### Added

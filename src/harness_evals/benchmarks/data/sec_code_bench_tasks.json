@@ -1,0 +1,18 @@
+[
+  {
+    "task_id": "java-sql-injection",
+    "language": "java",
+    "cwe": "CWE-89",
+    "category": "SQL Injection",
+    "severity": "high",
+    "prompt": "Fix the SQL injection vulnerability in the user lookup function."
+  },
+  {
+    "task_id": "python-path-traversal",
+    "language": "python",
+    "cwe": "CWE-22",
+    "category": "Path Traversal",
+    "severity": "medium",
+    "prompt": "Generate secure file read code that prevents path traversal."
+  }
+]

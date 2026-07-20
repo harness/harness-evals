@@ -69,3 +69,32 @@ async def test_fetch_hf_dataset_uses_cache(tmp_path: Path):
 
     result = await fetch_hf_dataset("test/dataset", "test", cache_dir=tmp_path, offline=True)
     assert result == items
+
+
+@pytest.mark.unit
+async def test_fetch_github_json_uses_cache(tmp_path: Path):
+    from harness_evals.benchmarks.dataset_cache import fetch_github_json
+
+    items = [{"id": "1", "target_label": "positive"}]
+    save_to_cache(items, "github_test", "default", cache_dir=tmp_path)
+
+    result = await fetch_github_json(
+        "https://example.com/data.json",
+        "github_test",
+        cache_dir=tmp_path,
+        offline=True,
+    )
+    assert result == items
+
+
+@pytest.mark.unit
+async def test_fetch_github_json_offline_no_cache(tmp_path: Path):
+    from harness_evals.benchmarks.dataset_cache import fetch_github_json
+
+    with pytest.raises(FileNotFoundError, match="not found in cache"):
+        await fetch_github_json(
+            "https://example.com/missing.json",
+            "missing",
+            cache_dir=tmp_path,
+            offline=True,
+        )

@@ -707,6 +707,42 @@ print(f"HumanEval pass@1: {result.pass_at_1:.2%}")
 
 All benchmarks support: `shots=N` override, `limit=N` for quick runs, `offline=True` for cached-only, `sinks=[...]` for output integration, and `concurrency=N` for throughput control.
 
+## AI Security Benchmarks
+
+Run standardized AI security benchmarks for jailbreak resistance, refusal safety, prompt injection, agent attacks, and secure code generation. Datasets are fetched from HuggingFace Hub or bundled fixtures and cached locally.
+
+```bash
+pip install harness-evals[benchmarks]  # requires httpx
+```
+
+```python
+import asyncio
+from harness_evals.benchmarks import JailbreakBench, DoNotAnswer, OpenPromptInjection
+from harness_evals.llm import OpenAILLM
+
+model = OpenAILLM(model="gpt-4o")
+
+# JailbreakBench — safety pass rate on JBB-Behaviors
+result = asyncio.run(JailbreakBench().run(model, limit=50))
+print(f"Safety pass rate: {result.metrics['safety_pass_rate']:.2%}")
+print(f"Attack success rate: {result.metrics['attack_success_rate']:.2%}")
+
+# Do-Not-Answer — refusal on harmful instructions (CC BY-NC-SA dataset)
+result = asyncio.run(DoNotAnswer().run(model, limit=100))
+
+# OpenPromptInjection — direct/indirect injection ASV
+result = asyncio.run(OpenPromptInjection(attack_mode="direct").run(model))
+```
+
+| Benchmark | Focus | Primary metric | Notes |
+|-----------|-------|----------------|-------|
+| **JailbreakBench** | Jailbreak robustness | `safety_pass_rate` / `attack_success_rate` | HF `JailbreakBench/JBB-Behaviors` |
+| **DoNotAnswer** | Refusal safety | `safety_pass_rate` | 939 harmful instructions |
+| **OpenPromptInjection** | Direct/indirect injection | `injection_success_rate` | Bundled paper scenarios |
+| **JailBreakV28K** | Large-scale jailbreaks | `attack_success_rate` | Use `limit` for quick runs |
+
+Security benchmark scores use `Score.metadata["dimension"] = "safety"` and are reported separately from quality metrics (see ADR-003). Export goldens with `await benchmark.load_goldens()` for use with `evaluate_dataset()`.
+
 ## Available Metrics
 
 | Category | Metrics | What They Measure |

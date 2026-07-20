@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0]
+
+### Added
+
+- **AI security benchmarks (phase 1)**: `SecurityBenchmark` base class with safety-dimension scores, taxonomy metadata on `Golden`/`EvalCase`, and category rollups.
+- **JailbreakBench**, **DoNotAnswer**, **OpenPromptInjection**, and **JailBreakV28K** adapters under `harness_evals.benchmarks`.
+- **`fetch_github_json()`** in `dataset_cache` for cached GitHub/URL dataset loading.
+- README **AI Security Benchmarks** section.
+
 ## [0.12.1]
 
 ### Added

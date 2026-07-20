@@ -154,12 +154,18 @@ harness-evals/
 │   │   │                            # CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability
 │   │   └── composite/              # CompositeMetric (combine metrics with operators)
 │   │
-│   ├── benchmarks/                  # Academic benchmark evaluation suites
+│   ├── benchmarks/                  # Academic + AI security benchmark suites
 │   │   ├── __init__.py              # Public exports (all benchmark classes)
 │   │   ├── base.py                  # BaseBenchmark ABC, BenchmarkResult
-│   │   ├── dataset_cache.py         # HuggingFace dataset fetching + local caching
+│   │   ├── security_base.py         # SecurityBenchmark (safety-dimension scores)
+│   │   ├── _security_utils.py       # Refusal heuristics, taxonomy metadata, rollups
+│   │   ├── dataset_cache.py         # HuggingFace/URL dataset fetching + local caching
 │   │   ├── sandbox.py               # Process-isolated Python code execution (subprocess)
 │   │   ├── _answer_utils.py         # Shared answer extraction (choice, number, F1)
+│   │   ├── jailbreakbench.py        # JailbreakBench (JBB-Behaviors)
+│   │   ├── do_not_answer.py         # Do-Not-Answer refusal safety
+│   │   ├── open_prompt_injection.py # OpenPromptInjection ASV
+│   │   ├── jailbreakv_28k.py        # JailBreakV-28K
 │   │   ├── mmlu.py                  # MMLU (57-subject knowledge)
 │   │   ├── gsm8k.py                # GSM8K (math word problems)
 │   │   ├── humaneval.py            # HumanEval (code generation, sandboxed)

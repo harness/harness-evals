@@ -7,6 +7,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "harness_evals" / "benchmarks"
@@ -79,22 +81,56 @@ async def fetch_hf_dataset(
             f"Run once without offline=True to download."
         )
 
-    try:
-        import httpx  # noqa: F401
-    except ImportError as e:
-        raise ImportError(
-            "httpx is required for benchmark dataset fetching. Install with: pip install harness-evals[benchmarks]"
-        ) from e
-
     items = await _fetch_all_rows(repo_id, split, config)
+    save_to_cache(items, cache_key, split, cache_dir=cache_dir)
+    return items
+
+
+async def fetch_github_json(
+    url: str,
+    cache_key: str,
+    *,
+    split: str = "default",
+    cache_dir: Path | None = None,
+    offline: bool = False,
+) -> list[dict]:
+    """Fetch a JSON or JSONL resource from a URL (e.g. GitHub raw), with caching."""
+    cached = load_cached(cache_key, split, cache_dir=cache_dir)
+    if cached is not None:
+        return cached
+
+    if offline:
+        raise FileNotFoundError(
+            f"Dataset cache key '{cache_key}' (split={split}) not found in cache. "
+            f"Run once without offline=True to download."
+        )
+
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        text = resp.text.strip()
+
+    items: list[dict]
+    if text.startswith("["):
+        parsed = json.loads(text)
+        if not isinstance(parsed, list):
+            raise ValueError(f"Expected JSON array from {url}, got {type(parsed).__name__}")
+        items = [row for row in parsed if isinstance(row, dict)]
+    else:
+        items = []
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    items.append(row)
+
     save_to_cache(items, cache_key, split, cache_dir=cache_dir)
     return items
 
 
 async def _fetch_all_rows(repo_id: str, split: str, config: str | None) -> list[dict[str, Any]]:
     """Paginate through HuggingFace datasets API to fetch all rows."""
-    import httpx
-
     base_url = "https://datasets-server.huggingface.co/rows"
     items: list[dict[str, Any]] = []
     offset = 0

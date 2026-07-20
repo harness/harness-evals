@@ -738,13 +738,98 @@ result = asyncio.run(OpenPromptInjection(attack_mode="direct").run(model))
 |-----------|-------|----------------|-------|
 | **JailbreakBench** | Jailbreak robustness | `safety_pass_rate` / `attack_success_rate` | HF `JailbreakBench/JBB-Behaviors` |
 | **DoNotAnswer** | Refusal safety | `safety_pass_rate` | 939 harmful instructions |
-| **OpenPromptInjection** | Direct/indirect injection | `injection_success_rate` | Bundled paper scenarios |
+| **OpenPromptInjection** | Direct/indirect injection | `injection_success_rate` | GitHub scenarios; bundled smoke default (see below) |
 | **JailBreakV28K** | Large-scale jailbreaks | `attack_success_rate` | Use `limit` for quick runs |
-| **AICGSecEval** | Secure code generation | `secure_pass_rate` | CWE-labeled Python tasks |
-| **SecCodeBench** | Multi-language secure coding | Pass rate by CWE | Optional `[benchmarks-seccode]`, Docker |
-| **AgentDojo** | Agent injection + utility | `utility_pass_rate`, `attack_success_rate` | Requires `BaseTarget` |
+| **AICGSecEval** | Secure code generation | `secure_pass_rate` | GitHub manifest; bundled smoke default (see below) |
+| **SecCodeBench** | Multi-language secure coding | Pass rate by CWE | Pass `manifest_path=` for full upstream manifest |
+| **AgentDojo** | Agent injection + utility | `utility_pass_rate`, `attack_success_rate` | Pass `tasks_path=` or use `BaseTarget` |
 
 Security benchmark scores use `Score.metadata["dimension"] = "safety"` and are reported separately from quality metrics (see ADR-003). Export goldens with `await benchmark.load_goldens()` for use with `evaluate_dataset()`.
+
+### Running full datasets
+
+Security benchmarks fall into two groups: **HuggingFace-backed** (full upstream data by default) and **fixture-backed** (small bundled JSON under `src/harness_evals/benchmarks/data/` for offline CI smoke tests).
+
+Datasets are cached under `~/.cache/harness_evals/benchmarks/` after the first download. Use `offline=True` on later runs to skip network access.
+
+**Check how many items will run before calling the model:**
+
+```python
+items = asyncio.run(JailbreakBench().load_dataset())
+print(len(items))
+```
+
+#### HuggingFace-backed — full dataset by default
+
+Omit `limit` (or pass `limit=None`) to evaluate the entire dataset:
+
+```python
+from harness_evals.benchmarks import JailbreakBench, DoNotAnswer, JailBreakV28K
+
+# ~100 harmful behaviors (HF JailbreakBench/JBB-Behaviors)
+result = asyncio.run(JailbreakBench().run(model))
+
+# 939 harmful instructions (HF LibrAI/do-not-answer)
+result = asyncio.run(DoNotAnswer().run(model))
+
+# Up to ~28K jailbreak prompts — use limit for cost control
+result = asyncio.run(JailBreakV28K().run(model, limit=1000))
+```
+
+Use `limit=N` only when you want a quick sample run. These benchmarks never read from `benchmarks/data/`.
+
+#### Fixture-backed — smoke vs full upstream
+
+The bundled JSON files contain **2–3 items each** and are used by default for CI-friendly smoke evaluation. To run fuller upstream data:
+
+| Benchmark | Full upstream source | How to run full |
+|-----------|---------------------|-----------------|
+| **OpenPromptInjection** | [Open-Prompt-Injection](https://github.com/liu00222/Open-Prompt-Injection) scenarios on GitHub | Today the bundled file is loaded first when present. Workaround: temporarily rename `benchmarks/data/open_prompt_injection_scenarios.json`, then run normally — `load_dataset()` falls through to GitHub fetch and cache. |
+| **AICGSecEval** | [Tencent/AICGSecEval](https://github.com/Tencent/AICGSecEval) `benchmark/tasks.json` | Same pattern: rename `benchmarks/data/aicg_sec_eval_tasks.json` so GitHub fetch runs, or prefetch with `fetch_github_json()`. |
+| **SecCodeBench** | [alibaba/sec-code-bench](https://github.com/alibaba/sec-code-bench) manifests | Clone upstream and pass the manifest path: |
+| **AgentDojo** | [ethz-spylab/agentdojo](https://github.com/ethz-spylab/agentdojo) suites | Export or author tasks in the bundled JSON shape and pass `tasks_path=`. For the full tool-using benchmark, run upstream AgentDojo directly. |
+
+**SecCodeBench — full upstream manifest:**
+
+```bash
+git clone https://github.com/alibaba/sec-code-bench.git
+```
+
+```python
+from pathlib import Path
+from harness_evals.benchmarks import SecCodeBench
+
+manifest = Path("sec-code-bench/datasets/benchmark/python/python.json")
+bench = SecCodeBench(manifest_path=manifest)
+result = asyncio.run(bench.run(model))
+```
+
+Full SecCodeBench verification requires Docker and the upstream `sec_code_bench.e2e` verifiers. The harness adapter uses heuristics when Docker is unavailable.
+
+**AgentDojo — custom tasks file:**
+
+```python
+from harness_evals.benchmarks import AgentDojo
+
+bench = AgentDojo(tasks_path="/path/to/full_agentdojo_tasks.json")
+result = asyncio.run(bench.run(model=model))  # or target=your_base_target
+```
+
+Each task should include fields such as `user_task`, `injection`, `expected_utility`, `attack_goal`, `suite`, and `attack_type` (see `benchmarks/data/agentdojo_tasks.json` for the schema).
+
+**Prefetch upstream JSON manually (OpenPromptInjection / AICGSecEval):**
+
+```python
+from harness_evals.benchmarks.dataset_cache import fetch_github_json
+
+scenarios = asyncio.run(fetch_github_json(
+    "https://raw.githubusercontent.com/liu00222/Open-Prompt-Injection/main/data/benchmark_scenarios.json",
+    "open_prompt_injection__scenarios",
+))
+print(len(scenarios))
+```
+
+> **Note:** A follow-up will add `scenarios_path` / remote-first loading so bundled fixtures are used only for tests and `offline=True`, without renaming files.
 
 ## Available Metrics
 

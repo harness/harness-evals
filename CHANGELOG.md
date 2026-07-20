@@ -13,6 +13,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **AgentDojo** benchmark with separate `utility_pass_rate` and `attack_success_rate` via `BaseTarget` integration.
 
+### Changed
+
+- README **Running full datasets** subsection under AI Security Benchmarks: HF vs fixture-backed loading, cache/offline usage, and upstream manifest paths for SecCodeBench and AgentDojo.
+
 ## [0.14.0]
 
 ### Added

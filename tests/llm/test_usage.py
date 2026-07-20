@@ -25,6 +25,21 @@ class TestTokenUsage:
         assert u.input_tokens == 1
         assert u.output_tokens is None
 
+    def test_zero_is_recorded_as_zero_not_none(self):
+        # "None means unknown, never coerce to 0" — the converse must also hold:
+        # a genuine 0 is preserved as 0, distinct from an unreported None.
+        u = TokenUsage()
+        u.add(input_tokens=0, output_tokens=0)
+        assert u.input_tokens == 0
+        assert u.output_tokens == 0
+
+    def test_zero_added_to_existing_count_is_a_noop_not_reset(self):
+        u = TokenUsage()
+        u.add(input_tokens=10, output_tokens=4)
+        u.add(input_tokens=0, output_tokens=0)
+        assert u.input_tokens == 10
+        assert u.output_tokens == 4
+
 
 class TestCollectTokenUsage:
     def test_records_within_block(self):

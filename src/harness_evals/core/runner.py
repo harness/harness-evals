@@ -11,6 +11,7 @@ from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.llm.usage import TokenUsage, collect_token_usage
 from harness_evals.logging_config import truncate_repr
 from harness_evals.summary import ScoreSummary, summarize
 
@@ -97,18 +98,21 @@ async def a_evaluate(
     automatically.
     """
 
-    async def _timed_measure(metric: BaseMetric) -> tuple[Score | None | BaseException, float]:
+    async def _timed_measure(
+        metric: BaseMetric,
+    ) -> tuple[Score | None | BaseException, float, TokenUsage]:
         t0 = time.perf_counter()
-        try:
-            result = await metric.a_measure(eval_case)
-        except BaseException as exc:
-            return exc, (time.perf_counter() - t0) * 1000.0
-        return result, (time.perf_counter() - t0) * 1000.0
+        with collect_token_usage() as usage:
+            try:
+                result: Score | None | BaseException = await metric.a_measure(eval_case)
+            except BaseException as exc:
+                result = exc
+        return result, (time.perf_counter() - t0) * 1000.0, usage
 
     timed_results = await asyncio.gather(*[_timed_measure(m) for m in metrics])
 
     scores: list[Score] = []
-    for metric, (result, elapsed_ms) in zip(metrics, timed_results, strict=True):
+    for metric, (result, elapsed_ms, usage) in zip(metrics, timed_results, strict=True):
         if isinstance(result, BaseException):
             score = Score(
                 name=metric.name,
@@ -121,6 +125,11 @@ async def a_evaluate(
         if score is not None:
             score.scoring_duration_ms = elapsed_ms
             _enrich_score(score, metric)
+            if usage.input_tokens is not None or usage.output_tokens is not None:
+                if score.metadata is None:
+                    score.metadata = {}
+                score.metadata.setdefault("input_tokens", usage.input_tokens)
+                score.metadata.setdefault("output_tokens", usage.output_tokens)
             scores.append(score)
 
     if sinks:

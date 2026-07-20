@@ -23,6 +23,8 @@ class EvalCase:
 
     latency_ms: float | None = None
     token_count: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     cost_usd: float | None = None
     retry_count: int | None = None
     confidence: float | None = None

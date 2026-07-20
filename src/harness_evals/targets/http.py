@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import ssl
@@ -58,6 +57,8 @@ class HttpTarget(BaseTarget):
     context_path: str | None = None
     messages_path: str | None = None
     token_count_path: str | None = None
+    input_tokens_path: str | None = None
+    output_tokens_path: str | None = None
     cost_usd_path: str | None = None
     retry_count_path: str | None = None
     confidence_path: str | None = None
@@ -255,6 +256,8 @@ class HttpTarget(BaseTarget):
         _extract_field(kwargs, response_body, "context", self.context_path)
         _extract_field(kwargs, response_body, "messages", self.messages_path)
         _extract_float(kwargs, response_body, "token_count", self.token_count_path, int)
+        _extract_float(kwargs, response_body, "input_tokens", self.input_tokens_path, int)
+        _extract_float(kwargs, response_body, "output_tokens", self.output_tokens_path, int)
         _extract_float(kwargs, response_body, "cost_usd", self.cost_usd_path, float)
         _extract_float(kwargs, response_body, "retry_count", self.retry_count_path, int)
         _extract_float(kwargs, response_body, "confidence", self.confidence_path, float)
@@ -292,6 +295,19 @@ def _extract_float(kwargs: dict, body: object, key: str, path: str | None, cast:
     if path is None:
         return
     val = extract_path(body, path)
-    if val is not None:
-        with contextlib.suppress(TypeError, ValueError):
-            kwargs[key] = cast(val)
+    if val is None:
+        return
+    # The path *was* configured and resolved to a value, so a failed cast means
+    # the value is the wrong type (non-numeric string, dict) or out of range
+    # (json.loads accepts Infinity/NaN → int(inf) raises OverflowError). Warn so
+    # a misconfigured path is distinguishable from "the endpoint reported nothing".
+    try:
+        kwargs[key] = cast(val)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "%s path %r resolved to %r, which is not a valid %s; dropping it",
+            key,
+            path,
+            val,
+            cast.__name__,
+        )

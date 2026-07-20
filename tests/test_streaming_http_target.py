@@ -81,6 +81,88 @@ async def test_buffered_json_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.unit
+async def test_buffered_token_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_response(
+        monkeypatch,
+        '{"output": "ok", "in": 150, "out": 280}',
+        content_type="application/json",
+    )
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        input_tokens_path="$.in",
+        output_tokens_path="$.out",
+    )
+    result = await target.ainvoke(Golden(input="hi"))
+    assert result.input_tokens == 150
+    assert result.output_tokens == 280
+
+
+@pytest.mark.unit
+async def test_sse_token_split_from_separate_usage_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Realistic streaming shape: the answer is one event and token usage arrives
+    # in a separate trailing ``model_usage`` event. The token paths must resolve
+    # against that envelope even though it isn't the answer payload.
+    body = _sse(
+        'event: message\ndata: {"output": "real answer"}',
+        'event: model_usage\ndata: {"input_tokens": 17, "output_tokens": 4299}',
+        "event: done\ndata: {}",
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        input_tokens_path="$.input_tokens",
+        output_tokens_path="$.output_tokens",
+    )
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.output == "real answer"
+    assert result.input_tokens == 17
+    assert result.output_tokens == 4299
+
+
+@pytest.mark.unit
+async def test_sse_answer_payload_tokens_take_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    # When the answer event carries its own usage, that wins over any later
+    # envelope — recovery only fills fields the answer payload lacked.
+    body = _sse(
+        'event: message\ndata: {"output": "answer", "input_tokens": 10, "output_tokens": 20}',
+        'event: model_usage\ndata: {"input_tokens": 999, "output_tokens": 999}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        input_tokens_path="$.input_tokens",
+        output_tokens_path="$.output_tokens",
+    )
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.input_tokens == 10
+    assert result.output_tokens == 20
+
+
+@pytest.mark.unit
+async def test_sse_non_numeric_token_value_is_dropped_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A configured path resolving to a non-numeric value must not crash; it is
+    # dropped and a warning is logged so the misconfiguration is visible.
+    body = _sse(
+        'event: message\ndata: {"output": "answer"}',
+        'event: model_usage\ndata: {"input_tokens": "N/A"}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", input_tokens_path="$.input_tokens")
+    with caplog.at_level(logging.WARNING):
+        result = await target.ainvoke(Golden(input="q"))
+
+    assert result.input_tokens is None
+    assert any("input_tokens path" in r.message for r in caplog.records)
+
+
+@pytest.mark.unit
 async def test_stream_disabled_uses_buffered_parse(monkeypatch: pytest.MonkeyPatch) -> None:
     # Even with an event-stream content-type, stream=False forces buffered parsing.
     _patch_response(monkeypatch, '{"output": "buffered"}', content_type="text/event-stream")

@@ -740,6 +740,8 @@ result = asyncio.run(OpenPromptInjection(attack_mode="direct").run(model))
 | **DoNotAnswer** | Refusal safety | `safety_pass_rate` | 939 harmful instructions |
 | **OpenPromptInjection** | Direct/indirect injection | `injection_success_rate` | Bundled paper scenarios |
 | **JailBreakV28K** | Large-scale jailbreaks | `attack_success_rate` | Use `limit` for quick runs |
+| **AICGSecEval** | Secure code generation | `secure_pass_rate` | CWE-labeled Python tasks |
+| **SecCodeBench** | Multi-language secure coding | Pass rate by CWE | Optional `[benchmarks-seccode]`, Docker |
 
 Security benchmark scores use `Score.metadata["dimension"] = "safety"` and are reported separately from quality metrics (see ADR-003). Export goldens with `await benchmark.load_goldens()` for use with `evaluate_dataset()`.
 

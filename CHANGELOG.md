@@ -7,6 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0]
+
+### Added
+
+- **AICGSecEval** secure code generation benchmark with bundled CWE-labeled Python tasks.
+- **SecCodeBench** thin adapter with bundled task manifest and optional `[benchmarks-seccode]` extra.
+
 ## [0.13.0]
 
 ### Added

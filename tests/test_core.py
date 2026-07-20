@@ -654,6 +654,24 @@ class TestEvaluateDataset:
         assert len(results) == 1
         assert results[0][0].passed
 
+    async def test_evaluate_dataset_on_result_async_callback_is_awaited(self):
+        """An async on_result callback is awaited, not silently discarded."""
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(2)]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        calls: list[int] = []
+
+        async def on_result(index, total, eval_case, scores):
+            calls.append(index)
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 2
+        assert sorted(calls) == [0, 1]
+
 
 @pytest.mark.unit
 class TestScoringDurationMs:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -212,11 +213,12 @@ _runner_logger = logging.getLogger(__name__)
 
 # Per-item progress callback. Invoked once per dataset item as it finishes
 # (in completion order, from the event loop) with
-# ``(index, total, eval_case, scores)`` where ``index`` is 0-based. Lets callers
-# surface per-item progress/logging without the library picking a log level or
-# format. Exceptions raised by the callback are caught and logged — a bad
-# callback never aborts the run.
-OnResult = Callable[[int, int, EvalCase, list[Score]], None]
+# ``(index, total, eval_case, scores)`` where ``index`` is 0-based. May be a
+# plain function or an ``async def`` — a returned awaitable is awaited. Lets
+# callers surface per-item progress/logging without the library picking a log
+# level or format. Exceptions raised by the callback are caught and logged — a
+# bad callback never aborts the run.
+OnResult = Callable[[int, int, EvalCase, list[Score]], None | Awaitable[None]]
 
 
 async def _evaluate_dataset_single(
@@ -304,9 +306,11 @@ async def _evaluate_dataset_single(
         )
         if on_result is not None:
             # Progress callbacks are observation-only: a raising callback must
-            # never abort the eval run.
+            # never abort the eval run. Accept sync or async callbacks.
             try:
-                on_result(idx, total, eval_case, scores)
+                result = on_result(idx, total, eval_case, scores)
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 _runner_logger.exception("on_result callback raised for item %d", idx)
         if sink_queue is not None:
@@ -353,7 +357,9 @@ async def _evaluate_dataset_conversation(
         scores = await a_evaluate(eval_case, metrics)
         if on_result is not None:
             try:
-                on_result(idx, total, eval_case, scores)
+                result = on_result(idx, total, eval_case, scores)
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 _runner_logger.exception("on_result callback raised for item %d", idx)
         return scores
@@ -413,8 +419,9 @@ async def evaluate_dataset(
             SIMULATE or GRAPH mode.
         on_result: Optional per-item progress callback invoked as each item
             finishes with ``(index, total, eval_case, scores)`` (``index``
-            0-based, completion order). For observation only — exceptions it
-            raises are caught and logged, never aborting the run.
+            0-based, completion order). May be sync or ``async`` — a returned
+            awaitable is awaited. For observation only — exceptions it raises
+            are caught and logged, never aborting the run.
 
     Raises:
         ValueError: If ``concurrency`` is less than 1 or if

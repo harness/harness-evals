@@ -21,7 +21,7 @@ from harness_evals.refs import ResourceRef
 # ------------------------------------------------------------------
 
 _OP_INVOKE_AGENT = "invoke_agent"
-_OP_INVOKE_WORKFLOW = "invoke_workflow"
+_OP_INVOKE_WORKFLOW = "invoke_workflow"  # proposed extension, not yet in ratified spec
 _OP_CHAT = "chat"
 _OP_GENERATE_CONTENT = "generate_content"
 _OP_TEXT_COMPLETION = "text_completion"
@@ -71,8 +71,25 @@ def classify_span(span: dict[str, Any]) -> SpanType:
 
     if "gen_ai.tool.name" in attrs or "tool.name" in attrs:
         return SpanType.TOOL_CALL
+    # mcp.* spans are transport-layer (HTTP calls under execute_tool) — skip them
+    if name.startswith("mcp."):
+        return SpanType.OTHER
     if name.startswith("execute_tool") or ("tool" in name and "gen_ai" not in name):
         return SpanType.TOOL_CALL
+
+    # Langfuse-instrumented agent run spans
+    if attrs.get("langfuse.observation.type") == "agent":
+        return SpanType.AGENT_ROOT
+
+    # Langfuse-instrumented LLM turn spans (e.g. "llm_turn_N")
+    if attrs.get("langfuse.observation.type") == "generation":
+        return SpanType.LLM_TURN
+
+    # Langfuse-instrumented tool spans (e.g. "tool:Read", "tool:Skill")
+    if attrs.get("langfuse.observation.type") == "span" and "gen_ai.tool.name" not in attrs:
+        # Only classify as TOOL_CALL if it looks like a tool span by name prefix
+        if name.startswith("tool:"):
+            return SpanType.TOOL_CALL
 
     if (
         "gen_ai.request.model" in attrs
@@ -163,7 +180,7 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
 def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
     """Build a single EvalCase with a deduplicated conversation trajectory.
 
-    Strategy (from ai-evals trace adapter):
+    Strategy:
     - Sort spans chronologically
     - Classify each span
     - Extract user input from the agent root or first LLM turn
@@ -256,13 +273,45 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
         metadata, "provider",
         meta_attrs.get("gen_ai.provider.name") or meta_attrs.get("gen_ai.system"),
     )
-    _set_if(metadata, "model", meta_attrs.get("gen_ai.request.model"))
+    _set_if(
+        metadata, "model",
+        meta_attrs.get("gen_ai.response.model") or meta_attrs.get("gen_ai.request.model"),
+    )
     _set_if(metadata, "operation", meta_attrs.get("gen_ai.operation.name"))
     _set_if(metadata, "agent_name", meta_attrs.get("gen_ai.agent.name"))
+    _set_if(metadata, "conversation_id", meta_attrs.get("gen_ai.conversation.id"))
+    cache_read = _safe_int(meta_attrs.get("gen_ai.usage.cache_read.input_tokens"))
+    if cache_read:
+        metadata["cache_read_tokens"] = cache_read
+
+    # Langfuse trace tags → EvalCase.tags (parsed from JSON array string)
+    raw_tags = meta_attrs.get("langfuse.trace.tags")
+    tags: dict[str, str] | None = None
+    if raw_tags:
+        tag_list = raw_tags if isinstance(raw_tags, list) else _try_json(raw_tags)
+        if isinstance(tag_list, list):
+            parsed_tags: dict[str, str] = {}
+            for tag in tag_list:
+                if isinstance(tag, str) and ":" in tag:
+                    k, _, v = tag.partition(":")
+                    parsed_tags[k] = v
+                elif isinstance(tag, str):
+                    parsed_tags[tag] = "true"
+            if parsed_tags:
+                tags = parsed_tags
+
     if turn_details:
         metadata["turns"] = turn_details
 
     latency_ms = _compute_trace_latency(sorted_spans)
+
+    cost_usd: float | None = None
+    raw_cost = meta_attrs.get("gen_ai.usage.cost")
+    if raw_cost is not None:
+        try:
+            cost_usd = float(raw_cost)
+        except (TypeError, ValueError):
+            pass
 
     return EvalCase(
         input=user_input or "",
@@ -271,6 +320,8 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
         tool_calls=tool_calls or None,
         latency_ms=latency_ms,
         token_count=total_tokens if total_tokens > 0 else None,
+        cost_usd=cost_usd,
+        tags=tags,
         metadata=metadata or None,
     )
 
@@ -316,6 +367,19 @@ def _extract_user_input_from_span(attrs: dict) -> str:
                         return entry.get("content", "")
         except (json.JSONDecodeError, TypeError):
             return prompt
+
+    # Langfuse instrumentation: langfuse.trace.input / langfuse.observation.input
+    # These are JSON objects with a "user_message" or "prompt" field on root/agent spans.
+    for key in ("langfuse.trace.input", "langfuse.observation.input"):
+        raw = attrs.get(key)
+        if not raw:
+            continue
+        parsed = raw if isinstance(raw, dict) else _try_json(raw)
+        if not isinstance(parsed, dict):
+            continue
+        text = parsed.get("user_message") or parsed.get("prompt")
+        if isinstance(text, str) and text:
+            return text
 
     return ""
 
@@ -402,6 +466,32 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
         except (json.JSONDecodeError, TypeError):
             return completion, []
 
+    # Langfuse instrumentation: langfuse.observation.output
+    # Stored as {"role": "assistant", "content": [{"type": "text", "text": "..."}]}
+    raw = attrs.get("langfuse.observation.output")
+    if raw:
+        parsed = raw if isinstance(raw, dict) else _try_json(raw)
+        if isinstance(parsed, dict):
+            content = parsed.get("content")
+            if isinstance(content, str):
+                return content, []
+            if isinstance(content, list):
+                text_parts: list[str] = []
+                tcs: list[ToolCall] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "text":
+                        t = part.get("text") or part.get("content") or ""
+                        if t:
+                            text_parts.append(t)
+                    elif part.get("type") == "tool_use":
+                        tcs.append(ToolCall(
+                            name=part.get("name", ""),
+                            input=part.get("input"),
+                        ))
+                return "\n".join(text_parts) or None, tcs
+
     return None, []
 
 
@@ -455,8 +545,30 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
                         continue
                     for part in msg.get("parts", []):
                         if isinstance(part, dict) and part.get("type") == "tool_call_response":
-                            tool_output = part.get("result") or part.get("content", "")
+                            # spec field is "response"; fall back for older exporters
+                            tool_output = part.get("response") or part.get("result") or part.get("content", "")
                             break
+
+    # Langfuse instrumentation: langfuse.observation.input/output
+    # input: {"name": "ToolName", "arguments": {...}}
+    # output: {"tool_use_id": "...", "tool_name": "...", "is_error": false, "content": "..."}
+    if not tool_input:
+        raw = attrs.get("langfuse.observation.input")
+        if raw:
+            parsed = raw if isinstance(raw, dict) else _try_json(raw)
+            if isinstance(parsed, dict):
+                if not tool_name:
+                    tool_name = parsed.get("name", "")
+                tool_input = parsed.get("arguments") or parsed.get("input")
+
+    if not tool_output:
+        raw = attrs.get("langfuse.observation.output")
+        if raw:
+            parsed = raw if isinstance(raw, dict) else _try_json(raw)
+            if isinstance(parsed, dict):
+                content = parsed.get("content")
+                if content is not None:
+                    tool_output = content if isinstance(content, str) else json.dumps(content)
 
     return ToolCall(name=tool_name, input=tool_input, output=tool_output)
 
@@ -485,7 +597,8 @@ def _text_from_parts(parts: list) -> str | None:
                 texts.append(text)
         elif ptype == "tool_call_response":
             # Include tool results as text in the trajectory
-            result = part.get("content") or part.get("result") or ""
+            # spec field is "response"; fall back to "result"/"content" for older exporters
+            result = part.get("response") or part.get("content") or part.get("result") or ""
             if result:
                 texts.append(result if isinstance(result, str) else json.dumps(result))
     return "\n".join(texts) if texts else None

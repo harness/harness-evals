@@ -66,7 +66,102 @@ class TestStdoutSink:
         assert "exact_match" in captured
         assert "latency" in captured
         assert "pass_rate" in captured
-        assert "Overall pass rate" in captured
+        assert "Quality pass rate" in captured
+
+    def test_finalize_prints_dimension_block_and_safety(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        dim_scores = [
+            Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+            Score(name="pii_leak", value=0.0, threshold=1.0, metadata={"dimension": "safety"}),
+        ]
+        sink = StdoutSink(summary=True)
+        sink.write(dim_scores, ec)
+        capsys.readouterr()  # clear per-case output
+
+        sink.finalize()
+        captured = capsys.readouterr().out
+
+        assert "Dimensions:" in captured
+        assert "correctness" in captured
+        # Safety surfaced separately as a hard constraint.
+        assert "Safety: 1 violation(s)" in captured
+        assert "violation(s)" in captured
+        # Each dimension line carries a visual progress bar.
+        assert "█" in captured or "░" in captured
+
+    def test_finalize_dimension_bar_reflects_mean(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write(
+            [Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"})],
+            ec,
+        )
+        capsys.readouterr()
+        sink.finalize()
+        captured = capsys.readouterr().out
+        # mean 1.0 -> a fully filled 10-wide bar, no empty cells.
+        assert "██████████" in captured
+        assert "░" not in captured.split("Dimensions:")[1]
+
+    def test_finalize_unknown_dimension_footnoted_not_in_block(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write(
+            [
+                Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+                Score(name="mystery", value=0.5, threshold=0.7),  # no dimension -> unknown
+            ],
+            ec,
+        )
+        capsys.readouterr()
+        sink.finalize()
+        captured = capsys.readouterr().out
+        # "unknown" is not a row in the Dimensions block...
+        dimensions_block = captured.split("Dimensions:")[1]
+        assert "unknown" not in dimensions_block.split("no declared dimension")[0]
+        # ...but is acknowledged in a footnote.
+        assert "no declared dimension" in captured
+        assert "1 metric(s)" in captured
+
+    def test_finalize_dimensions_in_canonical_order(self, capsys):
+        # Scores added in non-canonical order must print in ADR-009 order.
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write(
+            [
+                Score(name="lat", value=0.9, threshold=0.5, metadata={"dimension": "performance"}),
+                Score(name="em", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+                Score(name="pii", value=0.0, threshold=1.0, metadata={"dimension": "safety"}),
+            ],
+            ec,
+        )
+        capsys.readouterr()
+        sink.finalize()
+        block = capsys.readouterr().out.split("Dimensions:")[1]
+        # correctness before safety before performance, regardless of input order.
+        assert block.index("correctness") < block.index("safety") < block.index("performance")
+
+    def test_finalize_no_dimensions_block_or_footnote_when_all_unknown(self, capsys):
+        # Every score undeclared -> no block, and no dangling footnote either.
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write([Score(name="m", value=0.9, threshold=0.5)], ec)
+        capsys.readouterr()
+        sink.finalize()
+        captured = capsys.readouterr().out
+        assert "Dimensions:" not in captured
+        assert "no declared dimension" not in captured
+
+    def test_finalize_no_safety_line_without_safety_scores(self, capsys):
+        ec = EvalCase(input="q", output="a")
+        sink = StdoutSink(summary=True)
+        sink.write([Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"})], ec)
+        capsys.readouterr()
+
+        sink.finalize()
+        captured = capsys.readouterr().out
+        assert "Safety:" not in captured
+        assert "Dimensions:" in captured
 
     def test_finalize_no_summary_when_disabled(self, capsys, eval_case, scores):
         sink = StdoutSink(summary=False)
@@ -309,6 +404,23 @@ class TestJUnitSink:
         names = {tc.attrib["name"] for tc in testcases}
         assert names == {"pass_metric", "fail_metric"}
 
+    def test_strips_illegal_control_chars(self, tmp_path):
+        path = tmp_path / "results.xml"
+        sink = JUnitSink(str(path))
+        ec = EvalCase(input="bad\x01input", output="a")
+        sink.write(
+            [Score(name="m1", value=0.3, threshold=0.8, reason="bad\x0breason")],
+            ec,
+        )
+        sink.finalize()
+
+        # Must parse without a ParseError.
+        ET.parse(path)
+
+        raw = path.read_bytes()
+        assert b"\x0b" not in raw
+        assert b"\x01" not in raw
+
     def test_no_time_attribute_when_duration_not_set(self, tmp_path):
         path = tmp_path / "results.xml"
         sink = JUnitSink(str(path))
@@ -376,10 +488,16 @@ def otlp_mocks():
     mock_latency_hist = MagicMock()
     mock_token_hist = MagicMock()
     mock_cost_hist = MagicMock()
+    mock_retry_hist = MagicMock()
+    mock_confidence_hist = MagicMock()
     mock_meter = MagicMock()
+    # Dedicated mock per dynamically-created metadata gauge, keyed by instrument name.
+    meta_gauges: dict[str, MagicMock] = {}
 
-    def _create_gauge(**kwargs):
-        return mock_gauge
+    def _create_gauge(name="", **kwargs):
+        if name == "evals.score":
+            return mock_gauge
+        return meta_gauges.setdefault(name, MagicMock())
 
     def _create_histogram(name="", **kwargs):
         if "latency" in name:
@@ -388,6 +506,10 @@ def otlp_mocks():
             return mock_token_hist
         if "cost" in name:
             return mock_cost_hist
+        if "retry_count" in name:
+            return mock_retry_hist
+        if "confidence" in name:
+            return mock_confidence_hist
         return MagicMock()
 
     mock_meter.create_gauge.side_effect = _create_gauge
@@ -409,6 +531,9 @@ def otlp_mocks():
         "latency_hist": mock_latency_hist,
         "token_hist": mock_token_hist,
         "cost_hist": mock_cost_hist,
+        "retry_hist": mock_retry_hist,
+        "confidence_hist": mock_confidence_hist,
+        "meta_gauges": meta_gauges,
         "meter": mock_meter,
         "meter_provider": mock_meter_provider,
         "tracer": mock_tracer,
@@ -531,6 +656,101 @@ class TestOtlpSink:
         mocks["latency_hist"].record.assert_not_called()
         mocks["token_hist"].record.assert_not_called()
         mocks["cost_hist"].record.assert_not_called()
+        mocks["retry_hist"].record.assert_not_called()
+        mocks["confidence_hist"].record.assert_not_called()
+
+    def test_retry_count_histogram(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(input="q", output="a", retry_count=3)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        mocks["retry_hist"].record.assert_called_once()
+        assert mocks["retry_hist"].record.call_args[0][0] == 3
+
+    def test_confidence_histogram(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(input="q", output="a", confidence=0.87)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        mocks["confidence_hist"].record.assert_called_once()
+        assert mocks["confidence_hist"].record.call_args[0][0] == 0.87
+
+    def test_numeric_metadata_forwarded_as_gauge(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+        ec = EvalCase(input="q", output="a", metadata={"rerank_score": 0.82, "chunks": 5})
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        assert "evals.item.meta.rerank_score" in mocks["meta_gauges"]
+        assert "evals.item.meta.chunks" in mocks["meta_gauges"]
+        rerank = mocks["meta_gauges"]["evals.item.meta.rerank_score"]
+        rerank.set.assert_called_once()
+        assert rerank.set.call_args[0][0] == 0.82
+        # observation carries base attributes (run_id)
+        assert rerank.set.call_args[1]["attributes"]["eval.run_id"] == "run-1"
+
+    def test_non_numeric_and_bool_metadata_skipped(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(
+            input="q",
+            output="a",
+            metadata={"model": "gpt-4o", "cached": True, "tags": ["x"], "score": 0.5},
+        )
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        # Only the numeric, non-bool key is forwarded.
+        assert set(mocks["meta_gauges"]) == {"evals.item.meta.score"}
+
+    def test_metadata_gauge_reused_across_writes(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        ec = EvalCase(input="q", output="a", metadata={"k": 1})
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+        sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)
+
+        # Instrument created once, reused (not re-created per write).
+        gauge_names = [c.kwargs.get("name") for c in mocks["meter"].create_gauge.call_args_list]
+        assert gauge_names.count("evals.item.meta.k") == 1
+        assert mocks["meta_gauges"]["evals.item.meta.k"].set.call_count == 2
+
+    def test_meter_exposed(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink()
+        assert sink.meter is mocks["meter"]
+
+    def test_on_write_callback_invoked(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        seen = {}
+
+        def cb(meter, scores, eval_case):
+            seen["meter"] = meter
+            seen["scores"] = scores
+            seen["input"] = eval_case.input
+
+        sink = OtlpSink(on_write=cb)
+        ec = EvalCase(input="hello", output="a")
+        score = Score(name="m", value=1.0, threshold=0.5)
+        sink.write([score], ec)
+
+        assert seen["meter"] is mocks["meter"]
+        assert seen["scores"] == [score]
+        assert seen["input"] == "hello"
+
+    def test_on_write_exception_is_warned_not_raised(self, otlp_mocks):
+        OtlpSink, _mocks = otlp_mocks
+
+        def cb(meter, scores, eval_case):
+            raise RuntimeError("boom")
+
+        sink = OtlpSink(on_write=cb)
+        ec = EvalCase(input="q", output="a")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            sink.write([Score(name="m", value=1.0, threshold=0.5)], ec)  # must not raise
+        assert any("on_write callback raised" in str(w.message) for w in caught)
 
     def test_empty_scores_skipped(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks
@@ -549,14 +769,16 @@ class TestOtlpSink:
         attrs = mocks["gauge"].set.call_args[1]["attributes"]
         assert attrs["eval.dimension"] == "correctness"
 
-    def test_dimension_omitted_when_absent(self, otlp_mocks):
+    def test_dimension_falls_back_to_unknown_when_absent(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks
         sink = OtlpSink()
         ec = EvalCase(input="q", output="a")
         sink.write([Score(name="m", value=0.9, threshold=0.5)], ec)
 
+        # Undeclared scores are tagged "unknown" to match the final aggregation,
+        # so dashboards grouped by eval.dimension don't silently drop them.
         attrs = mocks["gauge"].set.call_args[1]["attributes"]
-        assert "eval.dimension" not in attrs
+        assert attrs["eval.dimension"] == "unknown"
 
     def test_invalid_protocol_raises(self, otlp_mocks):
         OtlpSink, _mocks = otlp_mocks
@@ -686,6 +908,17 @@ class TestOtlpSinkTraces:
         event_attrs = mocks["item_span"].add_event.call_args[1]["attributes"]
         assert event_attrs["eval.dimension"] == "safety"
 
+    def test_score_event_dimension_falls_back_to_unknown(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+        sink.write(
+            [Score(name="m", value=0.9, threshold=0.5)],
+            EvalCase(input="q", output="a"),
+        )
+
+        event_attrs = mocks["item_span"].add_event.call_args[1]["attributes"]
+        assert event_attrs["eval.dimension"] == "unknown"
+
     def test_finalize_ends_root_span_with_summary(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks
         sink = OtlpSink(run_id="run-1")
@@ -713,6 +946,37 @@ class TestOtlpSinkTraces:
         summary_event = [c for c in mocks["root_span"].add_event.call_args_list if c[0][0] == "eval.summary"]
         assert len(summary_event) == 1
         assert summary_event[0][1]["attributes"]["eval.summary.accuracy.mean"] == 0.9
+
+    def test_finalize_emits_dimension_summary_attributes(self, otlp_mocks):
+        OtlpSink, mocks = otlp_mocks
+        sink = OtlpSink(run_id="run-1")
+        ec = EvalCase(input="q", output="a")
+        sink.write(
+            [
+                Score(name="exact_match", value=1.0, threshold=0.8, metadata={"dimension": "correctness"}),
+                Score(name="pii_leak", value=0.0, threshold=1.0, metadata={"dimension": "safety"}),
+            ],
+            ec,
+        )
+        sink.finalize()
+
+        root = mocks["root_span"]
+        # Per-dimension mean, pass rate, and count set on the root span (ADR-016).
+        root.set_attribute.assert_any_call("eval.summary.dimension.correctness.mean", 1.0)
+        root.set_attribute.assert_any_call("eval.summary.dimension.correctness.pass_rate", 1.0)
+        root.set_attribute.assert_any_call("eval.summary.dimension.correctness.count", 1)
+        root.set_attribute.assert_any_call("eval.summary.dimension.safety.mean", 0.0)
+        root.set_attribute.assert_any_call("eval.summary.dimension.safety.pass_rate", 0.0)
+        root.set_attribute.assert_any_call("eval.summary.dimension.safety.count", 1)
+        # Safety violation count as a hard-constraint signal (ADR-003).
+        root.set_attribute.assert_any_call("eval.summary.dimension.safety.violations", 1)
+        # Also folded into the summary event.
+        summary_event = [c for c in root.add_event.call_args_list if c[0][0] == "eval.summary"]
+        attrs = summary_event[0][1]["attributes"]
+        assert attrs["eval.summary.dimension.correctness.mean"] == 1.0
+        assert attrs["eval.summary.dimension.correctness.pass_rate"] == 1.0
+        assert attrs["eval.summary.dimension.correctness.count"] == 1
+        assert attrs["eval.summary.dimension.safety.violations"] == 1
 
     def test_finalize_idempotent(self, otlp_mocks):
         OtlpSink, mocks = otlp_mocks
@@ -1097,7 +1361,9 @@ class TestOtlpSinkItemContext:
 
         # Metrics still recorded
         mocks["gauge"].set.assert_called_once()
-        mocks["latency_hist"].record.assert_called_once_with(200.0, attributes=mocks["latency_hist"].record.call_args[1]["attributes"])
+        mocks["latency_hist"].record.assert_called_once_with(
+            200.0, attributes=mocks["latency_hist"].record.call_args[1]["attributes"]
+        )
 
     def test_item_context_none_uses_default_behavior(self, otlp_mocks):
         """Explicit item_context=None should behave identically to not passing it."""

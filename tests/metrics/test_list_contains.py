@@ -13,11 +13,13 @@ class TestListContainsMetric:
         score = ListContainsMetric().measure(ec)
         assert score.value == 1.0
         assert score.passed
+        assert "2 of 2" in score.reason
 
     def test_subset_partial(self):
         ec = EvalCase(input="q", output=["a", "c"], expected=["a", "b"])
         score = ListContainsMetric().measure(ec)
         assert score.value == 0.5
+        assert "1 of 2" in score.reason
 
     def test_subset_none_present(self):
         ec = EvalCase(input="q", output=["x", "y"], expected=["a", "b"])
@@ -28,6 +30,7 @@ class TestListContainsMetric:
         ec = EvalCase(input="q", output=["a", "b"], expected=["a", "b"])
         score = ListContainsMetric(mode="exact").measure(ec)
         assert score.value == 1.0
+        assert "exact mode" in score.reason
 
     def test_exact_mismatch(self):
         ec = EvalCase(input="q", output=["a", "b", "c"], expected=["a", "b"])
@@ -48,6 +51,7 @@ class TestListContainsMetric:
         ec = EvalCase(input="q", output='["a", "b", "c"]', expected='["a", "b"]')
         score = ListContainsMetric().measure(ec)
         assert score.value == 1.0
+        assert score.reason
 
     def test_comma_separated_input(self):
         ec = EvalCase(input="q", output="a, b, c", expected="a, b")

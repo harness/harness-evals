@@ -69,7 +69,10 @@ class ContextPrecisionMetric(BaseMetric):
 
         total = len(eval_case.context)
         relevant = sum(1 for v in verdicts if v.get("relevant", False))
-        value = relevant / total if total > 0 else 0.0
+        # Clamp: a malformed judge response may emit more verdicts than there
+        # are chunks; without min() value > 1.0 raises in Score. Matches the
+        # guard already used in ContextRelevancyMetric.
+        value = min(1.0, relevant / total) if total > 0 else 0.0
 
         return Score(
             name=self.name,

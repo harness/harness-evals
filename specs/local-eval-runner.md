@@ -1,7 +1,7 @@
 # Design Spec: Local Eval Runner & Source Adapters
 
-**Status:** Draft  
-**Date:** 2026-06-16  
+**Status:** Draft
+**Date:** 2026-06-16
 **Replaces:** `local-eval-runner.md` (original draft)
 
 ---
@@ -361,8 +361,8 @@ class BaseEvalConfigSource(ABC):
 
 ### Migrating existing `sources/`
 
-`LangfuseSource` → `LangfuseEvalCaseSource(BaseEvalCaseSource)`.  
-`OTELSource` → `OTELEvalCaseSource(BaseEvalCaseSource)`.  
+`LangfuseSource` → `LangfuseEvalCaseSource(BaseEvalCaseSource)`.
+`OTELSource` → `OTELEvalCaseSource(BaseEvalCaseSource)`.
 Original import paths (`harness_evals.sources.langfuse`, `harness_evals.sources.otel`)
 kept as aliases for backwards compatibility. `from_trace` / `from_spans` helpers
 remain; `fetch(ref)` is the new uniform entry point.
@@ -370,7 +370,7 @@ remain; `fetch(ref)` is the new uniform entry point.
 ### `BaseEvalConfigSource` — translation contract
 
 Translation is best-effort and explicit about gaps. A platform metric with no
-catalog equivalent raises `UnmappedMetricError("<platform_metric>", suggestions=[...])` 
+catalog equivalent raises `UnmappedMetricError("<platform_metric>", suggestions=[...])`
 listing the closest catalog kinds — never silently dropped.
 
 ---
@@ -457,9 +457,9 @@ class HttpTarget(BaseTarget):
 
 All JSONPath extraction uses `jsonpath-ng` (existing core dependency).
 
-**Transport failure:** after `retries` attempts, record an `EvalCase` with empty
-output and `metadata["http_error"]` — the run continues, the row fails its metrics
-visibly.
+**Transport failure:** after `retries` attempts, raise `TargetInvocationError`.
+`evaluate_dataset()` catches target exceptions so the run continues and marks the
+row with `metadata["target_error"]` on its failed scores.
 
 **Non-JSON response:** if `output_path == "$"` and `Content-Type` is `text/*`, the
 raw body becomes `output`.
@@ -637,7 +637,7 @@ The following adapters ship in the `harness-evals` repo behind the `[harness]`
 optional extra. They are reference implementations of the vendor-neutral ABCs
 above — no different in status from `LangfuseDatasetSource` or `OTELEvalCaseSource`.
 
-**Requires:** `pip install harness-evals[harness]`  
+**Requires:** `pip install harness-evals[harness]`
 **Env vars:** `HARNESS_AI_SERVICE_URL`, `HARNESS_AI_SERVICE_SECRET`
 
 | Class | Family | What it does |

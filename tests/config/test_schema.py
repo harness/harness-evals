@@ -188,5 +188,7 @@ class TestBaselineSpecParsing:
         assert cfg.baseline == BaselineSpec()
 
     def test_custom(self) -> None:
-        cfg = loads_config(_MINIMAL_YAML.rstrip() + "\nbaseline: {store: json, path: /tmp/b, tolerance: 0.1, run_id: abc}\n")
+        cfg = loads_config(
+            _MINIMAL_YAML.rstrip() + "\nbaseline: {store: json, path: /tmp/b, tolerance: 0.1, run_id: abc}\n"
+        )
         assert cfg.baseline == BaselineSpec(store="json", path="/tmp/b", tolerance=0.1, run_id="abc")

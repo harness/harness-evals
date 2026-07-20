@@ -8,7 +8,36 @@ from harness_evals.metrics.operational import (
     LatencyMetric,
     RetryCountMetric,
     TokenCostMetric,
+    TurnLatencyMetric,
+    TurnTokenCostMetric,
 )
+
+
+@pytest.mark.unit
+class TestConstructorValidation:
+    def test_latency_non_positive_max_ms(self):
+        with pytest.raises(ValueError):
+            LatencyMetric(max_ms=0)
+
+    def test_cost_efficiency_non_positive_max_cost(self):
+        with pytest.raises(ValueError):
+            CostEfficiencyMetric(max_cost_usd=0)
+
+    def test_token_cost_non_positive_max_tokens(self):
+        with pytest.raises(ValueError):
+            TokenCostMetric(max_tokens=0)
+
+    def test_retry_count_non_positive_max_retries(self):
+        with pytest.raises(ValueError):
+            RetryCountMetric(max_retries=0)
+
+    def test_turn_latency_non_positive_max_ms_per_turn(self):
+        with pytest.raises(ValueError):
+            TurnLatencyMetric(max_ms_per_turn=0)
+
+    def test_turn_token_cost_non_positive_max_tokens_per_turn(self):
+        with pytest.raises(ValueError):
+            TurnTokenCostMetric(max_tokens_per_turn=0)
 
 
 @pytest.mark.unit
@@ -17,6 +46,7 @@ class TestLatency:
         score = LatencyMetric(max_ms=5000, threshold=0.5).measure(operational_eval_case)
         assert score.passed
         assert score.value == pytest.approx(0.76, abs=0.01)
+        assert "Latency" in score.reason
 
     @pytest.mark.parametrize(
         "latency_ms, max_ms, expected_value",
@@ -45,6 +75,7 @@ class TestTokenCost:
         score = TokenCostMetric(max_tokens=10000).measure(operational_eval_case)
         assert score.passed
         assert score.value > 0.9
+        assert "Token count" in score.reason
 
     def test_missing(self):
         ec = EvalCase(input="q", output="a")
@@ -57,6 +88,7 @@ class TestCostEfficiency:
         score = CostEfficiencyMetric(max_cost_usd=0.10).measure(operational_eval_case)
         assert score.passed
         assert score.value > 0.9
+        assert "Cost" in score.reason
 
 
 @pytest.mark.unit
@@ -74,3 +106,4 @@ class TestRetryCount:
         ec = EvalCase(input="q", output="a", retry_count=retry_count)
         score = RetryCountMetric(max_retries=max_retries).measure(ec)
         assert score.value == pytest.approx(expected_value)
+        assert "Retry count" in score.reason

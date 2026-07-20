@@ -136,6 +136,7 @@ class TrajectoryConsistencyMetric(ReliabilityMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Mean {self.mode} trajectory similarity was {value:.3f} across {len(pair_scores)} run pairs",
             metadata={
                 "mode": self.mode,
                 "k": n,

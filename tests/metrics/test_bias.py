@@ -110,6 +110,20 @@ class TestBiasMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.0
 
+    async def test_empty_classifications_fails_closed(self):
+        """Opinions extracted but classifier returns empty list → fail closed at 0.0."""
+        llm = MockLLM(
+            responses=[
+                {"opinions": ["opinion one"]},
+                {"classifications": []},
+            ]
+        )
+        metric = BiasMetric(llm=llm)
+        ec = EvalCase(input="q", output="opinion one")
+        score = await metric.a_measure(ec)
+        assert score.value == 0.0
+        assert not score.passed
+
     async def test_custom_threshold(self):
         """Score 0.5 passes with threshold 0.5."""
         llm = MockLLM(

@@ -66,25 +66,33 @@ class ListContainsMetric(BaseMetric):
         expected_items = self._normalize(_parse_list(eval_case.expected))
 
         if not expected_items:
-            return Score(name=self.name, value=1.0, threshold=self.threshold)
+            return Score(
+                name=self.name,
+                value=1.0,
+                threshold=self.threshold,
+                reason="No expected list items were provided, so the list containment check passed",
+            )
 
         output_set = set(output_items)
         expected_set = set(expected_items)
 
         if self.mode == "exact":
+            intersection = output_set & expected_set
             if output_set == expected_set:
                 value = 1.0
             else:
                 union = output_set | expected_set
-                intersection = output_set & expected_set
                 value = len(intersection) / len(union) if union else 1.0
+            reason = f"Output matched {len(intersection)} of {len(output_set | expected_set)} unique list items in exact mode"
         else:
             matched = sum(1 for item in expected_items if item in output_set)
             value = matched / len(expected_items)
+            reason = f"Output contained {matched} of {len(expected_items)} expected list items"
 
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=reason,
             metadata={"output_items": len(output_items), "expected_items": len(expected_items)},
         )

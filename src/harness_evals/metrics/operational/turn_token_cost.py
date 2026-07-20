@@ -27,6 +27,8 @@ class TurnTokenCostMetric(BaseMetric):
             threshold=threshold,
             **kwargs,
         )
+        if max_tokens_per_turn <= 0:
+            raise ValueError(f"max_tokens_per_turn must be positive, got {max_tokens_per_turn}")
         self.max_tokens_per_turn = max_tokens_per_turn
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -62,6 +64,10 @@ class TurnTokenCostMetric(BaseMetric):
             name=self.name,
             value=mean_score,
             threshold=self.threshold,
+            reason=(
+                f"Mean assistant turn token count was {mean_token_count:g} across {len(token_counts)} scored turns "
+                f"against max {self.max_tokens_per_turn} tokens per turn"
+            ),
             metadata={
                 "turn_token_counts": token_counts,
                 "mean_token_count": mean_token_count,

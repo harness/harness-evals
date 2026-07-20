@@ -8,6 +8,16 @@ from typing import Any
 
 from harness_evals.llm._schema import make_strict_schema
 from harness_evals.llm.base import BaseLLM
+from harness_evals.llm.usage import record_token_usage
+
+
+def _record_openai_usage(response: Any) -> None:
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        record_token_usage(
+            input_tokens=getattr(usage, "prompt_tokens", None),
+            output_tokens=getattr(usage, "completion_tokens", None),
+        )
 
 
 class OpenAILLM(BaseLLM):
@@ -23,6 +33,8 @@ class OpenAILLM(BaseLLM):
         temperature: float = 0.0,
         max_tokens: int = 4096,
         *,
+        base_url: str | None = None,
+        organization: str | None = None,
         top_p: float | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
@@ -41,7 +53,12 @@ class OpenAILLM(BaseLLM):
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not resolved_key:
             raise ValueError("No API key: pass api_key= or set OPENAI_API_KEY")
-        self._client = openai.AsyncOpenAI(api_key=resolved_key)
+        client_kwargs: dict[str, Any] = {"api_key": resolved_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        if organization:
+            client_kwargs["organization"] = organization
+        self._client = openai.AsyncOpenAI(**client_kwargs)
 
     def _optional_params(self) -> dict[str, Any]:
         params: dict[str, Any] = {}
@@ -53,21 +70,29 @@ class OpenAILLM(BaseLLM):
             params["presence_penalty"] = self.presence_penalty
         return params
 
+    def _messages(self, prompt: str, system_prompt: object | None = None) -> list[dict[str, str]]:
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": str(system_prompt)})
+        messages.append({"role": "user", "content": prompt})
+        return messages
+
     async def generate(self, prompt: str, **kwargs: object) -> str:
         response = await self._client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=self._messages(prompt, kwargs.get("system_prompt")),
             temperature=self.temperature,
             max_completion_tokens=self.max_tokens,
             **self._optional_params(),
         )
+        _record_openai_usage(response)
         return response.choices[0].message.content or ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
         strict_schema = make_strict_schema(schema)
         response = await self._client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=self._messages(prompt, kwargs.get("system_prompt")),
             temperature=self.temperature,
             max_completion_tokens=self.max_tokens,
             **self._optional_params(),
@@ -80,5 +105,6 @@ class OpenAILLM(BaseLLM):
                 },
             },
         )
+        _record_openai_usage(response)
         text = response.choices[0].message.content or "{}"
         return json.loads(text)

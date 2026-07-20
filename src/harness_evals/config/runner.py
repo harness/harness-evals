@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 import re
 from collections import defaultdict
@@ -20,6 +21,7 @@ from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.errors import BaselineRegressionError, HarnessEvalsError, UnknownMetricError
 from harness_evals.llm.base import BaseLLM
+from harness_evals.logging_config import dataset_sample_summary
 from harness_evals.plugins import (
     baseline_store as lookup_baseline_store,
 )
@@ -46,6 +48,8 @@ _LLM_PROVIDERS: dict[str, str] = {
     "anthropic": "harness_evals.llm.anthropic.AnthropicLLM",
     "harness": "harness_evals.llm.harness_ai.HarnessAILLM",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def build_llm(spec: ModelSpec) -> BaseLLM:
@@ -77,7 +81,7 @@ _ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _resolve_env_in_params(params: dict) -> dict:
-    """Resolve ``${VAR}`` references in string values of a params dict.
+    """Resolve ``${VAR}`` references in params.
 
     .. note::
         YAML requires ``${VAR}`` references to be quoted (``"${VAR}"``).
@@ -85,23 +89,28 @@ def _resolve_env_in_params(params: dict) -> dict:
         means this function will never see the interpolation placeholder.
     """
 
-    resolved = {}
-    for key, value in params.items():
-        if isinstance(value, str) and "${" in value:
-            resolved[key] = _resolve_env_value(value)
-        elif value is None:
-            import warnings
+    return {key: _resolve_env_in_value(key, value, warn_on_none=True) for key, value in params.items()}
 
-            warnings.warn(
-                f"Parameter {key!r} resolved to None. If you intended environment variable "
-                f"interpolation, ensure the value is quoted in YAML: {key}: \"${{{key.upper()}}}\"",
-                UserWarning,
-                stacklevel=2,
-            )
-            resolved[key] = value
-        else:
-            resolved[key] = value
-    return resolved
+
+def _resolve_env_in_value(key: str, value: Any, *, warn_on_none: bool = False) -> Any:
+    if isinstance(value, str) and "${" in value:
+        return _resolve_env_value(value)
+    if isinstance(value, dict):
+        return {
+            nested_key: _resolve_env_in_value(nested_key, nested_value) for nested_key, nested_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_resolve_env_in_value(key, item) for item in value]
+    if value is None and warn_on_none:
+        import warnings
+
+        warnings.warn(
+            f"Parameter {key!r} resolved to None. If you intended environment variable "
+            f'interpolation, ensure the value is quoted in YAML: {key}: "${{{key.upper()}}}"',
+            UserWarning,
+            stacklevel=2,
+        )
+    return value
 
 
 def _resolve_env_value(value: str) -> str:
@@ -132,6 +141,8 @@ async def build_target(spec: TargetSpec) -> BaseTarget:
         return await _build_prompt_target(spec.params)
     if spec.type == "http":
         return _build_http_target(spec.params)
+    if spec.type == "streaming_http":
+        return _build_streaming_http_target(spec.params)
     cls = lookup_target(spec.type)
     return cls(**spec.params)
 
@@ -156,7 +167,9 @@ async def _build_prompt_target(params: dict[str, Any]) -> BaseTarget:
     elif isinstance(raw_prompt, PromptTemplate):
         prompt = raw_prompt
     else:
-        raise HarnessEvalsError(f"PromptTarget 'prompt' must be a ref string or PromptTemplate, got {type(raw_prompt).__name__}")
+        raise HarnessEvalsError(
+            f"PromptTarget 'prompt' must be a ref string or PromptTemplate, got {type(raw_prompt).__name__}"
+        )
 
     if isinstance(raw_model, dict):
         model_spec = ModelSpec(
@@ -170,17 +183,28 @@ async def _build_prompt_target(params: dict[str, Any]) -> BaseTarget:
     else:
         raise HarnessEvalsError(f"PromptTarget 'model' must be a dict or BaseLLM, got {type(raw_model).__name__}")
 
-    return PromptTarget(prompt=prompt, model=model)
+    system_prompt = params.get("system_prompt") or params.get("system_message")
+    return PromptTarget(prompt=prompt, model=model, system_prompt=str(system_prompt) if system_prompt else None)
 
 
 def _build_http_target(params: dict[str, Any]) -> BaseTarget:
     from harness_evals.targets.http import HttpTarget
 
-    kwargs = dict(params)
+    kwargs = _resolve_env_in_params(params)
     raw_auth = kwargs.pop("auth", None)
     if raw_auth is not None:
         kwargs["auth"] = _build_auth(raw_auth)
     return HttpTarget(**kwargs)
+
+
+def _build_streaming_http_target(params: dict[str, Any]) -> BaseTarget:
+    from harness_evals.targets.streaming_http import StreamingHttpTarget
+
+    kwargs = _resolve_env_in_params(params)
+    raw_auth = kwargs.pop("auth", None)
+    if raw_auth is not None:
+        kwargs["auth"] = _build_auth(raw_auth)
+    return StreamingHttpTarget(**kwargs)
 
 
 def _build_auth(raw: dict) -> Any:
@@ -336,6 +360,13 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
     source = source_cls.from_ref(cfg.dataset)
     async with source:
         goldens = await source.fetch(cfg.dataset)
+    logger.debug(
+        "Loaded dataset %s://%s: %d goldens (samples: %s)",
+        cfg.dataset.source,
+        cfg.dataset.id,
+        len(goldens),
+        dataset_sample_summary(goldens),
+    )
 
     target = await build_target(cfg.target)
 

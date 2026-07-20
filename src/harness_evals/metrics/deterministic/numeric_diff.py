@@ -36,4 +36,5 @@ class NumericDiffMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Numeric difference was {diff:g} relative to denominator {denominator:g}",
         )

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from harness_evals.cli import main
+from harness_evals.logging_config import ENV_VAR
 
 _MINIMAL_CONFIG = """\
 name: cli-test
@@ -27,10 +29,23 @@ def _write_config(tmp_path, goldens_content='{"input": "hi", "expected": "hello"
     prompt_path = tmp_path / "prompt.txt"
     prompt_path.write_text(prompt_content, encoding="utf-8")
     config_path = tmp_path / "eval.yaml"
-    config_path.write_text(
-        _MINIMAL_CONFIG.format(dataset_path=str(dataset_path), prompt_path=str(prompt_path))
-    )
+    config_path.write_text(_MINIMAL_CONFIG.format(dataset_path=str(dataset_path), prompt_path=str(prompt_path)))
     return str(config_path)
+
+
+@pytest.fixture(autouse=True)
+def reset_harness_logger(monkeypatch):
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    logger = logging.getLogger("harness_evals")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    original_propagate = logger.propagate
+    logger.handlers.clear()
+    yield
+    logger.handlers.clear()
+    logger.handlers.extend(original_handlers)
+    logger.setLevel(original_level)
+    logger.propagate = original_propagate
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +72,26 @@ class TestCmdRun:
             exit_code = main(["run", config_path])
 
         assert exit_code == 0
+
+    def test_run_log_level_debug_outputs_framework_logs(self, tmp_path, capsys) -> None:
+        config_path = _write_config(tmp_path, goldens_content='{"input": "4", "expected": "4"}\n')
+
+        from tests.conftest import MockLLM
+
+        mock = MockLLM()
+
+        async def fake_generate(prompt, **kwargs):
+            return "4"
+
+        mock.generate = fake_generate
+
+        with patch("harness_evals.config.runner.build_llm", return_value=mock):
+            exit_code = main(["run", config_path, "--log-level", "debug"])
+
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "DEBUG harness_evals.config.runner: Loaded dataset local://" in captured.err
+        assert "DEBUG harness_evals.core.runner: [1/1] input='4' output='4' metrics=[exact_match]" in captured.err
 
     def test_run_file_not_found(self) -> None:
         exit_code = main(["run", "/nonexistent/config.yaml"])
@@ -87,7 +122,7 @@ class TestCmdRun:
         assert exit_code == 1
 
     def test_run_baseline_regression_exit_code(self, tmp_path, capsys) -> None:
-        config_path = _write_config(tmp_path, goldens_content='{"input": "4", "expected": "4"}\n')
+        _write_config(tmp_path, goldens_content='{"input": "4", "expected": "4"}\n')
 
         from tests.conftest import MockLLM
 
@@ -129,7 +164,7 @@ class TestCmdRun:
         assert "Baseline regression" in captured.err
 
     def test_run_baseline_and_fail_under_both_reported(self, tmp_path, capsys) -> None:
-        config_path = _write_config(tmp_path)
+        _write_config(tmp_path)
 
         from tests.conftest import MockLLM
 
@@ -214,10 +249,14 @@ metrics: [exact_match]
     def test_skips_hidden_directories(self, tmp_path, capsys) -> None:
         hidden = tmp_path / ".git" / "hooks"
         hidden.mkdir(parents=True)
-        (hidden / "pre-commit.eval.yaml").write_text("name: shouldskip\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n")
+        (hidden / "pre-commit.eval.yaml").write_text(
+            "name: shouldskip\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n"
+        )
         visible = tmp_path / "evals"
         visible.mkdir()
-        (visible / "real.eval.yaml").write_text("name: real\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n")
+        (visible / "real.eval.yaml").write_text(
+            "name: real\ndataset: x\ntarget: {type: http, url: http://x}\nmetrics: [exact_match]\n"
+        )
         exit_code = main(["discover", str(tmp_path)])
         assert exit_code == 0
         captured = capsys.readouterr()

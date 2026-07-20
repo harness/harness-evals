@@ -15,11 +15,13 @@ class ConversationMode(str, Enum):
     SIMULATE: LLM generates user turns, agent responds each turn.
     REPLAY: Full transcript provided as-is, no agent call.
     SCRIPTED: User turns from dataset, agent called after each user turn.
+    GRAPH: Declarative DAG controls user turn generation with conditional branching.
     """
 
     SIMULATE = "simulate"
     REPLAY = "replay"
     SCRIPTED = "scripted"
+    GRAPH = "graph"
 
 
 @dataclass
@@ -37,20 +39,29 @@ class ConversationGolden:
     max_turns: int = 10
     user_persona: str | None = None
     mode: ConversationMode | None = None
+    graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.mode is None:
-            self.mode = ConversationMode.REPLAY if self.turns else ConversationMode.SIMULATE
+            if self.graph_config is not None:
+                self.mode = ConversationMode.GRAPH
+            elif self.turns:
+                self.mode = ConversationMode.REPLAY
+            else:
+                self.mode = ConversationMode.SIMULATE
 
         mode = self.mode
         if mode in (ConversationMode.REPLAY, ConversationMode.SCRIPTED) and not self.turns:
             raise ValueError(f"mode={mode.value!r} requires 'turns' to be provided")
 
-        if mode == ConversationMode.SCRIPTED and self.turns is not None:
-            if not any(t.role == "user" for t in self.turns):
-                raise ValueError("mode='scripted' requires at least one user-role message in 'turns'")
+        if (
+            mode == ConversationMode.SCRIPTED
+            and self.turns is not None
+            and not any(t.role == "user" for t in self.turns)
+        ):
+            raise ValueError("mode='scripted' requires at least one user-role message in 'turns'")
 
     def to_dict(self) -> dict:
         result = {}

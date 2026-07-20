@@ -11,6 +11,7 @@ from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.logging_config import truncate_repr
 from harness_evals.summary import ScoreSummary, summarize
 
 if TYPE_CHECKING:
@@ -95,6 +96,7 @@ async def a_evaluate(
     ``evaluate_cases()`` and ``evaluate_dataset()`` handle this
     automatically.
     """
+
     async def _timed_measure(metric: BaseMetric) -> tuple[Score | None | BaseException, float]:
         t0 = time.perf_counter()
         try:
@@ -224,39 +226,82 @@ async def _evaluate_dataset_single(
 
     Pass ``concurrency=None`` for unlimited parallelism (no semaphore).
     """
+    total = len(goldens)
     sem: asyncio.Semaphore | None = asyncio.Semaphore(concurrency) if concurrency is not None else None
-    sink_queue: asyncio.Queue[tuple[list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
+    sink_queue: asyncio.Queue[tuple[int, list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
 
     async def _sink_writer() -> None:
-        """Background task that drains sink writes off the hot path."""
+        """Background task that drains sink writes off the hot path.
+
+        Cases finish out of order under concurrency, but sinks must see them in
+        input (golden) order so appended rows line up with the dataset. Buffer
+        items by index and flush the contiguous prefix as it becomes available.
+        """
         assert sink_queue is not None
+        pending: dict[int, tuple[list[Score], EvalCase]] = {}
+        next_idx = 0
         while True:
             item = await sink_queue.get()
             if item is None:
                 break
-            scores, eval_case = item
-            try:
-                for s in sinks:  # type: ignore[union-attr]
-                    s.write(scores, eval_case)
-            except Exception:
-                _runner_logger.exception("Sink write failed for eval_case input=%s", eval_case.input)
+            idx, scores, eval_case = item
+            pending[idx] = (scores, eval_case)
+            while next_idx in pending:
+                buf_scores, buf_case = pending.pop(next_idx)
+                try:
+                    for s in sinks:  # type: ignore[union-attr]
+                        s.write(buf_scores, buf_case)
+                except Exception:
+                    _runner_logger.exception("Sink write failed for eval_case input=%s", buf_case.input)
+                next_idx += 1
 
-    async def _run_and_score(golden: Golden) -> list[Score]:
-        if sem is not None:
-            async with sem:
+    async def _run_and_score(idx: int, golden: Golden) -> list[Score]:
+        try:
+            if sem is not None:
+                async with sem:
+                    eval_case = await agent_fn(golden)
+            else:
                 eval_case = await agent_fn(golden)
+        except Exception as exc:
+            # Target failure isolation: a raising agent_fn must not abort the
+            # whole dataset. Emit failed scores for this item and continue.
+            _runner_logger.exception("agent_fn raised for golden input=%s", golden.input)
+            eval_case = EvalCase.from_golden(golden, output="")
+            scores = []
+            for metric in metrics:
+                score = Score(
+                    name=metric.name,
+                    value=0.0,
+                    threshold=metric.threshold,
+                    reason=f"Target (agent_fn) raised: {exc}",
+                    metadata={"target_error": True},
+                )
+                _enrich_score(score, metric)
+                scores.append(score)
+            target_error = True
         else:
-            eval_case = await agent_fn(golden)
-        scores = await a_evaluate(eval_case, metrics)
+            scores = await a_evaluate(eval_case, metrics)
+            target_error = False
+        metric_names = ", ".join(score.name for score in scores)
+        target_error_suffix = " target_error=True" if target_error else ""
+        _runner_logger.debug(
+            "[%d/%d] input=%s output=%s metrics=[%s]%s",
+            idx + 1,
+            total,
+            truncate_repr(eval_case.input),
+            truncate_repr(eval_case.output),
+            metric_names,
+            target_error_suffix,
+        )
         if sink_queue is not None:
-            await sink_queue.put((scores, eval_case))
+            await sink_queue.put((idx, scores, eval_case))
         return scores
 
     sink_task: asyncio.Task | None = None
     if sink_queue is not None:
         sink_task = asyncio.create_task(_sink_writer())
 
-    scored = list(await asyncio.gather(*[_run_and_score(g) for g in goldens]))
+    scored = list(await asyncio.gather(*[_run_and_score(i, g) for i, g in enumerate(goldens)]))
 
     if sink_queue is not None:
         await sink_queue.put(None)
@@ -274,7 +319,7 @@ async def _evaluate_dataset_conversation(
     sinks: list[BaseSink] | None = None,
     *,
     concurrency: int | None = None,
-    simulator_llm: BaseLLM,
+    simulator_llm: BaseLLM | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of ConversationGolden instances."""
     from harness_evals.conversation.simulator import ConversationSimulator
@@ -309,9 +354,10 @@ async def evaluate_dataset(
     :class:`~harness_evals.conversation.golden.ConversationGolden`
     (multi-turn). Mixed lists raise :exc:`TypeError`.
 
-    For ``ConversationGolden`` inputs, ``simulator_llm`` must be provided;
-    it drives the simulated user turns via
-    :class:`~harness_evals.conversation.simulator.ConversationSimulator`.
+    For ``ConversationGolden`` inputs in SIMULATE or GRAPH mode,
+    ``simulator_llm`` must be provided; it drives the simulated user turns
+    via :class:`~harness_evals.conversation.simulator.ConversationSimulator`.
+    SCRIPTED and REPLAY modes do not require a ``simulator_llm``.
 
     ``agent_fn`` is async because agent calls are I/O-bound. For
     single-turn goldens it receives a ``Golden`` and returns an
@@ -331,12 +377,13 @@ async def evaluate_dataset(
         concurrency: Max concurrent agent calls (single-turn) or
             conversations (multi-turn). ``None`` = unlimited / default 10.
         simulator_llm: LLM used to simulate user turns. Required when
-            ``goldens`` contains ``ConversationGolden`` instances.
+            ``goldens`` contains ``ConversationGolden`` instances in
+            SIMULATE or GRAPH mode.
 
     Raises:
         ValueError: If ``concurrency`` is less than 1 or if
-            ``ConversationGolden`` inputs are provided without
-            ``simulator_llm``.
+            ``ConversationGolden`` inputs in SIMULATE/GRAPH mode are
+            provided without ``simulator_llm``.
         TypeError: If ``goldens`` contains a mix of ``Golden`` and
             ``ConversationGolden`` instances.
     """
@@ -356,10 +403,16 @@ async def evaluate_dataset(
         )
 
     if issubclass(next(iter(types)), _ConvGolden):
-        if simulator_llm is None:
+        from harness_evals.conversation.golden import ConversationMode as _ConvMode
+
+        needs_llm = any(
+            g.mode in (_ConvMode.SIMULATE, _ConvMode.GRAPH)  # type: ignore[union-attr]
+            for g in goldens
+        )
+        if needs_llm and simulator_llm is None:
             raise ValueError(
-                "ConversationGolden inputs require a simulator_llm. "
-                "Pass simulator_llm=<BaseLLM instance> to evaluate_dataset()."
+                "ConversationGolden inputs with SIMULATE or GRAPH mode require a "
+                "simulator_llm. Pass simulator_llm=<BaseLLM instance> to evaluate_dataset()."
             )
         return await _evaluate_dataset_conversation(
             goldens,  # type: ignore[arg-type]

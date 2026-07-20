@@ -103,6 +103,14 @@ class TestDiscriminationMetric:
         # AUC should be close to 0.0 (inverted)
         assert score.value < 0.5
 
+    def test_tied_confidences_are_order_independent(self):
+        """All-equal confidence has zero discriminative power -> AUC 0.5 regardless of order."""
+        metric = DiscriminationMetric()
+        for outcomes in ([True, False, True, False], [False, False, True, True]):
+            cases = [EvalCase(input="q", output="a", confidence=0.5) for _ in outcomes]
+            score = metric.measure_dataset(cases, outcomes)
+            assert score.value == pytest.approx(0.5), outcomes
+
     def test_all_same_outcome(self):
         metric = DiscriminationMetric()
         cases = [

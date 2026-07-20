@@ -17,6 +17,7 @@ class TestOutcomeConsistency:
         score = OutcomeConsistencyMetric().measure(ec)
         assert score.value == 1.0
         assert score.passed
+        assert "5 of 5" in score.reason
 
     def test_mixed(self, multi_run_eval_case):
         score = OutcomeConsistencyMetric(threshold=0.8).measure(multi_run_eval_case)
@@ -42,6 +43,7 @@ class TestResourceConsistency:
         score = ResourceConsistencyMetric(threshold=0.9).measure(ec)
         assert score.passed
         assert score.value > 0.95
+        assert "coefficient of variation" in score.reason
 
     def test_inconsistent(self):
         runs = [

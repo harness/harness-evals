@@ -7,6 +7,10 @@ Run: python examples/security_eval.py
 """
 
 from harness_evals import EvalCase, evaluate
+
+# Simulate an LLM judge that returns realistic scores.
+# In production, replace with OpenAILLM or HarnessAILLM.
+from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.security import (
     ActionabilityMetric,
     CodeQualityMetric,
@@ -18,10 +22,6 @@ from harness_evals.metrics.security import (
     remediation_quality_index,
 )
 from harness_evals.sinks import StdoutSink
-
-# Simulate an LLM judge that returns realistic scores.
-# In production, replace with OpenAILLM or HarnessAILLM.
-from harness_evals.llm.base import BaseLLM
 
 
 class MockJudge(BaseLLM):

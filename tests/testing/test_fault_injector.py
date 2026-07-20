@@ -30,8 +30,15 @@ class TestFaultDataclass:
             Fault(type="timeout", probability=1.5)
 
     def test_all_valid_types(self):
-        for ft in ("timeout", "malformed_response", "rate_limit", "empty_response",
-                   "latency", "partial_response", "wrong_schema"):
+        for ft in (
+            "timeout",
+            "malformed_response",
+            "rate_limit",
+            "empty_response",
+            "latency",
+            "partial_response",
+            "wrong_schema",
+        ):
             f = Fault(type=ft, probability=0.1)
             assert f.type == ft
 

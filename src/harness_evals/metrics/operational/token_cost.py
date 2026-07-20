@@ -13,6 +13,8 @@ class TokenCostMetric(BaseMetric):
 
     def __init__(self, max_tokens: int = 10000, threshold: float = 0.5, **kwargs: object) -> None:
         super().__init__(name="token_cost", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
+        if max_tokens <= 0:
+            raise ValueError(f"max_tokens must be positive, got {max_tokens}")
         self.max_tokens = max_tokens
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -39,5 +41,6 @@ class TokenCostMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Token count was {tokens} against max {self.max_tokens}",
             metadata={"token_count": tokens, "max_tokens": self.max_tokens},
         )

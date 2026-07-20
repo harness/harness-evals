@@ -7,6 +7,12 @@ from harness_evals.metrics.rag.context_entity_recall import ContextEntityRecallM
 from harness_evals.metrics.rag.context_precision import ContextPrecisionMetric
 from harness_evals.metrics.rag.context_recall import ContextRecallMetric
 from harness_evals.metrics.rag.context_relevancy import ContextRelevancyMetric
+from harness_evals.metrics.rag.conversational import (
+    TurnContextualPrecisionMetric,
+    TurnContextualRecallMetric,
+    TurnContextualRelevancyMetric,
+    TurnFaithfulnessMetric,
+)
 from harness_evals.metrics.rag.faithfulness import FaithfulnessMetric
 
 __all__ = [
@@ -18,4 +24,8 @@ __all__ = [
     "ContextEntityRecallMetric",
     "AnswerSimilarityMetric",
     "AnswerCorrectnessMetric",
+    "TurnFaithfulnessMetric",
+    "TurnContextualPrecisionMetric",
+    "TurnContextualRecallMetric",
+    "TurnContextualRelevancyMetric",
 ]

@@ -2,7 +2,12 @@ name: Publish
 
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   test:
@@ -41,26 +46,56 @@ jobs:
       - name: Test
         run: poetry run pytest tests/ -v --ignore=tests/sinks/test_sinks.py
 
-  # TODO: Re-enable once PyPI trusted publisher is configured.
-  # For now, publish locally: python -m build && pip install dist/*.whl
+  # TODO: Uncomment once PyPI Trusted Publisher is configured.
+  # Setup: https://pypi.org/manage/account/publishing/
+  #   - Project: harness-evals
+  #   - Owner: harness
+  #   - Repository: harness-evals
+  #   - Workflow: publish.yml
+  #   - Environment: pypi
   #
   # publish:
   #   needs: test
   #   runs-on: ubuntu-latest
-  #   if: github.ref == 'refs/heads/main'
   #   environment: pypi
-  #   permissions:
-  #     contents: read
-  #     id-token: write
+  #
   #   steps:
   #     - uses: actions/checkout@v4
+  #
   #     - name: Set up Python
   #       uses: actions/setup-python@v5
   #       with:
   #         python-version: "3.12"
+  #
   #     - name: Install build tools
   #       run: pip install build
+  #
+  #     - name: Version guard
+  #       run: |
+  #         TAG_VERSION="${GITHUB_REF_NAME#v}"
+  #         PKG_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+  #         echo "Tag version: ${TAG_VERSION}"
+  #         echo "Package version: ${PKG_VERSION}"
+  #         if [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
+  #           echo "::error::Tag version (${TAG_VERSION}) does not match pyproject.toml version (${PKG_VERSION})"
+  #           exit 1
+  #         fi
+  #
   #     - name: Build package
   #       run: python -m build
+  #
   #     - name: Publish to PyPI
   #       uses: pypa/gh-action-pypi-publish@release/v1
+  #
+  #     - name: Create GitHub Release
+  #       env:
+  #         GH_TOKEN: ${{ github.token }}
+  #       run: |
+  #         if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+  #           echo "Release ${GITHUB_REF_NAME} already exists, skipping."
+  #         else
+  #           gh release create "${GITHUB_REF_NAME}" \
+  #             --generate-notes \
+  #             --title "harness-evals ${GITHUB_REF_NAME}" \
+  #             dist/*
+  #         fi

@@ -81,7 +81,7 @@ class JsonDiffMetric(BaseMetric):
         distance = diff.get("deep_distance", 0.0)
         value = max(0.0, min(1.0, 1.0 - distance))
 
-        reason = None
+        reason = "No structural differences found between output and expected"
         if diff:
             changes = {k: v for k, v in diff.items() if k != "deep_distance"}
             if changes:

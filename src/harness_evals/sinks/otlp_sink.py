@@ -6,7 +6,11 @@ import json
 import threading
 import uuid
 import warnings
-from typing import Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opentelemetry.metrics import Meter
 
 try:
     from opentelemetry import trace as trace_api
@@ -25,6 +29,7 @@ except ImportError as _err:
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.summary import build_dimension_summary, dimension_of
 
 _MAX_ATTR_LEN = 1000
 _VALID_PROTOCOLS = {"grpc", "http"}
@@ -104,7 +109,20 @@ class OtlpSink(BaseSink):
     """Export eval scores as OpenTelemetry metrics and traces to an OTLP endpoint.
 
     **Metrics**: Each ``Score`` becomes a gauge observation on ``evals.score``.
-    ``EvalCase`` runtime fields (latency, tokens, cost) are recorded as histograms.
+    ``EvalCase`` runtime fields are recorded as histograms: ``evals.item.latency``,
+    ``evals.item.tokens``, ``evals.item.cost``, ``evals.item.retry_count``, and
+    ``evals.item.confidence`` (each recorded only when the field is set).
+
+    **Custom metadata**: Numeric values in ``EvalCase.metadata`` are auto-forwarded
+    as ``evals.item.meta.<key>`` gauges — no instrumentation required. Non-numeric
+    values (and ``bool``, to avoid emitting True/False as 1/0) are skipped.
+
+    **Custom instruments**: The OTel ``Meter`` is exposed as ``sink.meter`` so
+    callers can create their own instruments without subclassing. Pass an
+    ``on_write(meter, scores, eval_case)`` callback to record custom instruments
+    per item; it receives the full ``EvalCase`` (including the complete
+    ``metadata`` dict) and is intended for observation, not mutation. Exceptions
+    raised by the callback are caught and warned — they never fail the eval run.
 
     **Traces**: A root ``eval-run`` span contains child ``eval-item`` spans
     (one per ``write()`` call), each with ``evals.score`` events per metric.
@@ -163,6 +181,7 @@ class OtlpSink(BaseSink):
         parent_context: Context | None = None,
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
+        on_write: Callable[[Meter, list[Score], EvalCase], None] | None = None,
     ) -> None:
         if protocol not in _VALID_PROTOCOLS:
             raise ValueError(f"Unsupported protocol {protocol!r}, must be one of {_VALID_PROTOCOLS}")
@@ -174,32 +193,44 @@ class OtlpSink(BaseSink):
         self._extra_attributes = extra_attributes or {}
         self._item_span_attributes = item_span_attributes or {}
         self._parent_context = parent_context
+        self._on_write = on_write
         self._finalized = False
 
         self._owns_trace_provider = tracer_provider is None
         self._owns_meter_provider = meter_provider is None
 
         # --- Providers (internal or external) ---
-        if tracer_provider is not None or meter_provider is not None:
-            if endpoint != "http://localhost:4317":
-                warnings.warn(
-                    "endpoint/protocol/insecure/headers are ignored when tracer_provider "
-                    "or meter_provider is supplied. Configure export on the provider you pass in.",
-                    stacklevel=2,
-                )
+        if (tracer_provider is not None or meter_provider is not None) and endpoint != "http://localhost:4317":
+            warnings.warn(
+                "endpoint/protocol/insecure/headers are ignored when tracer_provider "
+                "or meter_provider is supplied. Configure export on the provider you pass in.",
+                stacklevel=2,
+            )
 
         if tracer_provider is not None and meter_provider is not None:
             self._trace_provider = tracer_provider
             self._meter_provider = meter_provider
         else:
             tp, mp = self._create_internal_providers(
-                endpoint, service_name, insecure, protocol, headers, resource_attributes,
+                endpoint,
+                service_name,
+                insecure,
+                protocol,
+                headers,
+                resource_attributes,
             )
             self._trace_provider = tracer_provider if tracer_provider is not None else tp
             self._meter_provider = meter_provider if meter_provider is not None else mp
 
         # --- Metrics ---
-        meter = self._meter_provider.get_meter(service_name)
+        # Exposed publicly so callers can create custom instruments without
+        # subclassing (e.g. ``sink.meter.create_counter(...)``).
+        # Thread-safety: the OTel Meter is safe for concurrent instrument creation,
+        # but callers must use distinct instrument names per logical metric —
+        # creating the same-named instrument with different units/descriptions
+        # across threads yields undefined behavior per the OTel spec.
+        meter: Meter
+        meter = self.meter = self._meter_provider.get_meter(service_name)
 
         self._score_gauge = meter.create_gauge(
             name="evals.score",
@@ -221,6 +252,20 @@ class OtlpSink(BaseSink):
             description="Cost per eval item",
             unit="usd",
         )
+        self._retry_hist = meter.create_histogram(
+            name="evals.item.retry_count",
+            description="Retry count per eval item",
+            unit="count",
+        )
+        self._confidence_hist = meter.create_histogram(
+            name="evals.item.confidence",
+            description="Confidence score per eval item",
+            unit="ratio",
+        )
+
+        # Lazily-created gauges for numeric EvalCase.metadata keys, keyed by
+        # metadata key. OTel instruments must be created once and reused.
+        self._meta_gauges: dict[str, Any] = {}
 
         # --- Traces ---
         self._tracer = self._trace_provider.get_tracer(service_name)
@@ -234,6 +279,9 @@ class OtlpSink(BaseSink):
         self._item_count = 0
         self._items_passed = 0
         self._score_values: dict[str, list[float]] = {}
+        # Per-dimension accumulators for the root-span summary (ADR-009).
+        self._dimension_values: dict[str, list[float]] = {}
+        self._dimension_passed: dict[str, int] = {}
 
     @staticmethod
     def _create_internal_providers(
@@ -315,8 +363,11 @@ class OtlpSink(BaseSink):
             for mk, mv in meta.items():
                 if isinstance(mv, (str, int, float, bool)):
                     metric_attrs[f"eval.meta.{mk}"] = mv if isinstance(mv, str) else str(mv)
-            if meta.get("dimension"):
-                metric_attrs["eval.dimension"] = meta["dimension"]
+            # Always tag the dimension (falling back to "unknown") so it matches
+            # the final aggregation, which buckets undeclared scores via
+            # dimension_of(). Otherwise dashboards grouped by eval.dimension
+            # silently drop legacy/custom metrics.
+            metric_attrs["eval.dimension"] = dimension_of(score)
             if self._model:
                 metric_attrs["model"] = self._model
             self._score_gauge.set(score.value, attributes=metric_attrs)
@@ -327,6 +378,24 @@ class OtlpSink(BaseSink):
             self._token_hist.record(eval_case.token_count, attributes=base_attrs)
         if eval_case.cost_usd is not None:
             self._cost_hist.record(eval_case.cost_usd, attributes=base_attrs)
+        if eval_case.retry_count is not None:
+            self._retry_hist.record(eval_case.retry_count, attributes=base_attrs)
+        if eval_case.confidence is not None:
+            self._confidence_hist.record(eval_case.confidence, attributes=base_attrs)
+
+        # Auto-forward numeric EvalCase.metadata as evals.item.meta.<key> gauges.
+        # bool is an int subclass — exclude it so True/False don't become 1/0.
+        for meta_key, meta_value in (eval_case.metadata or {}).items():
+            if isinstance(meta_value, bool) or not isinstance(meta_value, (int, float)):
+                continue
+            gauge = self._meta_gauges.get(meta_key)
+            if gauge is None:
+                gauge = self.meter.create_gauge(
+                    name=f"evals.item.meta.{meta_key}",
+                    description=f"Custom eval-case metadata: {meta_key}",
+                )
+                self._meta_gauges[meta_key] = gauge
+            gauge.set(meta_value, attributes=base_attrs)
 
         # --- Traces ---
         with self._lock:
@@ -338,6 +407,9 @@ class OtlpSink(BaseSink):
                 self._items_passed += 1
             for s in scores:
                 self._score_values.setdefault(s.name, []).append(s.value)
+                dimension = dimension_of(s)
+                self._dimension_values.setdefault(dimension, []).append(s.value)
+                self._dimension_passed[dimension] = self._dimension_passed.get(dimension, 0) + int(s.passed)
 
         # Build score event attributes (used in both paths)
         score_events: list[dict[str, Any]] = []
@@ -348,9 +420,9 @@ class OtlpSink(BaseSink):
                 "eval.score.threshold": score.threshold,
                 "eval.score.passed": score.passed,
             }
-            dimension = (score.metadata or {}).get("dimension")
-            if dimension:
-                event_attrs["eval.dimension"] = dimension
+            # Match the per-score gauge and final aggregation: undeclared scores
+            # fall back to "unknown" rather than being dropped from the attribute.
+            event_attrs["eval.dimension"] = dimension_of(score)
             if score.reason:
                 event_attrs["eval.score.reason"] = score.reason
             score_events.append(event_attrs)
@@ -397,6 +469,14 @@ class OtlpSink(BaseSink):
                 item_span.add_event("eval.score", attributes=event_attrs)
             item_span.end()
 
+        # User extensibility hook: record custom instruments off the meter.
+        # Guarded so a failing telemetry callback never breaks the eval run.
+        if self._on_write is not None:
+            try:
+                self._on_write(self.meter, scores, eval_case)
+            except Exception as exc:
+                warnings.warn(f"OtlpSink on_write callback raised: {exc}", stacklevel=2)
+
     def finalize(self) -> None:
         """End the root span with summary attributes and flush both providers."""
         if self._finalized:
@@ -408,6 +488,8 @@ class OtlpSink(BaseSink):
             item_count = self._item_count
             items_passed = self._items_passed
             score_values = {k: list(v) for k, v in self._score_values.items()}
+            dimension_values = {k: list(v) for k, v in self._dimension_values.items()}
+            dimension_passed = dict(self._dimension_passed)
 
         if root is not None:
             root.set_attribute("eval.summary.items_total", item_count)
@@ -417,6 +499,30 @@ class OtlpSink(BaseSink):
             summary_attrs: dict[str, Any] = {}
             for name, values in score_values.items():
                 summary_attrs[f"eval.summary.{name}.mean"] = round(sum(values) / len(values), 4)
+            # Per-dimension averages (ADR-009), plus Safety violation count as a
+            # hard-constraint signal (ADR-003). Set on the root span so a single
+            # span query returns the whole radar shape. Aggregation uses the same
+            # helper as summarize() so the two never diverge.
+            for dimension, values in dimension_values.items():
+                passed = dimension_passed.get(dimension, 0)
+                ds = build_dimension_summary(dimension, values, passed)
+                # Emit the full aggregation (ADR-016): mean, pass rate, and
+                # metric count. Mean alone can make a dimension look healthy
+                # while hiding threshold failures and sample size.
+                mean = round(ds.mean, 4)
+                pass_rate = round(ds.pass_rate, 4)
+                base = f"eval.summary.dimension.{dimension}"
+                for suffix, value in (
+                    ("mean", mean),
+                    ("pass_rate", pass_rate),
+                    ("count", ds.metric_count),
+                ):
+                    root.set_attribute(f"{base}.{suffix}", value)
+                    summary_attrs[f"{base}.{suffix}"] = value
+                if ds.is_safety:
+                    violations = ds.metric_count - passed
+                    root.set_attribute("eval.summary.dimension.safety.violations", violations)
+                    summary_attrs["eval.summary.dimension.safety.violations"] = violations
             if summary_attrs:
                 root.add_event("eval.summary", attributes=summary_attrs)
             root.set_status(StatusCode.OK)

@@ -36,5 +36,6 @@ class OutcomeConsistencyMetric(ReliabilityMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"{most_common_count} of {len(outputs)} runs produced the majority output",
             metadata={"k": len(runs), "unique_outputs": len(set(outputs))},
         )

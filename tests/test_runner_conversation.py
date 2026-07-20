@@ -41,6 +41,82 @@ class TestEvaluateDatasetWithConversationGolden:
         with pytest.raises(ValueError, match="simulator_llm"):
             await evaluate_dataset(goldens, mock_agent_fn_conv, [])
 
+    async def test_scripted_mode_runs_without_simulator_llm(self):
+        """SCRIPTED mode never calls the simulator LLM, so simulator_llm=None is allowed."""
+        goldens = [
+            ConversationGolden(
+                scenario="Greeting",
+                expected_outcome="Polite exchange",
+                mode=ConversationMode.SCRIPTED,
+                turns=[Message(role="user", content="Hi")],
+            )
+        ]
+        results = await evaluate_dataset(goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None)
+        assert len(results) == 1
+        assert isinstance(results[0], list)
+
+    async def test_replay_mode_runs_without_simulator_llm(self):
+        """REPLAY mode replays stored turns with no LLM, so simulator_llm=None is allowed."""
+        goldens = [
+            ConversationGolden(
+                scenario="Greeting",
+                expected_outcome="Polite exchange",
+                mode=ConversationMode.REPLAY,
+                turns=[
+                    Message(role="user", content="Hi"),
+                    Message(role="assistant", content="Hello!"),
+                ],
+            )
+        ]
+        results = await evaluate_dataset(goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None)
+        assert len(results) == 1
+        assert isinstance(results[0], list)
+
+    async def test_mixed_scripted_and_replay_run_without_simulator_llm(self):
+        """A batch of only SCRIPTED/REPLAY goldens needs no simulator LLM."""
+        goldens = [
+            ConversationGolden(
+                scenario="a",
+                expected_outcome="o",
+                mode=ConversationMode.SCRIPTED,
+                turns=[Message(role="user", content="Hi")],
+            ),
+            ConversationGolden(
+                scenario="b",
+                expected_outcome="o",
+                mode=ConversationMode.REPLAY,
+                turns=[Message(role="user", content="Hi"), Message(role="assistant", content="Yo")],
+            ),
+        ]
+        results = await evaluate_dataset(goldens, mock_agent_fn_conv, [ExactMatchMetric()], simulator_llm=None)
+        assert len(results) == 2
+
+    async def test_graph_mode_requires_simulator_llm(self):
+        """GRAPH mode drives LLM user turns, so simulator_llm=None must raise."""
+        goldens = [
+            ConversationGolden(
+                scenario="test",
+                expected_outcome="done",
+                mode=ConversationMode.GRAPH,
+            )
+        ]
+        with pytest.raises(ValueError, match="simulator_llm"):
+            await evaluate_dataset(goldens, mock_agent_fn_conv, [], simulator_llm=None)
+
+    async def test_batch_with_one_simulate_golden_requires_llm(self):
+        """If any golden needs an LLM (SIMULATE), the whole batch requires simulator_llm."""
+        goldens = [
+            ConversationGolden(
+                scenario="scripted",
+                expected_outcome="o",
+                mode=ConversationMode.SCRIPTED,
+                turns=[Message(role="user", content="Hi")],
+            ),
+            ConversationGolden(scenario="simulate", expected_outcome="o"),  # default SIMULATE
+        ]
+        with pytest.raises(ValueError, match="simulator_llm"):
+            await evaluate_dataset(goldens, mock_agent_fn_conv, [], simulator_llm=None)
+
     async def test_conversation_goldens_with_simulator_llm(self):
         """SIMULATE mode generates one user turn then stops (mock returns achieved=True)."""
         llm = SimulatorMockLLM()

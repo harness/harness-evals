@@ -9,6 +9,14 @@ class HarnessEvalsError(Exception):
     """Base exception for harness-evals runtime and configuration errors."""
 
 
+class TargetInvocationError(HarnessEvalsError):
+    """Raised when a target cannot produce an EvalCase."""
+
+    def __init__(self, message: str, *, latency_ms: float | None = None) -> None:
+        self.latency_ms = latency_ms
+        super().__init__(message)
+
+
 class MissingAdapterError(HarnessEvalsError):
     """Raised when a source, target, sink, or store adapter is not registered."""
 

@@ -32,6 +32,7 @@ def test_composite_metric_basic():
     assert score.value == 1.0
     assert score.metadata["sub_scores"]["check_a"]["value"] == 1.0
     assert score.metadata["sub_scores"]["check_b"]["value"] == 1.0
+    assert "Composite score aggregated" in score.reason
 
 
 @pytest.mark.unit

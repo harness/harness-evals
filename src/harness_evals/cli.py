@@ -24,6 +24,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--update-baseline", action="store_true", help="Save current scores as new baseline")
     run_parser.add_argument("--fail-under", type=float, default=None, help="Exit non-zero if any metric mean < value")
     run_parser.add_argument("--validate", action="store_true", help="Parse and validate config without running")
+    run_parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error", "critical"],
+        default=None,
+        help="Framework log level (overrides HARNESS_EVALS_LOG_LEVEL)",
+    )
 
     # --- import ---
     import_parser = sub.add_parser("import", help="Translate a platform eval definition to YAML")
@@ -37,7 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     discover_parser = sub.add_parser("discover", help="Discover eval configs in a directory")
     discover_parser.add_argument("path", nargs="?", default=".", help="Directory to search (default: .)")
     discover_parser.add_argument(
-        "--glob", default=None,
+        "--glob",
+        default=None,
         help="Custom glob pattern (default: **/*.eval.yaml for YAML configs, **/eval_*.py for Python eval files)",
     )
 
@@ -81,7 +88,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         scores_to_baseline_dict,
     )
     from harness_evals.config.schema import load_config
+    from harness_evals.logging_config import configure_logging
 
+    configure_logging(args.log_level)
     cfg = load_config(args.config)
 
     if args.validate:
@@ -112,10 +121,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
             exit_code = 1
 
     if args.update_baseline and cfg.baseline:
-        store = build_baseline_store(cfg.baseline)
-        run_id = str(uuid.uuid4())[:8]
-        store.save(run_id, scores_to_baseline_dict(scores))
-        print(f"Baseline saved as run {run_id!r}", file=sys.stderr)
+        if exit_code != 0:
+            # Never persist a failing run as the new baseline — doing so would
+            # silently ratchet the baseline down to the regressed scores.
+            print(
+                "Skipping --update-baseline: run did not pass its gates; baseline left unchanged.",
+                file=sys.stderr,
+            )
+        else:
+            store = build_baseline_store(cfg.baseline)
+            run_id = str(uuid.uuid4())[:8]
+            store.save(run_id, scores_to_baseline_dict(scores))
+            print(f"Baseline saved as run {run_id!r}", file=sys.stderr)
 
     return exit_code
 
@@ -179,9 +196,10 @@ def _cmd_import(args: argparse.Namespace) -> int:
 def _eval_config_to_dict(cfg) -> dict:
     """Serialize an EvalConfig back to a dict suitable for YAML output."""
 
-
     d: dict = {"name": cfg.name}
-    d["dataset"] = f"{cfg.dataset.source}://{cfg.dataset.id}" + (f"@{cfg.dataset.version}" if cfg.dataset.version else "")
+    d["dataset"] = f"{cfg.dataset.source}://{cfg.dataset.id}" + (
+        f"@{cfg.dataset.version}" if cfg.dataset.version else ""
+    )
     d["target"] = {"type": cfg.target.type, **cfg.target.params}
     d["metrics"] = []
     for m in cfg.metrics:
@@ -219,7 +237,9 @@ def _cmd_list_metrics() -> int:
     print("-" * len(header))
     for e in entries:
         llm_flag = "yes" if e.requires_llm else ""
-        print(f"{e.kind:<{col_kind}}{e.category:<{col_cat}}{e.dimension.value:<{col_dim}}{e.default_threshold:>10.2f}  {llm_flag:>3}")
+        print(
+            f"{e.kind:<{col_kind}}{e.category:<{col_cat}}{e.dimension.value:<{col_dim}}{e.default_threshold:>10.2f}  {llm_flag:>3}"
+        )
 
     print(f"\n{len(entries)} metrics available")
     return 0

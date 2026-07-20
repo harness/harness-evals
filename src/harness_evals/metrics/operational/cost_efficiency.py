@@ -13,6 +13,8 @@ class CostEfficiencyMetric(BaseMetric):
 
     def __init__(self, max_cost_usd: float = 0.10, threshold: float = 0.5, **kwargs: object) -> None:
         super().__init__(name="cost_efficiency", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
+        if max_cost_usd <= 0:
+            raise ValueError(f"max_cost_usd must be positive, got {max_cost_usd}")
         self.max_cost_usd = max_cost_usd
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -39,5 +41,6 @@ class CostEfficiencyMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Cost was ${cost:g} against max ${self.max_cost_usd:g}",
             metadata={"cost_usd": cost, "max_cost_usd": self.max_cost_usd},
         )

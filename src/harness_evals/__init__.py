@@ -33,16 +33,26 @@ from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.datasets import Dataset, load_dataset, loads_dataset, save_dataset
-from harness_evals.errors import HarnessEvalsError, MissingAdapterError
+from harness_evals.errors import HarnessEvalsError, MissingAdapterError, TargetInvocationError
 from harness_evals.eval import run_eval
 from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
 from harness_evals.input_generator import InputGenerator
+from harness_evals.logging_config import configure_logging
+from harness_evals.logging_config import init_from_env as _init_logging_from_env
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
+from harness_evals.optimizer import OptimizationResult, PromptOptimizer
 from harness_evals.refs import ResourceRef, resolve
 from harness_evals.reporting import EvalResult, HtmlReporter, HtmlSink
 from harness_evals.sinks import CsvSink, JsonSink, JUnitSink, StdoutSink
-from harness_evals.summary import MetricSummary, ScoreSummary, summarize
+from harness_evals.summary import (
+    SAFETY_DIMENSION,
+    UNKNOWN_DIMENSION,
+    DimensionSummary,
+    MetricSummary,
+    ScoreSummary,
+    summarize,
+)
 from harness_evals.synthesizer import ConversationSynthesizer, ScriptedConversationSynthesizer, Synthesizer
 from harness_evals.targets import (
     ApiKeyAuth,
@@ -55,6 +65,9 @@ from harness_evals.targets import (
     PromptTarget,
 )
 from harness_evals.testing import Fault, FaultInjector
+
+# Honor HARNESS_EVALS_LOG_LEVEL for library consumers (no CLI) at import time.
+_init_logging_from_env()
 
 __all__ = [
     # Core types
@@ -69,6 +82,7 @@ __all__ = [
     "resolve",
     "HarnessEvalsError",
     "MissingAdapterError",
+    "TargetInvocationError",
     # Importers
     "BaseEvalCaseSource",
     "BaseEvalConfigSource",
@@ -91,7 +105,10 @@ __all__ = [
     "evaluate_batch_metrics",
     "summarize",
     "MetricSummary",
+    "DimensionSummary",
     "ScoreSummary",
+    "SAFETY_DIMENSION",
+    "UNKNOWN_DIMENSION",
     # Baseline
     "BaselineStore",
     "JsonBaselineStore",
@@ -125,6 +142,9 @@ __all__ = [
     "FaultInjector",
     "TurnLatencyMetric",
     "TurnTokenCostMetric",
+    # Optimizer
+    "PromptOptimizer",
+    "OptimizationResult",
     # Conversation
     "ConversationGolden",
     "ConversationSimulator",
@@ -138,4 +158,6 @@ __all__ = [
     "loads_config",
     "run_config",
     "run_eval",
+    # Logging
+    "configure_logging",
 ]

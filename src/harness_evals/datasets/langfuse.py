@@ -118,7 +118,14 @@ class LangfuseDatasetSource(BaseDatasetSource):
                 if _is_active(item):
                     yield _item_to_golden(item)
 
-            if page_num >= page.meta.total_pages:
+            meta = getattr(page, "meta", None)
+            total_pages = getattr(meta, "total_pages", None) if meta is not None else None
+            # If the SDK omits pagination metadata, stop when a page returns
+            # fewer items than requested rather than crashing on page.meta.
+            if total_pages is None:
+                if len(items) < page_size:
+                    break
+            elif page_num >= total_pages:
                 break
             page_num += 1
 

@@ -36,4 +36,7 @@ class ExactMatchMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason="Output exactly matched expected answer"
+            if value == 1.0
+            else "Output did not exactly match expected answer",
         )

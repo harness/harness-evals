@@ -27,6 +27,8 @@ class TurnLatencyMetric(BaseMetric):
             threshold=threshold,
             **kwargs,
         )
+        if max_ms_per_turn <= 0:
+            raise ValueError(f"max_ms_per_turn must be positive, got {max_ms_per_turn}")
         self.max_ms_per_turn = max_ms_per_turn
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -62,6 +64,10 @@ class TurnLatencyMetric(BaseMetric):
             name=self.name,
             value=mean_score,
             threshold=self.threshold,
+            reason=(
+                f"Mean assistant turn latency was {mean_latency:g}ms across {len(latencies)} scored turns "
+                f"against max {self.max_ms_per_turn:g}ms per turn"
+            ),
             metadata={
                 "turn_latencies": latencies,
                 "mean_latency_ms": mean_latency,

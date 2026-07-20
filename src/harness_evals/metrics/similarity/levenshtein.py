@@ -49,7 +49,12 @@ class LevenshteinMetric(BaseMetric):
 
         max_len = max(len(output_str), len(expected_str))
         if max_len == 0:
-            return Score(name=self.name, value=1.0, threshold=self.threshold)
+            return Score(
+                name=self.name,
+                value=1.0,
+                threshold=self.threshold,
+                reason="Output and expected answer are both empty strings",
+            )
 
         dist = _levenshtein_distance(output_str, expected_str)
         value = 1.0 - (dist / max_len)

@@ -13,6 +13,8 @@ class RetryCountMetric(BaseMetric):
 
     def __init__(self, max_retries: int = 5, threshold: float = 0.5, **kwargs: object) -> None:
         super().__init__(name="retry_count", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
+        if max_retries <= 0:
+            raise ValueError(f"max_retries must be positive, got {max_retries}")
         self.max_retries = max_retries
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -39,5 +41,6 @@ class RetryCountMetric(BaseMetric):
             name=self.name,
             value=value,
             threshold=self.threshold,
+            reason=f"Retry count was {retries} against max {self.max_retries}",
             metadata={"retry_count": retries, "max_retries": self.max_retries},
         )

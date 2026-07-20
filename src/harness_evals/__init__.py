@@ -21,6 +21,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.metric import BaseMetric, Dimension, ReliabilityMetric, SafetyMetric
 from harness_evals.core.runner import (
+    OnResult,
     a_evaluate,
     assert_test,
     evaluate,
@@ -103,6 +104,7 @@ __all__ = [
     "evaluate_dataset",
     "evaluate_dataset_pair",
     "evaluate_batch_metrics",
+    "OnResult",
     "summarize",
     "MetricSummary",
     "DimensionSummary",

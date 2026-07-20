@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -219,6 +220,15 @@ def evaluate_batch_metrics(
 
 _runner_logger = logging.getLogger(__name__)
 
+# Per-item progress callback. Invoked once per dataset item as it finishes
+# (in completion order, from the event loop) with
+# ``(index, total, eval_case, scores)`` where ``index`` is 0-based. May be a
+# plain function or an ``async def`` — a returned awaitable is awaited. Lets
+# callers surface per-item progress/logging without the library picking a log
+# level or format. Exceptions raised by the callback are caught and logged — a
+# bad callback never aborts the run.
+OnResult = Callable[[int, int, EvalCase, list[Score]], None | Awaitable[None]]
+
 
 async def _evaluate_dataset_single(
     goldens: list[Golden],
@@ -227,6 +237,7 @@ async def _evaluate_dataset_single(
     sinks: list[BaseSink] | None = None,
     *,
     concurrency: int | None = None,
+    on_result: OnResult | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of single-turn Golden instances.
 
@@ -302,6 +313,15 @@ async def _evaluate_dataset_single(
             metric_names,
             target_error_suffix,
         )
+        if on_result is not None:
+            # Progress callbacks are observation-only: a raising callback must
+            # never abort the eval run. Accept sync or async callbacks.
+            try:
+                result = on_result(idx, total, eval_case, scores)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                _runner_logger.exception("on_result callback raised for item %d", idx)
         if sink_queue is not None:
             await sink_queue.put((idx, scores, eval_case))
         return scores
@@ -329,6 +349,7 @@ async def _evaluate_dataset_conversation(
     *,
     concurrency: int | None = None,
     simulator_llm: BaseLLM | None = None,
+    on_result: OnResult | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of ConversationGolden instances."""
     from harness_evals.conversation.simulator import ConversationSimulator
@@ -336,7 +357,23 @@ async def _evaluate_dataset_conversation(
     simulator = ConversationSimulator(simulator_llm, max_concurrent=concurrency or 10)
     eval_cases = await simulator.simulate_batch(goldens, agent_fn)
 
-    scored = await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases])
+    total = len(eval_cases)
+
+    async def _score_and_report(idx: int, eval_case: EvalCase) -> list[Score]:
+        # Fire on_result as each item's scoring finishes (completion order),
+        # matching _evaluate_dataset_single — not in a post-gather barrier loop,
+        # so a progress callback streams output during the run.
+        scores = await a_evaluate(eval_case, metrics)
+        if on_result is not None:
+            try:
+                result = on_result(idx, total, eval_case, scores)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                _runner_logger.exception("on_result callback raised for item %d", idx)
+        return scores
+
+    scored = list(await asyncio.gather(*[_score_and_report(i, ec) for i, ec in enumerate(eval_cases)]))
 
     if sinks:
         for eval_case, scores in zip(eval_cases, scored, strict=True):
@@ -344,7 +381,7 @@ async def _evaluate_dataset_conversation(
                 sink.write(scores, eval_case)
 
     _finalize_sinks(sinks)
-    return list(scored)
+    return scored
 
 
 async def evaluate_dataset(
@@ -355,6 +392,7 @@ async def evaluate_dataset(
     *,
     concurrency: int | None = None,
     simulator_llm: BaseLLM | None = None,
+    on_result: OnResult | None = None,
 ) -> list[list[Score]]:
     """Run an agent on goldens, then evaluate each resulting EvalCase.
 
@@ -388,6 +426,11 @@ async def evaluate_dataset(
         simulator_llm: LLM used to simulate user turns. Required when
             ``goldens`` contains ``ConversationGolden`` instances in
             SIMULATE or GRAPH mode.
+        on_result: Optional per-item progress callback invoked as each item
+            finishes with ``(index, total, eval_case, scores)`` (``index``
+            0-based, completion order). May be sync or ``async`` — a returned
+            awaitable is awaited. For observation only — exceptions it raises
+            are caught and logged, never aborting the run.
 
     Raises:
         ValueError: If ``concurrency`` is less than 1 or if
@@ -430,6 +473,7 @@ async def evaluate_dataset(
             sinks,
             concurrency=concurrency,
             simulator_llm=simulator_llm,
+            on_result=on_result,
         )
 
     return await _evaluate_dataset_single(
@@ -438,6 +482,7 @@ async def evaluate_dataset(
         metrics,
         sinks,
         concurrency=concurrency,
+        on_result=on_result,
     )
 
 

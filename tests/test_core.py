@@ -683,6 +683,80 @@ class TestEvaluateDataset:
         assert len(results) == 5
         assert max_active <= 2
 
+    async def test_evaluate_dataset_on_result_fires_per_item(self):
+        """on_result is invoked once per item with (index, total, eval_case, scores)."""
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(3)]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        calls: list[tuple] = []
+
+        def on_result(index, total, eval_case, scores):
+            calls.append((index, total, eval_case.input, len(scores)))
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 3
+        assert len(calls) == 3
+        # Every item reported exactly once, with the correct total and a score list.
+        assert {c[0] for c in calls} == {0, 1, 2}
+        assert all(c[1] == 3 for c in calls)
+        assert all(c[3] == 1 for c in calls)
+
+    async def test_evaluate_dataset_on_result_reports_target_error(self):
+        """on_result still fires for items whose agent_fn raised (target error)."""
+        goldens = [Golden(input="boom", expected="a")]
+
+        async def bad_agent(golden: Golden) -> EvalCase:
+            raise RuntimeError("kaboom")
+
+        seen: list[bool] = []
+
+        def on_result(index, total, eval_case, scores):
+            seen.append(any((s.metadata or {}).get("target_error") for s in scores))
+
+        results = await evaluate_dataset(
+            goldens, bad_agent, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 1
+        assert seen == [True]
+
+    async def test_evaluate_dataset_on_result_exception_isolated(self):
+        """A raising on_result callback must never abort the run."""
+        goldens = [Golden(input="q", expected="a")]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        def boom(index, total, eval_case, scores):
+            raise RuntimeError("callback boom")
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=boom
+        )
+        assert len(results) == 1
+        assert results[0][0].passed
+
+    async def test_evaluate_dataset_on_result_async_callback_is_awaited(self):
+        """An async on_result callback is awaited, not silently discarded."""
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(2)]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        calls: list[int] = []
+
+        async def on_result(index, total, eval_case, scores):
+            calls.append(index)
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 2
+        assert sorted(calls) == [0, 1]
+
 
 @pytest.mark.unit
 class TestScoringDurationMs:

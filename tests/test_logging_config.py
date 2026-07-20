@@ -9,6 +9,7 @@ from harness_evals.logging_config import (
     ENV_VAR,
     configure_logging,
     dataset_sample_summary,
+    init_from_env,
     truncate_repr,
 )
 
@@ -70,6 +71,54 @@ def test_configure_logging_is_idempotent() -> None:
 def test_configure_logging_rejects_invalid_level() -> None:
     with pytest.raises(HarnessEvalsError, match="Invalid log level"):
         configure_logging("chatty")
+
+
+@pytest.mark.unit
+def test_init_from_env_configures_when_env_set(monkeypatch) -> None:
+    monkeypatch.setenv(ENV_VAR, "debug")
+
+    init_from_env()
+
+    logger = logging.getLogger("harness_evals")
+    assert logger.level == logging.DEBUG
+    assert logger.propagate is False
+    assert any(getattr(h, "_harness_evals_handler", False) for h in logger.handlers)
+
+
+@pytest.mark.unit
+def test_init_from_env_noop_when_env_unset() -> None:
+    logger = logging.getLogger("harness_evals")
+
+    init_from_env()
+
+    # Unset: leave logging untouched so host config / lastResort still applies.
+    # The library does not attach a handler or silence its own warnings.
+    assert logger.handlers == []
+    assert not any(getattr(h, "_harness_evals_handler", False) for h in logger.handlers)
+
+
+@pytest.mark.unit
+def test_init_from_env_is_idempotent_when_env_set(monkeypatch) -> None:
+    monkeypatch.setenv(ENV_VAR, "debug")
+
+    init_from_env()
+    init_from_env()
+
+    logger = logging.getLogger("harness_evals")
+    # configure_logging reuses its sentinel handler rather than stacking.
+    assert sum(getattr(h, "_harness_evals_handler", False) for h in logger.handlers) == 1
+
+
+@pytest.mark.unit
+def test_init_from_env_tolerates_invalid_level(monkeypatch) -> None:
+    monkeypatch.setenv(ENV_VAR, "chatty")
+
+    # Must not raise at import time.
+    init_from_env()
+
+    logger = logging.getLogger("harness_evals")
+    # Invalid value is ignored: the logger is not configured.
+    assert not any(getattr(h, "_harness_evals_handler", False) for h in logger.handlers)
 
 
 @pytest.mark.unit

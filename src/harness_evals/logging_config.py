@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
@@ -31,6 +32,28 @@ def configure_logging(level: str | None = None) -> None:
     logger.setLevel(resolved_level)
     handler.setLevel(resolved_level)
     logger.propagate = False
+
+
+def init_from_env() -> None:
+    """Auto-configure framework logging at import time.
+
+    Library consumers that don't go through the CLI (e.g. the eval runner
+    service, which calls ``run_config``/``evaluate_dataset`` directly) can turn
+    on framework logs simply by setting ``HARNESS_EVALS_LOG_LEVEL`` — no code
+    change on their side. When the env var is unset, the logger is left
+    untouched: the host application's logging config (or Python's ``lastResort``
+    for ``WARNING``+ records) still applies, so the library never silences its
+    own warnings.
+
+    Safe to call at import: an invalid env value is ignored rather than raising
+    and breaking ``import harness_evals``.
+    """
+
+    if not os.environ.get(ENV_VAR):
+        return
+    # An invalid level in the env var must never break import.
+    with contextlib.suppress(HarnessEvalsError):
+        configure_logging()
 
 
 def truncate_repr(value: Any, max_len: int = 80) -> str:

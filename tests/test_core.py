@@ -1,5 +1,6 @@
 """Tests for core types, evaluate(), assert_test(), evaluate_cases(), and evaluate_dataset()."""
 
+import asyncio
 import json
 
 import pytest
@@ -113,6 +114,27 @@ class TestEvalCase:
         assert ec.retry_count == 1
         assert ec.confidence == 0.95
 
+    def test_token_split_fields(self):
+        ec = EvalCase(input="q", output="a", input_tokens=12, output_tokens=8)
+        assert ec.input_tokens == 12
+        assert ec.output_tokens == 8
+
+    def test_token_split_defaults_none(self):
+        ec = EvalCase(input="q", output="a")
+        assert ec.input_tokens is None
+        assert ec.output_tokens is None
+
+    def test_from_dict_token_split(self):
+        ec = EvalCase.from_dict({"input": "q", "output": "a", "input_tokens": 5, "output_tokens": 3})
+        assert ec.input_tokens == 5
+        assert ec.output_tokens == 3
+
+    def test_from_golden_token_split(self):
+        g = Golden(input="q")
+        ec = EvalCase.from_golden(g, output="a", input_tokens=7, output_tokens=2)
+        assert ec.input_tokens == 7
+        assert ec.output_tokens == 2
+
     def test_from_dict(self):
         ec = EvalCase.from_dict({"input": "q", "output": "a", "expected": "a", "latency_ms": 100})
         assert ec.output == "a"
@@ -134,6 +156,69 @@ class TestEvalCase:
     def test_from_dict_ignores_unknown_keys(self):
         ec = EvalCase.from_dict({"input": "q", "output": "a", "unknown": 42})
         assert ec.output == "a"
+
+
+@pytest.mark.unit
+class TestAEvaluateTokenCapture:
+    async def test_per_metric_token_isolation(self):
+        from harness_evals.core.metric import BaseMetric, Dimension
+        from harness_evals.llm.usage import record_token_usage
+
+        class TokenMetric(BaseMetric):
+            def __init__(self, name, in_tok, out_tok):
+                super().__init__(name=name, dimension=Dimension.CORRECTNESS, threshold=0.5)
+                self._in, self._out = in_tok, out_tok
+
+            def measure(self, eval_case):
+                return Score(name=self.name, value=1.0, threshold=self.threshold)
+
+            async def a_measure(self, eval_case):
+                record_token_usage(input_tokens=self._in, output_tokens=self._out)
+                await asyncio.sleep(0.01)
+                record_token_usage(input_tokens=1, output_tokens=1)
+                return self.measure(eval_case)
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = await a_evaluate(ec, metrics=[TokenMetric("j1", 100, 20), TokenMetric("j2", 300, 50)])
+        by_name = {s.name: s for s in scores}
+        assert by_name["j1"].metadata["input_tokens"] == 101
+        assert by_name["j1"].metadata["output_tokens"] == 21
+        assert by_name["j2"].metadata["input_tokens"] == 301
+        assert by_name["j2"].metadata["output_tokens"] == 51
+
+    async def test_heuristic_metric_has_no_token_metadata(self):
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = await a_evaluate(ec, metrics=[ExactMatchMetric()])
+        assert "input_tokens" not in (scores[0].metadata or {})
+        assert "output_tokens" not in (scores[0].metadata or {})
+
+    async def test_metric_reported_tokens_take_precedence_over_collector(self):
+        # a_evaluate uses setdefault, so a metric that sets token metadata
+        # itself must win over the ambient collector sum — guards against a
+        # regression to direct assignment silently clobbering the metric's value.
+        from harness_evals.core.metric import BaseMetric, Dimension
+        from harness_evals.llm.usage import record_token_usage
+
+        class SelfReportingTokenMetric(BaseMetric):
+            def __init__(self):
+                super().__init__(name="self_report", dimension=Dimension.CORRECTNESS, threshold=0.5)
+
+            def measure(self, eval_case):
+                return Score(
+                    name=self.name,
+                    value=1.0,
+                    threshold=self.threshold,
+                    metadata={"input_tokens": 7, "output_tokens": 3},
+                )
+
+            async def a_measure(self, eval_case):
+                record_token_usage(input_tokens=999, output_tokens=999)
+                return self.measure(eval_case)
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = await a_evaluate(ec, metrics=[SelfReportingTokenMetric()])
+        assert scores[0].metadata["input_tokens"] == 7
+        assert scores[0].metadata["output_tokens"] == 3
 
     def test_from_golden(self):
         g = Golden(input="q", expected="a", context=["c1"], tags={"env": "ci"})
@@ -597,6 +682,80 @@ class TestEvaluateDataset:
         results = await evaluate_dataset(goldens, tracked_agent, metrics=[ExactMatchMetric()], concurrency=2)
         assert len(results) == 5
         assert max_active <= 2
+
+    async def test_evaluate_dataset_on_result_fires_per_item(self):
+        """on_result is invoked once per item with (index, total, eval_case, scores)."""
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(3)]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        calls: list[tuple] = []
+
+        def on_result(index, total, eval_case, scores):
+            calls.append((index, total, eval_case.input, len(scores)))
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 3
+        assert len(calls) == 3
+        # Every item reported exactly once, with the correct total and a score list.
+        assert {c[0] for c in calls} == {0, 1, 2}
+        assert all(c[1] == 3 for c in calls)
+        assert all(c[3] == 1 for c in calls)
+
+    async def test_evaluate_dataset_on_result_reports_target_error(self):
+        """on_result still fires for items whose agent_fn raised (target error)."""
+        goldens = [Golden(input="boom", expected="a")]
+
+        async def bad_agent(golden: Golden) -> EvalCase:
+            raise RuntimeError("kaboom")
+
+        seen: list[bool] = []
+
+        def on_result(index, total, eval_case, scores):
+            seen.append(any((s.metadata or {}).get("target_error") for s in scores))
+
+        results = await evaluate_dataset(
+            goldens, bad_agent, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 1
+        assert seen == [True]
+
+    async def test_evaluate_dataset_on_result_exception_isolated(self):
+        """A raising on_result callback must never abort the run."""
+        goldens = [Golden(input="q", expected="a")]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        def boom(index, total, eval_case, scores):
+            raise RuntimeError("callback boom")
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=boom
+        )
+        assert len(results) == 1
+        assert results[0][0].passed
+
+    async def test_evaluate_dataset_on_result_async_callback_is_awaited(self):
+        """An async on_result callback is awaited, not silently discarded."""
+        goldens = [Golden(input=f"q{i}", expected=f"a{i}") for i in range(2)]
+
+        async def agent_fn(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected)
+
+        calls: list[int] = []
+
+        async def on_result(index, total, eval_case, scores):
+            calls.append(index)
+
+        results = await evaluate_dataset(
+            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
+        )
+        assert len(results) == 2
+        assert sorted(calls) == [0, 1]
 
 
 @pytest.mark.unit

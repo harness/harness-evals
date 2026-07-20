@@ -7,6 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.2]
+
+### Added
+
+- **Per-item progress callback on `evaluate_dataset`**: new optional `on_result`
+  parameter (typed `OnResult`, exported from the top-level package) invoked once
+  per dataset item as it finishes with `(index, total, eval_case, scores)`
+  (`index` 0-based, completion order). Lets consumers surface per-item
+  progress/logging at whatever level and format they choose without the library
+  picking one — e.g. the eval-runner service restoring the per-item execution
+  log line that used to be emitted by its in-house engine. The callback is
+  observation-only: exceptions it raises are caught and logged and never abort
+  the run. Fires on both the single-turn and conversation evaluation paths. The
+  existing per-item `DEBUG` line in the runner is unchanged.
+
 ## [0.12.1]
 
 ### Added

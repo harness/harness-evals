@@ -344,16 +344,24 @@ async def _evaluate_dataset_conversation(
     simulator = ConversationSimulator(simulator_llm, max_concurrent=concurrency or 10)
     eval_cases = await simulator.simulate_batch(goldens, agent_fn)
 
-    scored = list(await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases]))
-
     total = len(eval_cases)
-    for idx, (eval_case, scores) in enumerate(zip(eval_cases, scored, strict=True)):
+
+    async def _score_and_report(idx: int, eval_case: EvalCase) -> list[Score]:
+        # Fire on_result as each item's scoring finishes (completion order),
+        # matching _evaluate_dataset_single — not in a post-gather barrier loop,
+        # so a progress callback streams output during the run.
+        scores = await a_evaluate(eval_case, metrics)
         if on_result is not None:
             try:
                 on_result(idx, total, eval_case, scores)
             except Exception:
                 _runner_logger.exception("on_result callback raised for item %d", idx)
-        if sinks:
+        return scores
+
+    scored = list(await asyncio.gather(*[_score_and_report(i, ec) for i, ec in enumerate(eval_cases)]))
+
+    if sinks:
+        for eval_case, scores in zip(eval_cases, scored, strict=True):
             for sink in sinks:
                 sink.write(scores, eval_case)
 

@@ -55,6 +55,35 @@ class TestEvaluateDatasetWithConversationGolden:
         assert len(results) == 1
         assert isinstance(results[0], list)
 
+    async def test_on_result_fires_per_item(self):
+        """on_result fires once per conversation item with correct (index, total)."""
+        goldens = [
+            ConversationGolden(
+                scenario=f"S{i}",
+                expected_outcome="done",
+                mode=ConversationMode.SCRIPTED,
+                turns=[Message(role="user", content="Hi")],
+            )
+            for i in range(3)
+        ]
+        calls: list[tuple[int, int]] = []
+
+        def on_result(index, total, eval_case, scores):
+            calls.append((index, total))
+
+        results = await evaluate_dataset(
+            goldens,
+            mock_agent_fn_conv,
+            [ExactMatchMetric()],
+            simulator_llm=None,
+            on_result=on_result,
+        )
+        assert len(results) == 3
+        assert len(calls) == 3
+        # Every item reported exactly once, with the correct total.
+        assert {c[0] for c in calls} == {0, 1, 2}
+        assert all(c[1] == 3 for c in calls)
+
     async def test_replay_mode_runs_without_simulator_llm(self):
         """REPLAY mode replays stored turns with no LLM, so simulator_llm=None is allowed."""
         goldens = [

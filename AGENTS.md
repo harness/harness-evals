@@ -168,6 +168,7 @@ harness-evals/
 │   │   ├── jailbreakv_28k.py        # JailBreakV-28K
 │   │   ├── aicg_sec_eval.py         # AICGSecEval secure code generation
 │   │   ├── sec_code_bench.py        # SecCodeBench adapter (optional Docker)
+│   │   ├── agentdojo.py             # AgentDojo utility + attack metrics
 │   │   ├── mmlu.py                  # MMLU (57-subject knowledge)
 │   │   ├── gsm8k.py                # GSM8K (math word problems)
 │   │   ├── humaneval.py            # HumanEval (code generation, sandboxed)

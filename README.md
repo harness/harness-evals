@@ -742,6 +742,7 @@ result = asyncio.run(OpenPromptInjection(attack_mode="direct").run(model))
 | **JailBreakV28K** | Large-scale jailbreaks | `attack_success_rate` | Use `limit` for quick runs |
 | **AICGSecEval** | Secure code generation | `secure_pass_rate` | CWE-labeled Python tasks |
 | **SecCodeBench** | Multi-language secure coding | Pass rate by CWE | Optional `[benchmarks-seccode]`, Docker |
+| **AgentDojo** | Agent injection + utility | `utility_pass_rate`, `attack_success_rate` | Requires `BaseTarget` |
 
 Security benchmark scores use `Score.metadata["dimension"] = "safety"` and are reported separately from quality metrics (see ADR-003). Export goldens with `await benchmark.load_goldens()` for use with `evaluate_dataset()`.
 

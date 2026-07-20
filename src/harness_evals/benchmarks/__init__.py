@@ -1,5 +1,6 @@
 """Academic benchmark evaluation suites."""
 
+from harness_evals.benchmarks.agentdojo import AgentDojo
 from harness_evals.benchmarks.aicg_sec_eval import AICGSecEval
 from harness_evals.benchmarks.arc import ARC
 from harness_evals.benchmarks.base import BaseBenchmark, BenchmarkResult
@@ -20,6 +21,7 @@ from harness_evals.benchmarks.truthfulqa import TruthfulQA
 from harness_evals.benchmarks.winogrande import WinoGrande
 
 __all__ = [
+    "AgentDojo",
     "AICGSecEval",
     "ARC",
     "BaseBenchmark",
@@ -35,6 +37,7 @@ __all__ = [
     "JailBreakV28K",
     "MMLU",
     "OpenPromptInjection",
+    "SecCodeBench",
     "SecurityBenchmark",
     "TruthfulQA",
     "WinoGrande",

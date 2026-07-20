@@ -7,6 +7,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0]
+
+### Added
+
+- **AgentDojo** benchmark with separate `utility_pass_rate` and `attack_success_rate` via `BaseTarget` integration.
+
 ## [0.14.0]
 
 ### Added

@@ -1,14 +1,25 @@
 # Example: evaluate a conversational Harness-style streaming agent.
 #
-# Run:
+# Setup (once):
+#   cp examples/harness-environments.example.yaml .harness-evals/environments.yaml
+#   # edit .harness-evals/environments.yaml with url, org, project, account_id, username, password
+#
+# Run against an environment (qa, prod0, prod1, prod2, prod4):
+#   eval "$(python examples/load_harness_env.py export qa --login --save)"
+#   export OPENAI_API_KEY=...
+#   export HARNESS_DELEGATE_SELECTOR=...   # optional; golden uses ${HARNESS_DELEGATE_SELECTOR:-hello}
+#   PYTHONPATH=src poetry run harness-evals run examples/harness-agent-conversation.eval.yaml --log-level info
+#
+# Or set env vars manually (e.g. local gateway):
 #   export SSE_ENDPOINT_URL=http://localhost:8000/stream
 #   export HARNESS_ACCOUNT=...
 #   export HARNESS_ORG=...
 #   export HARNESS_PROJECT=...
-#   export HARNESS_DELEGATE_SELECTOR=...   # optional; golden uses ${HARNESS_DELEGATE_SELECTOR:-hello}
 #   export TOKEN=...
 #   export OPENAI_API_KEY=...
-#   PYTHONPATH=. poetry run harness-evals run examples/harness-agent-conversation.eval.yaml
+#   PYTHONPATH=src poetry run harness-evals run examples/harness-agent-conversation.eval.yaml
+#
+# See examples/harness-agent.README.md for profile fields and env CLI options.
 #
 # This example wires Harness-specific SSE event names and request body shapes
 # explicitly. Goldens include elicitation_hints for stable Harness system_event

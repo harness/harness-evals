@@ -12,6 +12,7 @@ Built-in implementations::
 
     from harness_evals.importers import LangfuseEvalCaseSource  # [langfuse] extra
     from harness_evals.importers import OTELEvalCaseSource      # [otlp] extra
+    from harness_evals.importers import HarnessOTELEvalCaseSource  # [harness] extra
 """
 
 from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
@@ -21,6 +22,7 @@ __all__ = [
     "BaseEvalConfigSource",
     "LangfuseEvalCaseSource",
     "OTELEvalCaseSource",
+    "HarnessOTELEvalCaseSource",
 ]
 
 
@@ -33,4 +35,8 @@ def __getattr__(name: str) -> object:
         from harness_evals.importers.otel import OTELEvalCaseSource
 
         return OTELEvalCaseSource
+    if name == "HarnessOTELEvalCaseSource":
+        from harness_evals.importers.harness_otel import HarnessOTELEvalCaseSource
+
+        return HarnessOTELEvalCaseSource
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -69,13 +69,17 @@ Run from the repo root so ``examples`` is importable:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
+from harness_evals.logging_config import compact_json
 from harness_evals.plugins import register_metric
 from harness_evals.utils.path import extract_path
+
+_logger = logging.getLogger(__name__)
 
 
 @register_metric("sse_events_match")
@@ -117,10 +121,16 @@ class SseEventsMatchMetric(BaseMetric):
         total = len(results)
         value = passed / total if total else 0.0
 
-        failures = [r["label"] for r in results if not r["passed"]]
+        failures = [r for r in results if not r["passed"]]
         reason = f"{passed}/{total} event checks passed"
         if failures:
-            reason += " | failed: " + ", ".join(failures)
+            reason += " | failed: " + ", ".join(r["label"] for r in failures)
+            for failure in failures:
+                _logger.debug(
+                    "sse_events_match check failed: %s — %s",
+                    failure["label"],
+                    failure.get("detail"),
+                )
 
         return Score(
             name=self.name,
@@ -154,10 +164,12 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
     equals = check.get("equals")
     path = check.get("path")
     nested_match = check.get("match")
+    actual_values: list[Any] = []
 
     for payload in candidates:
         value = extract_path(payload, path) if path else payload
         values = value if isinstance(value, list) else [value]
+        actual_values.extend(values)
         if nested_match is not None:
             for item in values:
                 if _matches_all(item, nested_match, eval_case):
@@ -171,7 +183,8 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
         # No value assertion beyond presence -> passes because payloads exist.
         return {"passed": True, "label": label, "detail": "event present, no value assertion"}
 
-    return {"passed": False, "label": label, "detail": "no payload matched"}
+    detail = _failure_detail(check, actual_values, eval_case)
+    return {"passed": False, "label": label, "detail": detail}
 
 
 def _matches_all(item: Any, checks: Any, eval_case: EvalCase) -> bool:
@@ -202,6 +215,24 @@ def _select(payloads: list[Any], occurrence: str) -> list[Any]:
     if occurrence == "last":
         return [payloads[-1]]
     return payloads  # "any"
+
+
+def _failure_detail(check: dict[str, Any], actual_values: list[Any], eval_case: EvalCase) -> str:
+    if not actual_values:
+        return "no payload matched"
+
+    actual_summary = compact_json(actual_values)
+    if check.get("contains_expected"):
+        return f"no payload matched; actual={actual_summary} expected contains=<expected>"
+    if "contains" in check:
+        return f"no payload matched; actual={actual_summary} expected contains={check['contains']!r}"
+    if "equals" in check:
+        path = check.get("path")
+        path_note = f" at path {path!r}" if path else ""
+        return f"no payload matched{path_note}; actual={actual_summary} expected equals={check['equals']!r}"
+    if "match" in check:
+        return f"no payload matched correlated fields; actual={actual_summary}"
+    return f"no payload matched; actual={actual_summary}"
 
 
 def _label(check: dict[str, Any]) -> str:

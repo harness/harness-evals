@@ -372,6 +372,64 @@ results = asyncio.run(evaluate_dataset(
 ))
 ```
 
+#### CLI conversation evals with human-in-the-loop
+
+The CLI can run `ConversationGolden` datasets by adding a top-level
+`conversation:` block and using a conversational target. The core loop is
+protocol-agnostic: when an agent turn ends with `pending_human_input` in
+message metadata, the simulator generates a continuation payload and calls the
+agent again until the turn completes or `max_elicitation_rounds` is reached.
+
+Configure the target explicitly for your agent's event names and request body
+shape. Load the adapter via ``plugins`` when using Harness SSE elicitation:
+
+```yaml
+plugins:
+  - examples.harness_sse_elicitation_adapter
+
+conversation:
+  elicitation_adapter: harness_sse
+```
+
+```yaml
+name: my-agent-conversation
+
+conversation:
+  mode: simulate
+  max_turns: 1
+  max_elicitation_rounds: 6
+  simulator_llm: {provider: openai, name: gpt-4o-mini}
+  # elicitation_adapter: harness_sse   # requires examples.harness_sse_elicitation_adapter plugin
+
+dataset: ./examples/harness-agent.goldens.jsonl
+
+target:
+  type: conversational_streaming_http
+  url: "${SSE_ENDPOINT_URL}"
+  user_body_template:
+    prompt: "{{last_user_content}}"
+    stream: true
+  human_input_body_template:
+    human_input: "{{human_input}}"
+    stream: true
+  human_input_events:
+    - needs_input
+  correlation_id_field: request_id
+  output_event: assistant_message
+  output_path: $.v
+
+metrics:
+  - {kind: goal_accuracy, threshold: 0.7}
+```
+
+Conversation goldens may include `initial_prompt`, `elicitation_hints`, and
+`max_elicitation_rounds`. Use `elicitation_hints.intents` for semantic values
+and `elicitation_hints.matchers` to map live questions to those intents.
+
+See `examples/conversation-goldens.README.md` for the protocol-neutral schema.
+For a full Harness SSE integration, see
+`examples/harness-agent-conversation.eval.yaml`.
+
 #### Scripted — bring your own user turns, call agent live
 
 ```python

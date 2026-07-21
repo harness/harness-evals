@@ -10,6 +10,11 @@ from harness_evals.conversation.graph import (
     SimulationNode,
     StopNode,
 )
+from harness_evals.conversation.human_input import (
+    ElicitationAdapter,
+    HumanInputSimulator,
+    PendingHumanInput,
+)
 from harness_evals.conversation.runner import (
     evaluate_conversation,
     evaluate_conversations,
@@ -21,6 +26,9 @@ __all__ = [
     "ConversationGolden",
     "ConversationMode",
     "ConversationSimulator",
+    "ElicitationAdapter",
+    "HumanInputSimulator",
+    "PendingHumanInput",
     "Edge",
     "LLMNode",
     "ScriptedNode",
@@ -37,6 +45,8 @@ __all__ = [
 import json
 from pathlib import Path
 
+from harness_evals.env import resolve_env_in_value
+
 
 def load_conversation_dataset(path: str | Path) -> list[ConversationGolden]:
     """Load a list of ConversationGolden from a JSONL or JSON file."""
@@ -48,7 +58,7 @@ def load_conversation_dataset(path: str | Path) -> list[ConversationGolden]:
         records = json.loads(text)
         if not isinstance(records, list):
             raise ValueError("JSON file must contain a list of objects")
-    return [ConversationGolden.from_dict(r) for r in records]
+    return [ConversationGolden.from_dict(resolve_env_in_value(r)) for r in records]
 
 
 def save_conversation_dataset(

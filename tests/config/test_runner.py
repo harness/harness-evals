@@ -135,10 +135,19 @@ class TestEnvVarResolution:
         assert result["body_template"]["harness_context"]["project_id"] == "demo"
         assert result["body_template"]["events"] == ["default", "literal"]
 
+    def test_resolves_inline_env_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPTIONAL_TAG", raising=False)
+        from harness_evals.config.runner import _resolve_env_in_params
 
-# ---------------------------------------------------------------------------
-# build_sink
-# ---------------------------------------------------------------------------
+        result = _resolve_env_in_params({"tag": "${OPTIONAL_TAG:-fallback}"})
+        assert result["tag"] == "fallback"
+
+    def test_inline_env_default_overridden_by_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("OPTIONAL_TAG", "custom")
+        from harness_evals.config.runner import _resolve_env_in_params
+
+        result = _resolve_env_in_params({"tag": "${OPTIONAL_TAG:-fallback}"})
+        assert result["tag"] == "custom"
 
 
 @pytest.mark.unit

@@ -1,0 +1,95 @@
+# Example: evaluate a conversational Harness-style streaming agent.
+#
+# Run:
+#   export SSE_ENDPOINT_URL=http://localhost:8000/stream
+#   export HARNESS_ACCOUNT=...
+#   export HARNESS_ORG=...
+#   export HARNESS_PROJECT=...
+#   export HARNESS_DELEGATE_SELECTOR=...   # optional; golden uses ${HARNESS_DELEGATE_SELECTOR:-hello}
+#   export TOKEN=...
+#   export OPENAI_API_KEY=...
+#   PYTHONPATH=. poetry run harness-evals run examples/harness-agent-conversation.eval.yaml
+#
+# This example wires Harness-specific SSE event names and request body shapes
+# explicitly. Goldens include elicitation_hints for stable Harness system_event
+# answers; simulator_llm remains available for hint-free scenarios.
+
+name: harness-agent-conversation
+
+plugins:
+  - examples.sse_events_match_metric
+  - examples.harness_sse_elicitation_adapter
+
+conversation:
+  mode: simulate
+  simulator_llm: {provider: openai, name: gpt-4o}
+  elicitation_adapter: harness_sse
+
+dataset: ./harness-agent.goldens.jsonl
+
+target:
+  type: conversational_streaming_http
+  url: "${SSE_ENDPOINT_URL}"
+  headers:
+    Content-Type: application/json
+    Harness-account: "${HARNESS_ACCOUNT}"
+    Authorization: "Bearer ${TOKEN}"
+
+  user_body_template:
+    prompt: "{{last_user_content}}"
+    stream: true
+
+  continue_body_template:
+    prompt: "{{last_user_content}}"
+    conversation_id: "{{conversation_id}}"
+    session_id: "{{session_id}}"
+    stream: true
+
+  human_input_body_template:
+    system_event: "{{human_input}}"
+    conversation_id: "{{conversation_id}}"
+    session_id: "{{session_id}}"
+    stream: true
+
+  human_input_events:
+    - elicitation_form
+    - elicitation_free_text
+    - elicitation_select
+    - elicitation_yaml
+  completion_events:
+    - assistant_message
+  session_metadata_event: stream_metadata
+  session_fields:
+    conversation_id: conversation_id
+    session_id: session_id
+  correlation_id_field: review_id
+
+  output_event: assistant_message
+  output_path: $.v
+  capture_events:
+    - stream_metadata
+    - assistant_tool_request
+    - assistant_tool_result
+    - elicitation_form
+    - elicitation_free_text
+    - elicitation_select
+    - elicitation_yaml
+    - entity_mutation
+    - assistant_message
+    - model_usage
+
+metrics:
+  - {kind: goal_accuracy, threshold: 0.7}
+  # turn_relevancy omitted: Harness elicitation runs over human_input HTTP round-trips,
+  # but eval_case.messages only keeps the initial user prompt and final assistant_message.
+  # The judge then pairs "create …" with a completion summary and scores it irrelevant
+  # even when goal_accuracy and sse_events_match pass. Use goal_accuracy for outcome.
+  - kind: sse_events_match
+    threshold: 0.8
+    params:
+      row_checks_key: sse_checks
+
+judge_llm: {provider: openai, name: gpt-4o}
+
+sinks:
+  - stdout

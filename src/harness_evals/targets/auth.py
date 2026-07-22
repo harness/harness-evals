@@ -3,28 +3,10 @@
 from __future__ import annotations
 
 import base64
-import os
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-def _resolve_env(value: str) -> str:
-    """Replace ``${VAR}`` references with environment variable values.
-
-    Raises ``ValueError`` if a referenced variable is not set.
-    """
-
-    def _replace(match: re.Match[str]) -> str:
-        var = match.group(1)
-        val = os.environ.get(var)
-        if val is None:
-            raise ValueError(f"Environment variable ${{{var}}} is not set")
-        return val
-
-    return _ENV_VAR_RE.sub(_replace, value)
+from harness_evals.env import resolve_env_value
 
 
 class AuthConfig(ABC):
@@ -50,7 +32,7 @@ class BearerAuth(AuthConfig):
     token: str
 
     def apply(self, headers: dict[str, str], params: dict[str, str]) -> None:
-        headers["Authorization"] = f"Bearer {_resolve_env(self.token)}"
+        headers["Authorization"] = f"Bearer {resolve_env_value(self.token)}"
 
 
 @dataclass(frozen=True)
@@ -69,7 +51,7 @@ class ApiKeyAuth(AuthConfig):
             raise ValueError(f"location must be 'header' or 'query', got {self.location!r}")
 
     def apply(self, headers: dict[str, str], params: dict[str, str]) -> None:
-        resolved = _resolve_env(self.key)
+        resolved = resolve_env_value(self.key)
         if self.location == "query":
             params[self.header] = resolved
         else:
@@ -84,7 +66,7 @@ class BasicAuth(AuthConfig):
     password: str
 
     def apply(self, headers: dict[str, str], params: dict[str, str]) -> None:
-        user = _resolve_env(self.username)
-        pwd = _resolve_env(self.password)
+        user = resolve_env_value(self.username)
+        pwd = resolve_env_value(self.password)
         credentials = base64.b64encode(f"{user}:{pwd}".encode()).decode("ascii")
         headers["Authorization"] = f"Basic {credentials}"

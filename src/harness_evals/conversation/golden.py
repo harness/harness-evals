@@ -34,10 +34,14 @@ class ConversationGolden:
 
     scenario: str
     expected_outcome: str
+    id: str | None = None
     context: list[str] | None = None
     turns: list[Message] | None = field(default=None)
     max_turns: int = 10
+    max_elicitation_rounds: int = 10
+    initial_prompt: str | None = None
     user_persona: str | None = None
+    elicitation_hints: dict[str, Any] | None = field(default=None)
     mode: ConversationMode | None = None
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
@@ -62,6 +66,21 @@ class ConversationGolden:
             and not any(t.role == "user" for t in self.turns)
         ):
             raise ValueError("mode='scripted' requires at least one user-role message in 'turns'")
+
+        if self.max_turns < 1:
+            raise ValueError("max_turns must be >= 1")
+
+        if self.max_elicitation_rounds < 1:
+            raise ValueError("max_elicitation_rounds must be >= 1")
+
+        if self.elicitation_hints is not None and not isinstance(self.elicitation_hints, dict):
+            raise TypeError("elicitation_hints must be a dict when provided")
+
+        sse_checks = (self.metadata or {}).get("sse_checks")
+        if sse_checks is not None and (
+            not isinstance(sse_checks, list) or not all(isinstance(check, dict) for check in sse_checks)
+        ):
+            raise TypeError("metadata['sse_checks'] must be a list of dicts when provided")
 
     def to_dict(self) -> dict:
         result = {}

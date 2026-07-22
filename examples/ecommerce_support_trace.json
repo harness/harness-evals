@@ -1,0 +1,62 @@
+[
+  {
+    "name": "chat claude-sonnet-4-6-20250514",
+    "span_id": "span_001",
+    "trace_id": "abc123def456789000000000deadbeef",
+    "parent_span_id": null,
+    "start_time_unix_nano": 1718700000000000000,
+    "end_time_unix_nano": 1718700001200000000,
+    "attributes": {
+      "gen_ai.operation.name": "chat",
+      "gen_ai.provider.name": "anthropic",
+      "gen_ai.request.model": "claude-sonnet-4-6-20250514",
+      "gen_ai.response.model": "claude-sonnet-4-6-20250514",
+      "gen_ai.request.temperature": 0.3,
+      "gen_ai.request.max_tokens": 1024,
+      "gen_ai.usage.input_tokens": 320,
+      "gen_ai.usage.output_tokens": 85,
+      "gen_ai.response.id": "msg_01XYZ",
+      "gen_ai.response.finish_reasons": ["tool_use"],
+      "gen_ai.system_instructions": "You are a helpful ecommerce support agent for ShopFast. You can look up orders, process returns, and answer product questions. Always be polite and concise. Never share other customers' data.",
+      "gen_ai.input_messages": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"Hi, I placed order #ORD-98712 two days ago. Can you tell me where it is?\"}]}]",
+      "gen_ai.output_messages": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"Let me look up your order status right away.\"}, {\"type\": \"tool_call\", \"content\": \"{\\\"name\\\": \\\"lookup_order\\\", \\\"arguments\\\": {\\\"order_id\\\": \\\"ORD-98712\\\"}}\"}]}]"
+    }
+  },
+  {
+    "name": "execute_tool lookup_order",
+    "span_id": "span_002",
+    "trace_id": "abc123def456789000000000deadbeef",
+    "parent_span_id": "span_001",
+    "start_time_unix_nano": 1718700001200000000,
+    "end_time_unix_nano": 1718700001450000000,
+    "attributes": {
+      "gen_ai.tool.name": "lookup_order",
+      "gen_ai.tool.type": "function",
+      "gen_ai.tool.call.arguments": "{\"order_id\": \"ORD-98712\"}",
+      "gen_ai.tool.call.result": "{\"order_id\": \"ORD-98712\", \"status\": \"shipped\", \"carrier\": \"FedEx\", \"tracking_number\": \"FX-7891234560\", \"estimated_delivery\": \"2024-06-20\", \"items\": [{\"name\": \"Wireless Headphones\", \"qty\": 1, \"price\": 79.99}]}"
+    }
+  },
+  {
+    "name": "chat claude-sonnet-4-6-20250514",
+    "span_id": "span_003",
+    "trace_id": "abc123def456789000000000deadbeef",
+    "parent_span_id": null,
+    "start_time_unix_nano": 1718700001450000000,
+    "end_time_unix_nano": 1718700002800000000,
+    "attributes": {
+      "gen_ai.operation.name": "chat",
+      "gen_ai.provider.name": "anthropic",
+      "gen_ai.request.model": "claude-sonnet-4-6-20250514",
+      "gen_ai.response.model": "claude-sonnet-4-6-20250514",
+      "gen_ai.request.temperature": 0.3,
+      "gen_ai.request.max_tokens": 1024,
+      "gen_ai.usage.input_tokens": 520,
+      "gen_ai.usage.output_tokens": 142,
+      "gen_ai.response.id": "msg_02ABC",
+      "gen_ai.response.finish_reasons": ["stop"],
+      "gen_ai.system_instructions": "You are a helpful ecommerce support agent for ShopFast. You can look up orders, process returns, and answer product questions. Always be polite and concise. Never share other customers' data.",
+      "gen_ai.input_messages": "[{\"role\": \"user\", \"parts\": [{\"type\": \"text\", \"content\": \"Hi, I placed order #ORD-98712 two days ago. Can you tell me where it is?\"}]}, {\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"Let me look up your order status right away.\"}, {\"type\": \"tool_call\", \"content\": \"{\\\"name\\\": \\\"lookup_order\\\", \\\"arguments\\\": {\\\"order_id\\\": \\\"ORD-98712\\\"}}\"}]}, {\"role\": \"tool\", \"parts\": [{\"type\": \"tool_call_response\", \"content\": \"{\\\"order_id\\\": \\\"ORD-98712\\\", \\\"status\\\": \\\"shipped\\\", \\\"carrier\\\": \\\"FedEx\\\", \\\"tracking_number\\\": \\\"FX-7891234560\\\", \\\"estimated_delivery\\\": \\\"2024-06-20\\\", \\\"items\\\": [{\\\"name\\\": \\\"Wireless Headphones\\\", \\\"qty\\\": 1, \\\"price\\\": 79.99}]}\"}]}]",
+      "gen_ai.output_messages": "[{\"role\": \"assistant\", \"parts\": [{\"type\": \"text\", \"content\": \"Great news! Your order #ORD-98712 has been shipped. Here are the details:\\n\\n- **Item**: Wireless Headphones\\n- **Carrier**: FedEx\\n- **Tracking Number**: FX-7891234560\\n- **Estimated Delivery**: June 20, 2024\\n\\nYou can track your package using the FedEx tracking number above. Is there anything else I can help you with?\"}]}]"
+    }
+  }
+]

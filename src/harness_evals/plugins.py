@@ -40,6 +40,7 @@ _TARGETS: dict[str, type] = {}
 _METRICS: dict[str, type] = {}
 _BASELINE_STORES: dict[str, type] = {}
 _SINKS: dict[str, type] = {}
+_ELICITATION_ADAPTERS: dict[str, type] = {}
 
 _REGISTRIES: dict[str, dict[str, type]] = {
     DATASET_SOURCES: _DATASET_SOURCES,
@@ -109,6 +110,37 @@ def register_sink(name: str) -> Callable[[T], T]:
     """Register a sink class. Later registrations with the same name win."""
 
     return _register(SINKS, name)
+
+
+def register_elicitation_adapter(name: str) -> Callable[[T], T]:
+    """Register an elicitation adapter class for ``conversation.elicitation_adapter``."""
+
+    if not name:
+        raise ValueError("Elicitation adapter registration name must be non-empty")
+
+    def decorator(cls: T) -> T:
+        if name in _ELICITATION_ADAPTERS:
+            warnings.warn(
+                f"Elicitation adapter {name!r} is being overwritten by {cls!r}",
+                UserWarning,
+                stacklevel=2,
+            )
+        _ELICITATION_ADAPTERS[name] = cls
+        return cls
+
+    return decorator
+
+
+def elicitation_adapter(name: str) -> type:
+    """Return the registered elicitation adapter class for ``name``."""
+
+    if name not in _ELICITATION_ADAPTERS:
+        raise MissingAdapterError(
+            name,
+            "elicitation_adapters",
+            "add the adapter module under plugins: in your eval YAML",
+        )
+    return _ELICITATION_ADAPTERS[name]
 
 
 def dataset_source(name: str) -> type:
@@ -255,6 +287,7 @@ def _snapshot() -> dict:
     return {
         "registries": {family: registry.copy() for family, registry in _REGISTRIES.items()},
         "entry_points": {family: discovered.copy() for family, discovered in _ENTRY_POINTS.items()},
+        "elicitation_adapters": _ELICITATION_ADAPTERS.copy(),
         "discovered": _ENTRY_POINTS_DISCOVERED,
     }
 
@@ -269,4 +302,6 @@ def _restore(snapshot: dict) -> None:
     for family, discovered in _ENTRY_POINTS.items():
         discovered.clear()
         discovered.update(snapshot["entry_points"][family])
+    _ELICITATION_ADAPTERS.clear()
+    _ELICITATION_ADAPTERS.update(snapshot.get("elicitation_adapters", {}))
     _ENTRY_POINTS_DISCOVERED = snapshot["discovered"]

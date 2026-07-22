@@ -361,6 +361,8 @@ class EvalCase:
     expected_tool_calls: list[ToolCall] | None = None
     latency_ms: float | None = None
     token_count: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     cost_usd: float | None = None
     retry_count: int | None = None
     confidence: float | None = None
@@ -368,6 +370,15 @@ class EvalCase:
     metadata: dict[str, Any] | None = None
     runs: list["EvalCase"] | None = None
 ```
+
+`input_tokens`/`output_tokens` are the target's token split. `PromptTarget` populates them automatically from whatever the underlying `BaseLLM.generate()` records (via `collect_token_usage()`); `HttpTarget`/`StreamingHttpTarget` populate them from the response body via `input_tokens_path`/`output_tokens_path` JSONPath config. For `StreamingHttpTarget`, these paths resolve against the *whole* SSE stream, not only the answer payload — usage typically arrives in a separate trailing event (e.g. `model_usage`/`done`), so any numeric field the answer payload lacks is recovered by scanning the other events (latest match wins). A configured path that resolves to a non-numeric or out-of-range value is dropped with a logged warning rather than silently ignored. `None` means "no usage was observed" — never coerce to `0`.
+
+### Token usage capture (`llm/usage.py`, `core/runner.py`)
+
+Token accounting is per-`asyncio`-task, not global: `collect_token_usage()` is a context manager that scopes a `ContextVar`-backed collector to the current task, and LLM providers (`OpenAILLM`, `AnthropicLLM`, `HarnessAILLM`) call `record_token_usage(input_tokens=..., output_tokens=...)` inside `generate()`/`generate_json()`. This keeps concurrent judge calls that share one `BaseLLM` instance (e.g. under `asyncio.gather` in `a_evaluate`) from cross-contaminating each other's counts.
+
+- `a_evaluate()` wraps each metric's `a_measure()` call in `collect_token_usage()` and, if any usage was recorded, writes it to `score.metadata["input_tokens"]`/`["output_tokens"]` (via `setdefault`, so a metric that sets these explicitly wins).
+- `HarnessAILLM._record_gateway_usage()` is defensive by design: it runs inline in a live judge call, so a malformed `/chat` response must never raise — it's wrapped in `contextlib.suppress(Exception)` plus best-effort int coercion, and silently no-ops on any unrecognized response shape.
 
 ### Message (conversation turn)
 

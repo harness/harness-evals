@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict
 
 from harness_evals._async_compat import _run_async
 from harness_evals.conversation.golden import ConversationGolden, ConversationMode
@@ -15,9 +17,11 @@ from harness_evals.conversation.graph import (
     SimulationGraph,
     StopNode,
 )
+from harness_evals.conversation.human_input import HumanInputSimulator, PendingHumanInput
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
+from harness_evals.logging_config import compact_json
 
 _logger = logging.getLogger(__name__)
 
@@ -58,11 +62,19 @@ class ConversationSimulator:
     """Drives a multi-turn conversation between a simulated user and agent-under-test."""
 
     def __init__(
-        self, simulator_llm: BaseLLM | None = None, *, max_concurrent: int = 5, graph: SimulationGraph | None = None
+        self,
+        simulator_llm: BaseLLM | None = None,
+        *,
+        max_concurrent: int = 5,
+        graph: SimulationGraph | None = None,
+        human_input_simulator: HumanInputSimulator | None = None,
+        elicitation_simulator: HumanInputSimulator | None = None,
     ) -> None:
         self.simulator_llm = simulator_llm
         self.max_concurrent = max_concurrent
         self.graph = graph
+        self.human_input_simulator = human_input_simulator or elicitation_simulator
+        self.elicitation_simulator = self.human_input_simulator
 
     def _require_llm(self) -> BaseLLM:
         if self.simulator_llm is None:
@@ -86,6 +98,24 @@ class ConversationSimulator:
         agent_fn: Callable[[list[Message]], Awaitable[Message]],
     ) -> EvalCase:
         """Run one conversation and return the resulting EvalCase."""
+        from harness_evals.conversation.context import (
+            conversation_key_for_golden,
+            reset_conversation_key,
+            set_conversation_key,
+        )
+
+        key_token = set_conversation_key(conversation_key_for_golden(golden))
+        try:
+            return await self._simulate(golden, agent_fn)
+        finally:
+            reset_conversation_key(key_token)
+
+    async def _simulate(
+        self,
+        golden: ConversationGolden,
+        agent_fn: Callable[[list[Message]], Awaitable[Message]],
+    ) -> EvalCase:
+        self._reset_adapter_intent_misses()
         if golden.mode == ConversationMode.REPLAY:
             return self._replay(golden)
         if golden.mode == ConversationMode.SCRIPTED:
@@ -99,7 +129,8 @@ class ConversationSimulator:
             user_text = await self._generate_user_message(golden, history)
             history.append(Message(role="user", content=user_text))
 
-            assistant_msg = await agent_fn(list(history))
+            assistant_msg = await self._call_agent(agent_fn, history)
+            assistant_msg = await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
             history.append(assistant_msg)
 
             if await self._should_stop(golden, history):
@@ -122,6 +153,9 @@ class ConversationSimulator:
         return list(await asyncio.gather(*[_run(g) for g in goldens]))
 
     async def _generate_user_message(self, golden: ConversationGolden, history: list[Message]) -> str:
+        if not history and golden.initial_prompt:
+            return golden.initial_prompt
+
         persona_section = f"**Your persona**: {golden.user_persona}" if golden.user_persona else ""
         context_section = f"**Background context**: {'; '.join(golden.context)}" if golden.context else ""
         history_text = (
@@ -158,7 +192,8 @@ class ConversationSimulator:
         for turn in golden.turns:
             if turn.role == "user":
                 history.append(turn)
-                assistant_msg = await agent_fn(list(history))
+                assistant_msg = await self._call_agent(agent_fn, history)
+                assistant_msg = await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
                 history.append(assistant_msg)
         return self._build_eval_case(golden, history)
 
@@ -221,7 +256,8 @@ class ConversationSimulator:
                 raise ValueError(f"unexpected node type: {type(node)}")
 
             history.append(Message(role="user", content=user_text))
-            assistant_msg = await agent_fn(list(history))
+            assistant_msg = await self._call_agent(agent_fn, history)
+            assistant_msg = await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
             history.append(assistant_msg)
             turns_used += 1
 
@@ -259,19 +295,196 @@ class ConversationSimulator:
     def _build_eval_case(self, golden: ConversationGolden, history: list[Message]) -> EvalCase:
         last_assistant = ""
         for msg in reversed(history):
-            if msg.role == "assistant":
-                last_assistant = msg.content or ""
+            if msg.role == "assistant" and msg.content:
+                last_assistant = msg.content
                 break
+        if not last_assistant:
+            for msg in reversed(history):
+                if msg.role == "assistant":
+                    last_assistant = msg.content or ""
+                    break
+
+        metadata = {
+            "scenario": golden.scenario,
+            "expected_outcome": golden.expected_outcome,
+            "n_turns": len(history),
+            **(golden.metadata or {}),
+        }
+        sse_events = _sse_events_from_history(history)
+        if sse_events:
+            metadata["sse_events"] = sse_events
+            metadata["sse_event_names"] = sorted(sse_events)
+        last_assistant_meta = next(
+            (msg.metadata for msg in reversed(history) if msg.role == "assistant" and msg.metadata),
+            None,
+        )
+        if isinstance(last_assistant_meta, dict):
+            for key in ("elicitation_rounds", "elicitation_error"):
+                if key in last_assistant_meta:
+                    metadata[key] = last_assistant_meta[key]
+
+        intent_misses = self._adapter_intent_misses()
+        if intent_misses:
+            metadata["elicitation_intent_misses"] = intent_misses
 
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
             messages=history,
-            metadata={
-                "scenario": golden.scenario,
-                "expected_outcome": golden.expected_outcome,
-                "n_turns": len(history),
-                **(golden.metadata or {}),
-            },
+            metadata=metadata,
             tags=golden.tags,
         )
+
+    async def _resolve_elicitations(
+        self,
+        golden: ConversationGolden,
+        agent_fn: Callable,
+        history: list[Message],
+        assistant_msg: Message,
+    ) -> Message:
+        if self.human_input_simulator is None:
+            return assistant_msg
+
+        accumulated_sse: dict[str, list] = {}
+        _merge_sse_events(accumulated_sse, assistant_msg.metadata)
+
+        rounds = 0
+        while rounds < golden.max_elicitation_rounds:
+            pending = _pending_human_input(assistant_msg)
+            if pending is None:
+                _logger.debug(
+                    "Elicitation complete after %d round(s); last_content=%r events=%s",
+                    rounds,
+                    assistant_msg.content,
+                    sorted((assistant_msg.metadata or {}).get("sse_events", {})),
+                )
+                return _attach_sse_events(assistant_msg, accumulated_sse)
+
+            _logger.debug(
+                "Elicitation round %d/%d: pending=%s correlation_id=%s",
+                rounds + 1,
+                golden.max_elicitation_rounds,
+                pending.type,
+                pending.correlation_id,
+            )
+            human_input = await self.human_input_simulator.respond(pending, golden, history)
+            _logger.debug(
+                "Elicitation round %d/%d human_input: type=%s correlation_id=%s response=%s",
+                rounds + 1,
+                golden.max_elicitation_rounds,
+                pending.type,
+                pending.correlation_id,
+                compact_json(human_input),
+            )
+            assistant_msg = await self._call_agent(agent_fn, history, human_input=human_input)
+            _merge_sse_events(accumulated_sse, assistant_msg.metadata)
+            rounds += 1
+
+        _logger.warning(
+            "Elicitation stopped: max_elicitation_rounds=%d exceeded; events=%s",
+            golden.max_elicitation_rounds,
+            sorted(accumulated_sse),
+        )
+
+        metadata = dict(assistant_msg.metadata or {})
+        metadata["elicitation_error"] = "max_elicitation_rounds_exceeded"
+        metadata["elicitation_rounds"] = rounds
+        assistant_msg.metadata = metadata
+        return _attach_sse_events(assistant_msg, accumulated_sse)
+
+    async def _call_agent(
+        self,
+        agent_fn: Callable,
+        history: list[Message],
+        *,
+        human_input: dict | None = None,
+        system_event: dict | None = None,
+    ) -> Message:
+        continuation = human_input if human_input is not None else system_event
+        if continuation is None:
+            return await agent_fn(list(history))
+
+        if _accepts_human_input(agent_fn):
+            return await agent_fn(list(history), human_input=continuation)
+
+        if _accepts_system_event(agent_fn):
+            return await agent_fn(list(history), system_event=continuation)
+
+        raise TypeError(
+            "agent_fn must accept a 'human_input' or 'system_event' keyword argument "
+            "when human-input simulation is enabled"
+        )
+
+    def _reset_adapter_intent_misses(self) -> None:
+        simulator = self.human_input_simulator
+        if simulator is None or simulator.adapter is None:
+            return
+        reset = getattr(simulator.adapter, "reset_intent_misses", None)
+        if callable(reset):
+            reset()
+
+    def _adapter_intent_misses(self) -> list[dict] | None:
+        simulator = self.human_input_simulator
+        if simulator is None or simulator.adapter is None:
+            return None
+        misses = getattr(simulator.adapter, "intent_misses", None)
+        if not misses:
+            return None
+        return [asdict(miss) for miss in misses]
+
+
+def _merge_sse_events(accumulator: dict[str, list], metadata: dict | None) -> dict[str, list]:
+    if not metadata:
+        return accumulator
+    events = metadata.get("sse_events")
+    if not isinstance(events, dict):
+        return accumulator
+    for name, payloads in events.items():
+        if isinstance(payloads, list):
+            accumulator.setdefault(name, []).extend(payloads)
+    return accumulator
+
+
+def _attach_sse_events(message: Message, sse_events: dict[str, list]) -> Message:
+    if not sse_events:
+        return message
+    metadata = dict(message.metadata or {})
+    metadata["sse_events"] = sse_events
+    message.metadata = metadata
+    return message
+
+
+def _sse_events_from_history(history: list[Message]) -> dict[str, list]:
+    accumulated: dict[str, list] = {}
+    for msg in history:
+        if msg.role == "assistant":
+            _merge_sse_events(accumulated, msg.metadata)
+    return accumulated
+
+
+def _pending_human_input(message: Message) -> PendingHumanInput | None:
+    metadata = message.metadata or {}
+    raw = metadata.get("pending_human_input") or metadata.get("pending_elicitation")
+    if not isinstance(raw, dict):
+        return None
+    return PendingHumanInput.from_metadata(raw)
+
+
+def _accepts_human_input(agent_fn: Callable) -> bool:
+    try:
+        sig = inspect.signature(agent_fn)
+    except (TypeError, ValueError):
+        return True
+    return "human_input" in sig.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in sig.parameters.values()
+    )
+
+
+def _accepts_system_event(agent_fn: Callable) -> bool:
+    try:
+        sig = inspect.signature(agent_fn)
+    except (TypeError, ValueError):
+        return True
+    return "system_event" in sig.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in sig.parameters.values()
+    )

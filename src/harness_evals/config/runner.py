@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-import os
-import re
 from collections import defaultdict
 from typing import Any
 
@@ -14,11 +12,20 @@ from harness_evals.baseline.compare import compare_to_baseline
 from harness_evals.baseline.json_store import JsonBaselineStore
 from harness_evals.baseline.store import BaselineStore
 from harness_evals.catalog import _build_registry
-from harness_evals.config.schema import BaselineSpec, EvalConfig, MetricSpec, ModelSpec, SinkSpec, TargetSpec
+from harness_evals.config.schema import (
+    BaselineSpec,
+    ConversationSpec,
+    EvalConfig,
+    MetricSpec,
+    ModelSpec,
+    SinkSpec,
+    TargetSpec,
+)
 from harness_evals.core.metric import BaseMetric
 from harness_evals.core.runner import evaluate_dataset
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
+from harness_evals.env import resolve_env_in_value
 from harness_evals.errors import BaselineRegressionError, HarnessEvalsError, UnknownMetricError
 from harness_evals.llm.base import BaseLLM
 from harness_evals.logging_config import dataset_sample_summary
@@ -77,9 +84,6 @@ def build_llm(spec: ModelSpec) -> BaseLLM:
     return cls(model=spec.name, **resolved_params)
 
 
-_ENV_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
 def _resolve_env_in_params(params: dict) -> dict:
     """Resolve ``${VAR}`` references in params.
 
@@ -89,19 +93,11 @@ def _resolve_env_in_params(params: dict) -> dict:
         means this function will never see the interpolation placeholder.
     """
 
-    return {key: _resolve_env_in_value(key, value, warn_on_none=True) for key, value in params.items()}
+    return {key: _resolve_env_param(key, value) for key, value in params.items()}
 
 
-def _resolve_env_in_value(key: str, value: Any, *, warn_on_none: bool = False) -> Any:
-    if isinstance(value, str) and "${" in value:
-        return _resolve_env_value(value)
-    if isinstance(value, dict):
-        return {
-            nested_key: _resolve_env_in_value(nested_key, nested_value) for nested_key, nested_value in value.items()
-        }
-    if isinstance(value, list):
-        return [_resolve_env_in_value(key, item) for item in value]
-    if value is None and warn_on_none:
+def _resolve_env_param(key: str, value: Any) -> Any:
+    if value is None:
         import warnings
 
         warnings.warn(
@@ -110,20 +106,7 @@ def _resolve_env_in_value(key: str, value: Any, *, warn_on_none: bool = False) -
             UserWarning,
             stacklevel=2,
         )
-    return value
-
-
-def _resolve_env_value(value: str) -> str:
-    """Replace ``${VAR}`` references with environment variable values."""
-
-    def _replace(match: re.Match[str]) -> str:
-        var = match.group(1)
-        val = os.environ.get(var)
-        if val is None:
-            raise ValueError(f"Environment variable ${{{var}}} is not set")
-        return val
-
-    return _ENV_VAR_RE.sub(_replace, value)
+    return resolve_env_in_value(value)
 
 
 async def build_target(spec: TargetSpec) -> BaseTarget:
@@ -143,6 +126,8 @@ async def build_target(spec: TargetSpec) -> BaseTarget:
         return _build_http_target(spec.params)
     if spec.type == "streaming_http":
         return _build_streaming_http_target(spec.params)
+    if spec.type == "conversational_streaming_http":
+        return _build_conversational_streaming_http_target(spec.params)
     cls = lookup_target(spec.type)
     return cls(**spec.params)
 
@@ -205,6 +190,16 @@ def _build_streaming_http_target(params: dict[str, Any]) -> BaseTarget:
     if raw_auth is not None:
         kwargs["auth"] = _build_auth(raw_auth)
     return StreamingHttpTarget(**kwargs)
+
+
+def _build_conversational_streaming_http_target(params: dict[str, Any]) -> BaseTarget:
+    from harness_evals.targets.conversational_streaming_http import ConversationalStreamingHttpTarget
+
+    kwargs = _resolve_env_in_params(params)
+    raw_auth = kwargs.pop("auth", None)
+    if raw_auth is not None:
+        kwargs["auth"] = _build_auth(raw_auth)
+    return ConversationalStreamingHttpTarget(**kwargs)
 
 
 def _build_auth(raw: dict) -> Any:
@@ -356,10 +351,22 @@ def run_config(cfg: EvalConfig, *, baseline: BaselineSpec | None = ...) -> list[
 async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = None) -> list[list[Score]]:
     """Wire specs to live objects and execute via ``evaluate_dataset()``."""
 
-    source_cls = lookup_dataset_source(cfg.dataset.source)
-    source = source_cls.from_ref(cfg.dataset)
-    async with source:
-        goldens = await source.fetch(cfg.dataset)
+    if cfg.conversation is not None:
+        if cfg.dataset.source != "local":
+            raise HarnessEvalsError(
+                "Conversation evals only support local dataset sources; "
+                f"got {cfg.dataset.source!r}. Use a local file path or "
+                "dataset: {source: local, id: path/to/goldens.jsonl}."
+            )
+        from harness_evals.conversation import load_conversation_dataset
+
+        goldens = load_conversation_dataset(cfg.dataset.id)
+        _apply_conversation_defaults(goldens, cfg.conversation)
+    else:
+        source_cls = lookup_dataset_source(cfg.dataset.source)
+        source = source_cls.from_ref(cfg.dataset)
+        async with source:
+            goldens = await source.fetch(cfg.dataset)
     logger.debug(
         "Loaded dataset %s://%s: %d goldens (samples: %s)",
         cfg.dataset.source,
@@ -377,12 +384,61 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
     sinks = [build_sink(s) for s in cfg.sinks]
 
     async with target:
-        scores = await evaluate_dataset(goldens, target.ainvoke, metrics=metrics, sinks=sinks)
+        if cfg.conversation is not None:
+            agent_fn = getattr(target, "agenerate", None)
+            if agent_fn is None:
+                raise HarnessEvalsError(
+                    f"Target {cfg.target.type!r} does not support conversation evals; "
+                    "use a target with an agenerate(messages, system_event=None) method."
+                )
+            simulator_llm = _resolve_simulator_llm(cfg.conversation, judge_llm)
+            human_input_simulator = _build_human_input_simulator(cfg.conversation, simulator_llm)
+
+            scores = await evaluate_dataset(
+                goldens,
+                agent_fn,
+                metrics=metrics,
+                sinks=sinks,
+                simulator_llm=simulator_llm,
+                human_input_simulator=human_input_simulator,
+            )
+        else:
+            scores = await evaluate_dataset(goldens, target.ainvoke, metrics=metrics, sinks=sinks)
 
     if baseline:
         gate_against_baseline(scores, baseline)
 
     return scores
+
+
+def _apply_conversation_defaults(goldens: list, spec: ConversationSpec) -> None:
+    for golden in goldens:
+        if spec.mode is not None:
+            from harness_evals.conversation.golden import ConversationMode
+
+            golden.mode = ConversationMode(spec.mode)
+        if spec.max_turns is not None:
+            golden.max_turns = spec.max_turns
+        if spec.max_elicitation_rounds is not None:
+            golden.max_elicitation_rounds = spec.max_elicitation_rounds
+
+
+def _resolve_simulator_llm(spec: ConversationSpec, judge_llm: BaseLLM | None) -> BaseLLM | None:
+    if spec.simulator_llm is not None:
+        return build_llm(spec.simulator_llm)
+    return judge_llm
+
+
+def _build_human_input_simulator(spec: ConversationSpec, simulator_llm: BaseLLM | None):
+    from harness_evals.conversation.human_input import HumanInputSimulator
+    from harness_evals.plugins import elicitation_adapter
+
+    adapter = None
+    if spec.elicitation_adapter is not None:
+        adapter = elicitation_adapter(spec.elicitation_adapter)()
+        if hasattr(adapter, "llm"):
+            adapter.llm = simulator_llm
+    return HumanInputSimulator(simulator_llm, adapter=adapter)
 
 
 def _resolve_judge_llm(cfg: EvalConfig, target: BaseTarget) -> BaseLLM | None:

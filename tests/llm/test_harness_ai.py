@@ -207,3 +207,152 @@ class TestHarnessAILLMGenerate:
             mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
             with pytest.raises(RuntimeError, match="blocked"):
                 await llm.generate("test")
+
+
+@pytest.mark.unit
+class TestHarnessAIUsage:
+    def _make_llm(self) -> HarnessAILLM:
+        return HarnessAILLM(base_url="http://test:8001", secret="test-secret")
+
+    async def test_records_openai_style_usage(self):
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response(
+            {"text": "hi", "blocked": False, "usage": {"prompt_tokens": 55, "completion_tokens": 9}}
+        )
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens == 55
+        assert usage.output_tokens == 9
+
+    async def test_records_usage_metadata_style(self):
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response(
+            {"text": "hi", "blocked": False, "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 3}}
+        )
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens == 12
+        assert usage.output_tokens == 3
+
+    async def test_records_usage_input_output_key_fallback(self):
+        # usage dict using input_tokens/output_tokens instead of prompt/completion.
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response({"text": "hi", "blocked": False, "usage": {"input_tokens": 40, "output_tokens": 6}})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens == 40
+        assert usage.output_tokens == 6
+
+    async def test_records_top_level_usage(self):
+        # Token counts reported at the top level, with no usage/usageMetadata dict.
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response({"text": "hi", "blocked": False, "input_tokens": 33, "output_tokens": 5})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens == 33
+        assert usage.output_tokens == 5
+
+    async def test_usage_dict_takes_precedence_over_top_level(self):
+        # When both a usage dict and top-level counts are present, the usage
+        # dict wins — pins the branch order in _record_gateway_usage.
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response(
+            {
+                "text": "hi",
+                "blocked": False,
+                "usage": {"prompt_tokens": 55, "completion_tokens": 9},
+                "input_tokens": 1,
+                "output_tokens": 1,
+            }
+        )
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens == 55
+        assert usage.output_tokens == 9
+
+    async def test_records_zero_counts_as_zero(self):
+        # A genuine 0 must be recorded as 0, not conflated with "unknown" (None).
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response(
+            {"text": "hi", "blocked": False, "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+        )
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens == 0
+        assert usage.output_tokens == 0
+
+    async def test_no_usage_is_noop(self):
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        resp = _mock_httpx_response({"text": "hi", "blocked": False})
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                await llm.generate("Say hi")
+        assert usage.input_tokens is None
+        assert usage.output_tokens is None
+
+    async def test_malformed_usage_is_noop_and_does_not_raise(self):
+        from harness_evals.llm.usage import collect_token_usage
+
+        llm = self._make_llm()
+        # Non-int token values must not raise or corrupt the collector.
+        resp = _mock_httpx_response(
+            {"text": "hi", "blocked": False, "usage": {"prompt_tokens": "oops", "completion_tokens": {}}}
+        )
+        mock_client = AsyncMock()
+        mock_client.post.return_value = resp
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with collect_token_usage() as usage:
+                result = await llm.generate("Say hi")
+        assert result == "hi"
+        assert usage.input_tokens is None
+        assert usage.output_tokens is None

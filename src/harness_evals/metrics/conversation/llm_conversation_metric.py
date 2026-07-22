@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
+from harness_evals.logging_config import truncate_repr
+
+_logger = logging.getLogger(__name__)
 
 _RESPONSE_SCHEMA = {
     "type": "object",
@@ -107,6 +112,13 @@ class LLMConversationMetric(BaseMetric):
                     "reasoning": reasoning,
                 }
             )
+            _logger.debug(
+                "LLM conversation metric %s turn %d: score=%.2f reasoning=%s",
+                self.name,
+                assistant_idx,
+                value,
+                truncate_repr(reasoning, max_len=120),
+            )
             assistant_idx += 1
 
         if not turn_scores:
@@ -118,11 +130,17 @@ class LLMConversationMetric(BaseMetric):
             )
 
         aggregate = sum(t["score"] for t in turn_scores) / len(turn_scores)
+        reason = f"Mean of {len(turn_scores)} turn scores"
+        if aggregate < self.threshold:
+            details = "; ".join(
+                f"turn {t['turn']}={t['score']:.2f}: {truncate_repr(t['reasoning'], max_len=80)}" for t in turn_scores
+            )
+            reason = f"{reason} | {details}"
         return Score(
             name=self.name,
             value=aggregate,
             threshold=self.threshold,
-            reason=f"Mean of {len(turn_scores)} turn scores",
+            reason=reason,
             metadata={
                 "turn_scores": turn_scores,
                 "n_turns": len(messages),

@@ -6,6 +6,7 @@ import pytest
 
 from harness_evals.config.schema import (
     BaselineSpec,
+    ConversationSpec,
     MetricSpec,
     ModelSpec,
     SinkSpec,
@@ -42,6 +43,31 @@ class TestLoadsConfig:
         assert cfg.baseline is None
         assert cfg.plugins == []
         assert cfg.judge_llm is None
+
+    def test_conversation_config(self) -> None:
+        cfg = loads_config("""\
+name: conversation-eval
+conversation:
+  mode: simulate
+  max_turns: 1
+  max_elicitation_rounds: 6
+  simulator_llm: {provider: openai, name: gpt-4o-mini}
+dataset: ./harness-agent.goldens.jsonl
+target:
+  type: conversational_streaming_http
+  url: http://localhost:8080/stream
+metrics:
+  - {kind: goal_accuracy, threshold: 0.7}
+judge_llm: {provider: openai, name: gpt-4o}
+""")
+
+        assert cfg.conversation == ConversationSpec(
+            mode="simulate",
+            max_turns=1,
+            max_elicitation_rounds=6,
+            simulator_llm=ModelSpec(provider="openai", name="gpt-4o-mini"),
+        )
+        assert cfg.target.type == "conversational_streaming_http"
 
     def test_full_config(self) -> None:
         cfg = loads_config("""\
@@ -133,6 +159,27 @@ class TestValidation:
     def test_model_spec_missing_fields(self) -> None:
         with pytest.raises(HarnessEvalsError, match="provider"):
             loads_config("name: x\ndataset: ./g.jsonl\ntarget: {type: http}\nmetrics: [x]\njudge_llm: {name: gpt-4o}")
+
+    def test_conversation_requires_llm_for_simulate(self) -> None:
+        with pytest.raises(HarnessEvalsError, match="simulator_llm"):
+            loads_config("""\
+name: x
+conversation: {mode: simulate}
+dataset: ./g.jsonl
+target: {type: conversational_streaming_http, url: http://localhost:8080/stream}
+metrics: [exact_match]
+""")
+
+    def test_conversation_rejects_invalid_mode(self) -> None:
+        with pytest.raises(HarnessEvalsError, match="conversation.mode"):
+            loads_config("""\
+name: x
+conversation: {mode: invalid}
+dataset: ./g.jsonl
+target: {type: conversational_streaming_http, url: http://localhost:8080/stream}
+metrics: [exact_match]
+judge_llm: {provider: openai, name: gpt-4o}
+""")
 
 
 @pytest.mark.unit

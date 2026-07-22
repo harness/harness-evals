@@ -1,5 +1,7 @@
 """Tests for ConversationGolden and dataset I/O."""
 
+import json
+
 import pytest
 
 from harness_evals.conversation import (
@@ -19,6 +21,7 @@ class TestConversationGolden:
         )
         assert g.scenario == "User asks about refund policy"
         assert g.max_turns == 10
+        assert g.max_elicitation_rounds == 10
         assert g.turns is None
 
     def test_with_turns(self):
@@ -93,18 +96,45 @@ class TestConversationGolden:
 
     def test_roundtrip(self):
         original = ConversationGolden(
+            id="roundtrip",
             scenario="Roundtrip test",
             expected_outcome="Passes",
             context=["ctx1", "ctx2"],
             max_turns=7,
+            max_elicitation_rounds=3,
+            initial_prompt="Start here",
             user_persona="Developer",
+            elicitation_hints={
+                "intents": {"name": "testconnector"},
+                "yaml": {"default_action": "accept"},
+            },
             metadata={"key": "value"},
             tags={"env": "test"},
         )
         restored = ConversationGolden.from_dict(original.to_dict())
+        assert restored.id == original.id
         assert restored.scenario == original.scenario
         assert restored.max_turns == original.max_turns
+        assert restored.max_elicitation_rounds == original.max_elicitation_rounds
+        assert restored.initial_prompt == original.initial_prompt
+        assert restored.elicitation_hints == original.elicitation_hints
         assert restored.metadata == original.metadata
+
+    def test_rejects_invalid_max_turns(self):
+        with pytest.raises(ValueError, match="max_turns"):
+            ConversationGolden(scenario="S", expected_outcome="O", max_turns=0)
+
+    def test_rejects_invalid_max_elicitation_rounds(self):
+        with pytest.raises(ValueError, match="max_elicitation_rounds"):
+            ConversationGolden(scenario="S", expected_outcome="O", max_elicitation_rounds=0)
+
+    def test_rejects_non_dict_elicitation_hints(self):
+        with pytest.raises(TypeError, match="elicitation_hints"):
+            ConversationGolden(scenario="S", expected_outcome="O", elicitation_hints=[])  # type: ignore[arg-type]
+
+    def test_rejects_invalid_sse_checks(self):
+        with pytest.raises(TypeError, match="sse_checks"):
+            ConversationGolden(scenario="S", expected_outcome="O", metadata={"sse_checks": "bad"})
 
 
 @pytest.mark.unit
@@ -136,3 +166,71 @@ class TestConversationDatasetIO:
         path.write_text('{"not": "a list"}')
         with pytest.raises(ValueError, match="list"):
             load_conversation_dataset(path)
+
+    def test_load_resolves_env_values(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PROJECT_NAME", "demo")
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Create resource in ${PROJECT_NAME}",
+                    "expected_outcome": "Resource created",
+                    "context": ["Project: ${PROJECT_NAME}"],
+                }
+            )
+            + "\n"
+        )
+
+        loaded = load_conversation_dataset(path)
+
+        assert loaded[0].scenario == "Create resource in demo"
+        assert loaded[0].context == ["Project: demo"]
+
+    def test_load_missing_env_value_raises(self, tmp_path):
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Create resource in ${MISSING_PROJECT_NAME}",
+                    "expected_outcome": "Resource created",
+                }
+            )
+            + "\n"
+        )
+
+        with pytest.raises(ValueError, match="MISSING_PROJECT_NAME"):
+            load_conversation_dataset(path)
+
+    def test_load_uses_inline_env_default(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HARNESS_DELEGATE_SELECTOR", raising=False)
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Create connector with ${HARNESS_DELEGATE_SELECTOR:-hello}",
+                    "expected_outcome": "Connector created",
+                }
+            )
+            + "\n"
+        )
+
+        loaded = load_conversation_dataset(path)
+
+        assert loaded[0].scenario == "Create connector with hello"
+
+    def test_load_inline_env_default_overridden_by_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HARNESS_DELEGATE_SELECTOR", "prod-delegate")
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Create connector with ${HARNESS_DELEGATE_SELECTOR:-hello}",
+                    "expected_outcome": "Connector created",
+                }
+            )
+            + "\n"
+        )
+
+        loaded = load_conversation_dataset(path)
+
+        assert loaded[0].scenario == "Create connector with prod-delegate"

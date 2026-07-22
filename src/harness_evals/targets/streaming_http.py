@@ -15,7 +15,6 @@ shape — request bodies are built from ``body_template`` with ``{{input}}`` /
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import ssl
@@ -104,6 +103,8 @@ class StreamingHttpTarget(BaseTarget):
     context_path: str | None = None
     messages_path: str | None = None
     token_count_path: str | None = None
+    input_tokens_path: str | None = None
+    output_tokens_path: str | None = None
     cost_usd_path: str | None = None
     retry_count_path: str | None = None
     confidence_path: str | None = None
@@ -299,6 +300,12 @@ class StreamingHttpTarget(BaseTarget):
         final_payload = self._final_payload(decoded)
         output = self._final_output(decoded, final_payload)
         kwargs = self._extract_optional_fields(final_payload) if final_payload is not None else {}
+        # The answer payload rarely carries usage/telemetry: streaming agents
+        # emit token counts in a separate trailing event (``model_usage``,
+        # ``done``) that ``_final_payload`` deliberately skips when selecting the
+        # answer. Recover any numeric field the answer payload didn't provide by
+        # scanning the whole stream (latest event wins).
+        self._recover_stream_fields(kwargs, decoded, final_payload)
         # Rebuild an ordered trajectory from the stream (interleaved assistant
         # text / tool calls / tool results) unless the agent already reported a
         # consolidated trajectory via messages_path — that stays authoritative.
@@ -404,12 +411,45 @@ class StreamingHttpTarget(BaseTarget):
         _extract_field(kwargs, response_body, "context", self.context_path)
         _extract_field(kwargs, response_body, "messages", self.messages_path)
         _extract_float(kwargs, response_body, "token_count", self.token_count_path, int)
+        _extract_float(kwargs, response_body, "input_tokens", self.input_tokens_path, int)
+        _extract_float(kwargs, response_body, "output_tokens", self.output_tokens_path, int)
         _extract_float(kwargs, response_body, "cost_usd", self.cost_usd_path, float)
         _extract_float(kwargs, response_body, "retry_count", self.retry_count_path, int)
         _extract_float(kwargs, response_body, "confidence", self.confidence_path, float)
 
         normalize_trajectory_fields(kwargs, self.messages_path)
         return kwargs
+
+    def _recover_stream_fields(self, kwargs: dict, decoded: list[tuple[str, object]], final_payload: object) -> None:
+        """Fill numeric fields from any stream event when the answer payload lacked them.
+
+        Token counts, cost, and similar telemetry usually arrive in a trailing
+        envelope event (e.g. ``model_usage``) separate from the answer event, so
+        extracting them only from ``final_payload`` misses them. For each numeric
+        path that didn't already resolve, scan all decoded payloads *except*
+        ``final_payload`` (already handled) in reverse so the most recent event
+        wins. Casting failures are handled/logged by ``_extract_float``.
+        """
+        numeric_fields = (
+            ("token_count", self.token_count_path, int),
+            ("input_tokens", self.input_tokens_path, int),
+            ("output_tokens", self.output_tokens_path, int),
+            ("cost_usd", self.cost_usd_path, float),
+            ("retry_count", self.retry_count_path, int),
+            ("confidence", self.confidence_path, float),
+        )
+        pending = [(key, path, cast) for key, path, cast in numeric_fields if path is not None and key not in kwargs]
+        if not pending:
+            return
+        for _name, payload in reversed(decoded):
+            if not pending:
+                break
+            if payload is final_payload or not isinstance(payload, (dict, list)):
+                continue
+            for key, path, cast in list(pending):
+                _extract_float(kwargs, payload, key, path, cast)
+                if key in kwargs:
+                    pending.remove((key, path, cast))
 
 
 def _parse_sse(raw: str) -> list[tuple[str, str]]:
@@ -489,6 +529,19 @@ def _extract_float(kwargs: dict, body: object, key: str, path: str | None, cast:
     if path is None:
         return
     val = extract_path(body, path)
-    if val is not None:
-        with contextlib.suppress(TypeError, ValueError):
-            kwargs[key] = cast(val)
+    if val is None:
+        return
+    # The path *was* configured and resolved to a value, so a failed cast means
+    # the value is the wrong type (non-numeric string, dict) or out of range
+    # (json.loads accepts Infinity/NaN → int(inf) raises OverflowError). Warn so
+    # a misconfigured path is distinguishable from "the endpoint reported nothing".
+    try:
+        kwargs[key] = cast(val)
+    except (TypeError, ValueError, OverflowError):
+        logger.warning(
+            "%s path %r resolved to %r, which is not a valid %s; dropping it",
+            key,
+            path,
+            val,
+            cast.__name__,
+        )

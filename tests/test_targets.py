@@ -210,6 +210,42 @@ async def test_prompt_target_closes_model() -> None:
     assert model.closed
 
 
+class UsageStubLLM(StubLLM):
+    """StubLLM that reports token usage to the active collector."""
+
+    def __init__(self, response: str = "out", in_tok: int = 42, out_tok: int = 7) -> None:
+        super().__init__(response)
+        self._in, self._out = in_tok, out_tok
+
+    async def generate(self, prompt: str, **kwargs) -> str:
+        from harness_evals.llm.usage import record_token_usage
+
+        record_token_usage(input_tokens=self._in, output_tokens=self._out)
+        return await super().generate(prompt, **kwargs)
+
+
+@pytest.mark.unit
+async def test_prompt_target_captures_token_split() -> None:
+    prompt = PromptTemplate(template="{{input}}", input_variables=["input"])
+    target = PromptTarget(prompt=prompt, model=UsageStubLLM(response="42", in_tok=42, out_tok=7))
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.input_tokens == 42
+    assert result.output_tokens == 7
+
+
+@pytest.mark.unit
+async def test_prompt_target_no_usage_leaves_tokens_none() -> None:
+    prompt = PromptTemplate(template="{{input}}", input_variables=["input"])
+    target = PromptTarget(prompt=prompt, model=StubLLM("42"))
+
+    result = await target.ainvoke(Golden(input="q"))
+
+    assert result.input_tokens is None
+    assert result.output_tokens is None
+
+
 # ---------------------------------------------------------------------------
 # HttpTarget
 # ---------------------------------------------------------------------------
@@ -379,6 +415,64 @@ async def test_http_target_extracts_all_optional_fields(monkeypatch: pytest.Monk
     assert result.cost_usd == 0.005
     assert result.confidence == 0.95
     assert result.context == ["doc1", "doc2"]
+
+
+@pytest.mark.unit
+async def test_http_target_extracts_token_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"output": "ok", "in": 120, "out": 34}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        input_tokens_path="$.in",
+        output_tokens_path="$.out",
+    )
+    result = await target.ainvoke(Golden(input="hi"))
+    assert result.input_tokens == 120
+    assert result.output_tokens == 34
+
+
+@pytest.mark.unit
+async def test_http_target_token_split_zero_survives(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A genuine 0 must be preserved as 0, not collapsed to None.
+    from harness_evals.targets import http as target_http
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"output": "ok", "in": 0, "out": 0}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run", input_tokens_path="$.in", output_tokens_path="$.out")
+    result = await target.ainvoke(Golden(input="hi"))
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_value", ["N/A", float("inf"), float("nan")])
+async def test_http_target_bad_token_value_dropped_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, bad_value: object
+) -> None:
+    # json.loads accepts Infinity/NaN, and endpoints can return non-numeric
+    # strings. A configured path resolving to any of these must not raise
+    # (int(inf) raises OverflowError) — it is dropped with a visible warning.
+    from harness_evals.targets import http as target_http
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"output": "ok", "in": bad_value}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+
+    target = HttpTarget(url="http://localhost:8080/run", input_tokens_path="$.in")
+    with caplog.at_level(logging.WARNING):
+        result = await target.ainvoke(Golden(input="hi"))
+
+    assert result.input_tokens is None
+    assert any("input_tokens path" in r.message for r in caplog.records)
 
 
 @pytest.mark.unit

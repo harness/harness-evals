@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
+from harness_evals.core.types import Message
 
 
 class BaseTarget(ABC):
@@ -28,3 +29,21 @@ class BaseTarget(ABC):
 
     async def __aexit__(self, *_: object) -> None:
         await self.close()
+
+
+class ConversationTarget(ABC):
+    """Invokes a conversational system-under-test one assistant turn at a time."""
+
+    @abstractmethod
+    async def agenerate(
+        self,
+        messages: list[Message],
+        human_input: dict | None = None,
+        *,
+        system_event: dict | None = None,
+    ) -> Message:
+        """Return the agent's next assistant message for a conversation history.
+
+        ``human_input`` carries a protocol-specific continuation payload when the
+        agent is waiting for human input. ``system_event`` is a deprecated alias.
+        """

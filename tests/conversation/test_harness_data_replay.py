@@ -1,9 +1,8 @@
-"""Replay captured Harness SSE fixtures from DATA/turn* files."""
+"""Replay captured Harness SSE fixtures for the k8s connector conversation flow."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -11,8 +10,7 @@ from harness_evals.conversation import ConversationGolden, ConversationSimulator
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
 from harness_evals.targets.conversational_streaming_http import ConversationalStreamingHttpTarget
-
-DATA_DIR = Path(__file__).resolve().parents[2] / "DATA"
+from tests.conversation.k8s_connector_sse_fixtures import k8s_connector_turn_responses
 
 
 class StopLLM(BaseLLM):
@@ -21,22 +19,6 @@ class StopLLM(BaseLLM):
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
         return {"achieved": True, "reasoning": "done"}
-
-
-def _load_turn_body(path: Path) -> str:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    output_lines: list[str] = []
-    in_output = False
-    for line in lines:
-        if line.startswith("#Output"):
-            in_output = True
-            continue
-        if line.startswith("#Input"):
-            in_output = False
-            continue
-        if in_output:
-            output_lines.append(line)
-    return "\n".join(output_lines).strip() + "\n"
 
 
 def _harness_target() -> ConversationalStreamingHttpTarget:
@@ -67,7 +49,7 @@ def _harness_target() -> ConversationalStreamingHttpTarget:
 
 @pytest.mark.unit
 async def test_replay_harness_data_turns_complete_k8s_connector_flow(monkeypatch):
-    turn_bodies = [_load_turn_body(DATA_DIR / f"turn{i}") for i in range(1, 7)]
+    turn_bodies = k8s_connector_turn_responses()
     responses = iter(turn_bodies)
     requests: list[dict] = []
 
@@ -135,9 +117,9 @@ async def test_replay_harness_data_turns_complete_k8s_connector_flow(monkeypatch
     assert len(requests) == 6
     assert requests[0]["prompt"] == "Create a k8s connector"
     assert "system_event" in requests[1]
-    assert result.output
-    assert "testconnector" in result.output
+    assert result.output == "Connector created."
     sse_events = result.metadata["sse_events"]
+    assert sse_events["entity_mutation"][0]["identifier"] == "testconnector"
     assert "elicitation_form" in sse_events
     assert "elicitation_yaml" in sse_events
     assert "entity_mutation" in sse_events

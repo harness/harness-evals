@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import sys
 import uuid
 from pathlib import Path
 
 from harness_evals.errors import BaselineRegressionError, HarnessEvalsError
+
+logger = logging.getLogger(__name__)
+
+_PROVIDER_ENV_VARS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +57,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Custom glob pattern (default: **/*.eval.yaml for YAML configs, **/eval_*.py for Python eval files)",
     )
 
+    # --- recommend ---
+    recommend_parser = sub.add_parser("recommend", help="Recommend evals for a prompt, endpoint, or traces")
+    recommend_parser.add_argument("--prompt", default=None, help="Path to a prompt file or prompt text")
+    recommend_parser.add_argument("--endpoint", default=None, help="HTTP endpoint URL to evaluate")
+    recommend_parser.add_argument("--traces", default=None, help="Path to a traces file (JSONL)")
+    recommend_parser.add_argument(
+        "--api-key", default=None, help="LLM provider API key (or set ANTHROPIC_API_KEY/OPENAI_API_KEY env var)"
+    )
+    recommend_parser.add_argument(
+        "--provider", default="anthropic", choices=["anthropic", "openai"], help="LLM provider"
+    )
+    recommend_parser.add_argument("--model", default=None, help="Model name override")
+    recommend_parser.add_argument("-o", "--output", default=".", help="Output directory for EvalConfig and goldens")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -55,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
+        if args.command == "recommend":
+            return _cmd_recommend(args)
         if args.command == "run":
             return _cmd_run(args)
         if args.command == "import":
@@ -77,6 +102,49 @@ def main(argv: list[str] | None = None) -> int:
             raise
         return 2
 
+    return 0
+
+
+def _cmd_recommend(args: argparse.Namespace) -> int:
+    from harness_evals._async_compat import _run_async
+    from harness_evals.config.runner import build_llm
+    from harness_evals.config.schema import ModelSpec
+    from harness_evals.recommender.engine import recommend
+    from harness_evals.recommender.output import default_model, print_recommendation, write_outputs
+    from harness_evals.recommender.scenarios import load_scenario
+
+    env_var = _PROVIDER_ENV_VARS.get(args.provider)
+    api_key = args.api_key or (os.environ.get(env_var) if env_var else None)
+    if not api_key:
+        raise HarnessEvalsError(f"No API key provided. Pass --api-key or set {env_var or 'the provider API key'} env var.")
+
+    scenario = load_scenario(
+        prompt=getattr(args, "prompt", None),
+        endpoint=getattr(args, "endpoint", None),
+        traces=getattr(args, "traces", None),
+    )
+
+    # The CLI owns LLM construction — build_llm resolves the provider class and
+    # wires the api_key into the ModelSpec params.
+    model_name = args.model or default_model(args.provider)
+    logger.info("Building %s LLM for recommendation (model=%s)", args.provider, model_name)
+    model_spec = ModelSpec(
+        provider=args.provider,
+        name=model_name,
+        params={"api_key": api_key},
+    )
+    llm = build_llm(model_spec)
+
+    recommendation = _run_async(recommend(scenario=scenario, llm=llm))
+    print_recommendation(recommendation)
+    config_path, goldens_path = write_outputs(
+        recommendation,
+        output_dir=args.output,
+        provider=args.provider,
+        model=getattr(args, "model", None),
+    )
+    print(f"EvalConfig written to: {config_path}")
+    print(f"Goldens written to:    {goldens_path}")
     return 0
 
 

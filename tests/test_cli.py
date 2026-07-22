@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from harness_evals.cli import main
+from harness_evals.llm.base import BaseLLM
 from harness_evals.logging_config import ENV_VAR
 
 _MINIMAL_CONFIG = """\
@@ -315,3 +316,110 @@ class TestNoCommand:
     def test_no_args_prints_help(self, capsys) -> None:
         exit_code = main([])
         assert exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# recommend
+# ---------------------------------------------------------------------------
+
+
+_MOCK_RECOMMENDATION = {
+    "dimensions_covered": [{"dimension": "correctness", "applies": True, "rationale": "test"}],
+    "recommended_metrics": [{"name": "exact_match", "dimension": "correctness", "rationale": "test", "threshold": 0.8}],
+    "recommended_dataset": [
+        {
+            "input": "test",
+            "expected": "output",
+            "context": None,
+            "metric_tested": "exact_match",
+        }
+    ],
+    "recommended_actions": "Run harness-evals run recommended.eval.yaml",
+}
+
+
+class _FakeLLM(BaseLLM):
+    """A BaseLLM that returns a canned recommendation from generate_json."""
+
+    def __init__(self, response: dict) -> None:
+        self._response = response
+
+    async def generate(self, prompt: str, **kwargs) -> str:
+        return ""
+
+    async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+        return self._response
+
+
+@pytest.mark.unit
+class TestCmdRecommend:
+    def test_recommend_prompt_success(self, tmp_path) -> None:
+        """recommend --prompt builds an LLM, calls generate_json, and writes outputs."""
+        fake_llm = _FakeLLM(_MOCK_RECOMMENDATION)
+
+        with patch("harness_evals.config.runner.build_llm", return_value=fake_llm):
+            exit_code = main(["recommend", "--prompt", "You are helpful", "--api-key", "fake-key", "-o", str(tmp_path)])
+
+        assert exit_code == 0
+        assert (tmp_path / "recommended.eval.yaml").exists()
+        assert (tmp_path / "recommended.goldens.jsonl").exists()
+
+    def test_recommend_builds_llm_with_model_spec(self, tmp_path) -> None:
+        """The CLI creates the LLM through build_llm(ModelSpec) with provider + api_key."""
+        fake_llm = _FakeLLM(_MOCK_RECOMMENDATION)
+
+        with patch("harness_evals.config.runner.build_llm", return_value=fake_llm) as mock_build:
+            exit_code = main(
+                ["recommend", "--prompt", "test", "--provider", "openai", "--api-key", "fake-key", "-o", str(tmp_path)]
+            )
+
+        assert exit_code == 0
+        mock_build.assert_called_once()
+        spec = mock_build.call_args[0][0]
+        assert spec.provider == "openai"
+        assert spec.name == "gpt-4o"
+        assert spec.params["api_key"] == "fake-key"
+
+    def test_recommend_anthropic_api_key_env_fallback(self, tmp_path, monkeypatch) -> None:
+        """ANTHROPIC_API_KEY environment variable is used when --api-key is absent."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic-key")
+        fake_llm = _FakeLLM(_MOCK_RECOMMENDATION)
+
+        with patch("harness_evals.config.runner.build_llm", return_value=fake_llm) as mock_build:
+            exit_code = main(["recommend", "--prompt", "test", "--provider", "anthropic", "-o", str(tmp_path)])
+
+        assert exit_code == 0
+        spec = mock_build.call_args[0][0]
+        assert spec.provider == "anthropic"
+        assert spec.name == "claude-sonnet-4-20250514"
+        assert spec.params["api_key"] == "fake-anthropic-key"
+
+    def test_recommend_openai_api_key_env_fallback(self, tmp_path, monkeypatch) -> None:
+        """OPENAI_API_KEY environment variable is used when --api-key is absent."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+        fake_llm = _FakeLLM(_MOCK_RECOMMENDATION)
+
+        with patch("harness_evals.config.runner.build_llm", return_value=fake_llm) as mock_build:
+            exit_code = main(["recommend", "--prompt", "test", "--provider", "openai", "-o", str(tmp_path)])
+
+        assert exit_code == 0
+        spec = mock_build.call_args[0][0]
+        assert spec.provider == "openai"
+        assert spec.params["api_key"] == "fake-openai-key"
+
+    def test_recommend_missing_api_key_returns_exit_code_2(self, tmp_path, monkeypatch) -> None:
+        """Missing API key returns exit code 2."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        exit_code = main(["recommend", "--prompt", "test", "--provider", "anthropic", "-o", str(tmp_path)])
+        assert exit_code == 2
+
+    def test_recommend_verbose_reraises_exception(self, tmp_path) -> None:
+        """--verbose reraises an exception instead of swallowing it."""
+        with (
+            patch("harness_evals.config.runner.build_llm", side_effect=ValueError("Test error")),
+            pytest.raises(ValueError, match="Test error"),
+        ):
+            main(["--verbose", "recommend", "--prompt", "test", "--api-key", "fake-key", "-o", str(tmp_path)])

@@ -6,6 +6,7 @@ Requires: pip install harness-evals[otlp]
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import enum
 import json
 from typing import Any
@@ -86,10 +87,12 @@ def classify_span(span: dict[str, Any]) -> SpanType:
         return SpanType.LLM_TURN
 
     # Langfuse-instrumented tool spans (e.g. "tool:Read", "tool:Skill")
-    if attrs.get("langfuse.observation.type") == "span" and "gen_ai.tool.name" not in attrs:
-        # Only classify as TOOL_CALL if it looks like a tool span by name prefix
-        if name.startswith("tool:"):
-            return SpanType.TOOL_CALL
+    if (
+        attrs.get("langfuse.observation.type") == "span"
+        and "gen_ai.tool.name" not in attrs
+        and name.startswith("tool:")
+    ):
+        return SpanType.TOOL_CALL
 
     if (
         "gen_ai.request.model" in attrs
@@ -308,10 +311,8 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
     cost_usd: float | None = None
     raw_cost = meta_attrs.get("gen_ai.usage.cost")
     if raw_cost is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             cost_usd = float(raw_cost)
-        except (TypeError, ValueError):
-            pass
 
     return EvalCase(
         input=user_input or "",

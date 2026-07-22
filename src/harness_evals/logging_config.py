@@ -67,6 +67,22 @@ def truncate_repr(value: Any, max_len: int = 80) -> str:
     return text[: max_len - 3] + "..."
 
 
+def compact_json(value: Any, max_len: int = 200) -> str:
+    """Return a single-line JSON summary bounded for debug logs."""
+
+    import json
+
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=repr, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return truncate_repr(value, max_len=max_len)
+    if len(text) <= max_len:
+        return text
+    if max_len <= 3:
+        return "..." * max_len
+    return text[: max_len - 3] + "..."
+
+
 def dataset_sample_summary(goldens: list[Any], *, max_samples: int = 3, max_len: int = 80) -> str:
     """Return a compact summary of representative golden inputs."""
 

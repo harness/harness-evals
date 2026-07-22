@@ -47,6 +47,17 @@ class TargetSpec:
 
 
 @dataclass
+class ConversationSpec:
+    """Parsed representation of the optional ``conversation:`` block."""
+
+    mode: str | None = None
+    max_turns: int | None = None
+    max_elicitation_rounds: int | None = None
+    simulator_llm: ModelSpec | None = None
+    elicitation_adapter: str | None = None
+
+
+@dataclass
 class BaselineSpec:
     """Parsed representation of the ``baseline:`` block in a YAML config."""
 
@@ -65,6 +76,7 @@ class EvalConfig:
     target: TargetSpec
     metrics: list[MetricSpec]
     judge_llm: ModelSpec | None = None
+    conversation: ConversationSpec | None = None
     sinks: list[SinkSpec] = field(default_factory=lambda: [SinkSpec("stdout")])
     baseline: BaselineSpec | None = None
     plugins: list[str] = field(default_factory=list)
@@ -77,6 +89,7 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset(
         "target",
         "metrics",
         "judge_llm",
+        "conversation",
         "sinks",
         "baseline",
         "plugins",
@@ -133,6 +146,7 @@ def loads_config(text: str, *, base_dir: Path | None = None) -> EvalConfig:
     metrics = [_parse_metric(m) for m in raw_metrics]
 
     judge_llm = _parse_model(raw["judge_llm"]) if raw.get("judge_llm") else None
+    conversation = _parse_conversation(raw["conversation"], judge_llm=judge_llm) if raw.get("conversation") else None
 
     raw_sinks = raw.get("sinks", ["stdout"])
     sinks = [_parse_sink(s) for s in (raw_sinks if isinstance(raw_sinks, list) else [raw_sinks])]
@@ -149,6 +163,7 @@ def loads_config(text: str, *, base_dir: Path | None = None) -> EvalConfig:
         target=target,
         metrics=metrics,
         judge_llm=judge_llm,
+        conversation=conversation,
         sinks=sinks,
         baseline=baseline,
         plugins=plugins,
@@ -201,6 +216,37 @@ def _parse_model(raw: dict) -> ModelSpec:
     name = raw["name"]
     params = {k: v for k, v in raw.items() if k not in {"provider", "name"}}
     return ModelSpec(provider=provider, name=name, params=params)
+
+
+def _parse_conversation(raw: dict, *, judge_llm: ModelSpec | None) -> ConversationSpec:
+    if not isinstance(raw, dict):
+        raise HarnessEvalsError(f"'conversation' must be a dict, got {type(raw).__name__}")
+
+    mode = raw.get("mode")
+    if mode is not None and mode not in {"simulate", "scripted", "replay", "graph"}:
+        raise HarnessEvalsError("'conversation.mode' must be one of: simulate, scripted, replay, graph")
+
+    simulator_llm = _parse_model(raw["simulator_llm"]) if raw.get("simulator_llm") else None
+    if mode in {None, "simulate", "graph"} and simulator_llm is None and judge_llm is None:
+        raise HarnessEvalsError(
+            "conversation mode 'simulate' or 'graph' requires 'conversation.simulator_llm' or 'judge_llm'"
+        )
+
+    max_turns = raw.get("max_turns")
+    if max_turns is not None and int(max_turns) < 1:
+        raise HarnessEvalsError("'conversation.max_turns' must be >= 1")
+
+    max_elicitation_rounds = raw.get("max_elicitation_rounds")
+    if max_elicitation_rounds is not None and int(max_elicitation_rounds) < 1:
+        raise HarnessEvalsError("'conversation.max_elicitation_rounds' must be >= 1")
+
+    return ConversationSpec(
+        mode=str(mode) if mode is not None else None,
+        max_turns=int(max_turns) if max_turns is not None else None,
+        max_elicitation_rounds=int(max_elicitation_rounds) if max_elicitation_rounds is not None else None,
+        simulator_llm=simulator_llm,
+        elicitation_adapter=str(raw["elicitation_adapter"]) if raw.get("elicitation_adapter") else None,
+    )
 
 
 def _parse_baseline(raw: dict) -> BaselineSpec:

@@ -89,11 +89,12 @@ def make_strict_schema(
         for key in list(node):
             if key in strip_keywords:
                 del node[key]
-        if node.get("type") == "object" and "properties" in node:
-            node.setdefault("required", list(node["properties"].keys()))
+        if node.get("type") == "object":
+            if "properties" in node:
+                node.setdefault("required", list(node["properties"].keys()))
+                for prop in node["properties"].values():
+                    _fix(prop)
             node["additionalProperties"] = False
-            for prop in node["properties"].values():
-                _fix(prop)
         if node.get("type") == "array" and "items" in node:
             _fix(node["items"])
         for combiner in ("anyOf", "allOf", "oneOf"):

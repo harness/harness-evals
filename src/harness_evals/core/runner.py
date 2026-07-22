@@ -13,7 +13,7 @@ from harness_evals.core.metric import BaseMetric
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
 from harness_evals.llm.usage import TokenUsage, collect_token_usage
-from harness_evals.logging_config import truncate_repr
+from harness_evals.logging_config import compact_json, truncate_repr
 from harness_evals.summary import ScoreSummary, summarize
 
 if TYPE_CHECKING:
@@ -350,11 +350,18 @@ async def _evaluate_dataset_conversation(
     concurrency: int | None = None,
     simulator_llm: BaseLLM | None = None,
     on_result: OnResult | None = None,
+    human_input_simulator: object | None = None,
+    elicitation_simulator: object | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of ConversationGolden instances."""
     from harness_evals.conversation.simulator import ConversationSimulator
 
-    simulator = ConversationSimulator(simulator_llm, max_concurrent=concurrency or 10)
+    resolved_simulator = human_input_simulator or elicitation_simulator
+    simulator = ConversationSimulator(
+        simulator_llm,
+        max_concurrent=concurrency or 10,
+        human_input_simulator=resolved_simulator,  # type: ignore[arg-type]
+    )
     eval_cases = await simulator.simulate_batch(goldens, agent_fn)
 
     total = len(eval_cases)
@@ -375,6 +382,36 @@ async def _evaluate_dataset_conversation(
 
     scored = list(await asyncio.gather(*[_score_and_report(i, ec) for i, ec in enumerate(eval_cases)]))
 
+    for idx, (golden, eval_case, scores) in enumerate(zip(goldens, eval_cases, scored, strict=True)):
+        golden_id = getattr(golden, "id", None) or truncate_repr(golden.scenario)
+        message_summary = (
+            [(msg.role, len(msg.content or "")) for msg in eval_case.messages] if eval_case.messages else []
+        )
+        sse_events = (eval_case.metadata or {}).get("sse_events") or {}
+        entity_mutations = sse_events.get("entity_mutation") or []
+        metric_names = ", ".join(score.name for score in scores)
+        _runner_logger.debug(
+            "[%d/%d] golden=%s messages=%s entity_mutation=%s metrics=[%s]",
+            idx + 1,
+            len(goldens),
+            golden_id,
+            message_summary,
+            compact_json(entity_mutations) if entity_mutations else "none",
+            metric_names,
+        )
+        for score in scores:
+            if score.passed:
+                continue
+            _runner_logger.debug(
+                "Metric failed golden=%s name=%s value=%.2f threshold=%.2f reason=%s metadata=%s",
+                golden_id,
+                score.name,
+                score.value,
+                score.threshold,
+                truncate_repr(score.reason, max_len=200),
+                compact_json(score.metadata) if score.metadata else "{}",
+            )
+
     if sinks:
         for eval_case, scores in zip(eval_cases, scored, strict=True):
             for sink in sinks:
@@ -393,6 +430,8 @@ async def evaluate_dataset(
     concurrency: int | None = None,
     simulator_llm: BaseLLM | None = None,
     on_result: OnResult | None = None,
+    human_input_simulator: object | None = None,
+    elicitation_simulator: object | None = None,
 ) -> list[list[Score]]:
     """Run an agent on goldens, then evaluate each resulting EvalCase.
 
@@ -474,6 +513,7 @@ async def evaluate_dataset(
             concurrency=concurrency,
             simulator_llm=simulator_llm,
             on_result=on_result,
+            human_input_simulator=human_input_simulator or elicitation_simulator,
         )
 
     return await _evaluate_dataset_single(

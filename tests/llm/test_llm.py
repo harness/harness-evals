@@ -521,6 +521,17 @@ class TestMakeStrictSchema:
         assert items["additionalProperties"] is False
         assert set(items["required"]) == {"claim", "verdict"}
 
+    def test_adds_additional_properties_false_to_bare_object(self):
+        schema = {
+            "type": "object",
+            "required": ["response"],
+            "properties": {
+                "response": {"type": "object"},
+            },
+        }
+        result = make_strict_schema(schema)
+        assert result["properties"]["response"]["additionalProperties"] is False
+
     def test_does_not_mutate_original(self):
         schema = {
             "type": "object",

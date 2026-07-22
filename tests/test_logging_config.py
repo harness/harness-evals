@@ -7,6 +7,7 @@ import pytest
 from harness_evals.errors import HarnessEvalsError
 from harness_evals.logging_config import (
     ENV_VAR,
+    compact_json,
     configure_logging,
     dataset_sample_summary,
     init_from_env,
@@ -124,6 +125,12 @@ def test_init_from_env_tolerates_invalid_level(monkeypatch) -> None:
 @pytest.mark.unit
 def test_truncate_repr_bounds_output() -> None:
     assert truncate_repr("abcdef", max_len=6) == "'ab..."
+
+
+@pytest.mark.unit
+def test_compact_json_bounds_output() -> None:
+    payload = {"resource_type": "pipeline", "identifier": "testk8spipeline"}
+    assert compact_json(payload, max_len=40).endswith("...")
 
 
 @pytest.mark.unit

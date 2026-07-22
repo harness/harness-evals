@@ -277,6 +277,7 @@ class TestTurnRelevancy:
         ec = EvalCase(input="q", output="a", messages=INCOHERENT_MESSAGES)
         score = await metric.a_measure(ec)
         assert not score.passed
+        assert "Off-topic replies" in score.reason
 
     async def test_missing_messages(self):
         llm = MockLLM()

@@ -1,0 +1,54 @@
+# Copy to .harness-evals/environments.yaml and fill in credentials.
+# That path is gitignored — never commit real secrets.
+#
+# Usage:
+#   cp examples/harness-environments.example.yaml .harness-evals/environments.yaml
+#   python examples/load_harness_env.py export qa --login --save
+#
+# Default SSE path template (override per env if your gateway path differs):
+#   {base_url}/gateway/chat/unified?orgIdentifier={org}&projectIdentifier={project}&accountIdentifier={account_id}
+
+_default:
+  sse_path_template: "{base_url}/harness-intelligence/api/v2/chat?orgIdentifier={org}&projectIdentifier={project}&accountIdentifier={account_id}"
+  login_path: login
+
+qa:
+  url: https://qa.harness.io
+  org: default
+  project: my_project
+  account_id: YOUR_ACCOUNT_ID
+  username: YOUR_USERNAME
+  password: YOUR_PASSWORD
+  # token: ...  # optional cached bearer token (written by --save)
+
+prod0:
+  url: https://app.harness.io
+  org: default
+  project: my_project
+  account_id: YOUR_ACCOUNT_ID
+  username: YOUR_USERNAME
+  password: YOUR_PASSWORD
+
+prod1:
+  url: https://app.harness.io
+  org: default
+  project: my_project
+  account_id: YOUR_ACCOUNT_ID
+  username: YOUR_USERNAME
+  password: YOUR_PASSWORD
+
+prod2:
+  url: https://app.harness.io
+  org: default
+  project: my_project
+  account_id: YOUR_ACCOUNT_ID
+  username: YOUR_USERNAME
+  password: YOUR_PASSWORD
+
+prod4:
+  url: https://app.harness.io
+  org: default
+  project: my_project
+  account_id: YOUR_ACCOUNT_ID
+  username: YOUR_USERNAME
+  password: YOUR_PASSWORD

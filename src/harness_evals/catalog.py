@@ -98,6 +98,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ArgumentCorrectnessMetric,
         BiasMetric,
         BLEUMetric,
+        ROUGEMetric,
         BrierScoreMetric,
         CalibrationMetric,
         ComplianceMetric,
@@ -193,6 +194,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         # Similarity
         "levenshtein": LevenshteinMetric,
         "bleu": BLEUMetric,
+        "rouge": ROUGEMetric,
         "embedding_similarity": EmbeddingSimilarityMetric,
         # Operational
         "latency": LatencyMetric,

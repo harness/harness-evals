@@ -7,6 +7,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0]
+
+### Added
+
+- **ROUGEMetric**: new similarity metric supporting ROUGE-1, ROUGE-2, and
+  ROUGE-L variants for summarization evaluation. Pure Python implementation
+  using whitespace tokenization with no external dependencies. Returns
+  F-measure as primary score with precision/recall in metadata.
+
 ## [0.12.2]
 
 ### Added

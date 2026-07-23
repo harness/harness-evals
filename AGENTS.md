@@ -137,7 +137,7 @@ harness-evals/
 │   │   ├── reliability/             # OutcomeConsistency, ResourceConsistency, TrajectoryConsistency,
 │   │   │                            # PromptRobustness, EnvironmentRobustness, FaultRobustness,
 │   │   │                            # BrierScore, Calibration, Discrimination
-│   │   ├── similarity/              # Levenshtein, BLEU, EmbeddingSimilarity
+│   │   ├── similarity/              # Levenshtein, BLEU, ROUGE, EmbeddingSimilarity
 │   │   ├── llm_judge/              # GEval, RubricJudge, Pairwise, DAG, PromptAlignment, Summarization
 │   │   ├── rag/                     # Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall,
 │   │   │                            # AnswerCorrectness, AnswerSimilarity, ContextEntityRecall,

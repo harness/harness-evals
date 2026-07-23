@@ -31,6 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
+from harness_evals.core.types import ToolCall
 from harness_evals.errors import TargetInvocationError
 from harness_evals.plugins import register_target
 from harness_evals.targets.auth import AuthConfig, NoAuth
@@ -76,13 +77,22 @@ class StreamingHttpTarget(BaseTarget):
             empty and a warning is logged — set ``output_event`` for such streams.
             Independent of ``capture_events``: all other events remain available
             to metrics via ``sse_events``.
+        tool_calls_event: Optional event name (or list of names) that narrows
+            where ``tool_calls_path`` is applied. When unset, trajectory
+            reconstruction keeps the existing behavior and applies
+            ``tool_calls_path`` to every JSON event.
+        tool_results_event/tool_results_path: Optional explicit result selector
+            for streams that emit tool calls and tool results in different
+            event shapes. Results become ``tool`` messages in the reconstructed
+            trajectory.
 
     Trajectory: unless the agent reports a consolidated trajectory via
     ``messages_path`` (which stays authoritative), ``EvalCase.messages`` is
     rebuilt from the stream in event order — interleaving assistant text
-    (``output_path``), tool calls, and tool results (``tool_calls_path``) as
-    they were emitted. Streams that carry no such structure fall back to a
-    plain ``[user, assistant]`` envelope. Raw events are still captured to
+    (``output_path``), tool calls (``tool_calls_path``), and tool results
+    (``tool_results_path`` or result-shaped ``tool_calls_path`` entries) as they
+    were emitted. Streams that carry no such structure fall back to a plain
+    ``[user, assistant]`` envelope. Raw events are still captured to
     ``sse_events`` regardless.
     """
 
@@ -99,7 +109,10 @@ class StreamingHttpTarget(BaseTarget):
     backoff_s: float = 0.5
 
     output_path: str = "$.output"
+    tool_calls_event: str | list[str] | None = None
     tool_calls_path: str | None = None
+    tool_results_event: str | list[str] | None = None
+    tool_results_path: str | None = None
     context_path: str | None = None
     messages_path: str | None = None
     token_count_path: str | None = None
@@ -300,6 +313,9 @@ class StreamingHttpTarget(BaseTarget):
         final_payload = self._final_payload(decoded)
         output = self._final_output(decoded, final_payload)
         kwargs = self._extract_optional_fields(final_payload) if final_payload is not None else {}
+        stream_tool_calls = self._extract_stream_tool_calls(decoded)
+        if stream_tool_calls:
+            kwargs["tool_calls"] = stream_tool_calls
         # The answer payload rarely carries usage/telemetry: streaming agents
         # emit token counts in a separate trailing event (``model_usage``,
         # ``done``) that ``_final_payload`` deliberately skips when selecting the
@@ -314,7 +330,10 @@ class StreamingHttpTarget(BaseTarget):
                 decoded,
                 input_value,
                 output_path=self.output_path,
+                tool_calls_event=self.tool_calls_event,
                 tool_calls_path=self.tool_calls_path,
+                tool_results_event=self.tool_results_event,
+                tool_results_path=self.tool_results_path,
             )
             if reconstructed is not None:
                 kwargs["messages"] = reconstructed
@@ -451,6 +470,30 @@ class StreamingHttpTarget(BaseTarget):
                 if key in kwargs:
                     pending.remove((key, path, cast))
 
+    def _extract_stream_tool_calls(self, decoded: list[tuple[str, object]]) -> list[ToolCall] | None:
+        """Extract top-level tool calls from explicitly configured tool events.
+
+        Historically ``EvalCase.tool_calls`` came from the selected final payload
+        while stream-wide tool extraction was used for reconstructed messages.
+        Preserve that behavior unless ``tool_calls_event`` is set; then the user
+        has explicitly identified which SSE event(s) carry tool calls.
+        """
+        if self.tool_calls_path is None or self.tool_calls_event is None:
+            return None
+
+        tool_calls: list[ToolCall] = []
+        for name, payload in decoded:
+            if not _event_matches(name, self.tool_calls_event) or not isinstance(payload, (dict, list)):
+                continue
+            raw_tools = extract_path(payload, self.tool_calls_path)
+            if not isinstance(raw_tools, list):
+                continue
+            for entry in raw_tools:
+                if not isinstance(entry, dict) or "name" not in entry or _is_tool_result(entry):
+                    continue
+                tool_calls.append(ToolCall.from_dict(entry))
+        return tool_calls or None
+
 
 def _parse_sse(raw: str) -> list[tuple[str, str]]:
     """Parse an SSE stream into a list of ``(event_name, data)`` tuples.
@@ -498,6 +541,20 @@ def _decode(data: str) -> object:
         return json.loads(data)
     except (json.JSONDecodeError, ValueError):
         return data
+
+
+def _event_matches(event_name: str, selector: str | list[str] | None) -> bool:
+    if selector is None:
+        return True
+    if isinstance(selector, str):
+        return event_name == selector
+    return event_name in selector
+
+
+def _is_tool_result(entry: dict) -> bool:
+    has_input = entry.get("arguments") is not None or entry.get("input") is not None
+    has_output = entry.get("output") is not None or entry.get("result") is not None
+    return has_output and not has_input
 
 
 def _get_content_type(response: object) -> str:

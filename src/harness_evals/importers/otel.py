@@ -174,7 +174,6 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         return _build_conversation_eval_case(data)
 
 
-
 # ------------------------------------------------------------------
 # Core builder: conversation trajectory (single EvalCase)
 # ------------------------------------------------------------------
@@ -243,12 +242,14 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
             total_input_tokens += inp_tok
             total_output_tokens += out_tok
 
-            turn_details.append({
-                "span_id": span.get("span_id"),
-                "input_tokens": inp_tok,
-                "output_tokens": out_tok,
-                "latency_ms": _span_latency(span),
-            })
+            turn_details.append(
+                {
+                    "span_id": span.get("span_id"),
+                    "input_tokens": inp_tok,
+                    "output_tokens": out_tok,
+                    "latency_ms": _span_latency(span),
+                }
+            )
 
         elif span_type == SpanType.TOOL_CALL:
             tc = _extract_tool_from_span(span)
@@ -273,11 +274,13 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
     meta_attrs = (meta_span or spans[0]).get("attributes") or {}
     _set_if(metadata, "trace_id", (meta_span or spans[0]).get("trace_id"))
     _set_if(
-        metadata, "provider",
+        metadata,
+        "provider",
         meta_attrs.get("gen_ai.provider.name") or meta_attrs.get("gen_ai.system"),
     )
     _set_if(
-        metadata, "model",
+        metadata,
+        "model",
         meta_attrs.get("gen_ai.response.model") or meta_attrs.get("gen_ai.request.model"),
     )
     _set_if(metadata, "operation", meta_attrs.get("gen_ai.operation.name"))
@@ -385,9 +388,7 @@ def _extract_user_input_from_span(attrs: dict) -> str:
     return ""
 
 
-def _recover_intermediate_user_messages(
-    attrs: dict, messages: list[Message]
-) -> None:
+def _recover_intermediate_user_messages(attrs: dict, messages: list[Message]) -> None:
     """Append user messages from this turn's input that aren't already in the trajectory.
 
     In multi-turn conversations, each LLM turn's input_messages contains the full
@@ -402,9 +403,7 @@ def _recover_intermediate_user_messages(
         if not isinstance(parsed, list):
             continue
 
-        existing_user_texts = {
-            m.content for m in messages if m.role == "user" and m.content
-        }
+        existing_user_texts = {m.content for m in messages if m.role == "user" and m.content}
 
         for msg in parsed:
             if not isinstance(msg, dict) or msg.get("role") != "user":
@@ -487,10 +486,12 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
                         if t:
                             text_parts.append(t)
                     elif part.get("type") == "tool_use":
-                        tcs.append(ToolCall(
-                            name=part.get("name", ""),
-                            input=part.get("input"),
-                        ))
+                        tcs.append(
+                            ToolCall(
+                                name=part.get("name", ""),
+                                input=part.get("input"),
+                            )
+                        )
                 return "\n".join(text_parts) or None, tcs
 
     return None, []
@@ -504,17 +505,13 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
     # Tool name from attributes or span name
     tool_name = attrs.get("gen_ai.tool.name") or attrs.get("tool.name") or ""
     if not tool_name and name.startswith("execute_tool "):
-        tool_name = (span.get("name") or span.get("span_name") or "")[len("execute_tool "):]
+        tool_name = (span.get("name") or span.get("span_name") or "")[len("execute_tool ") :]
 
     # Arguments from attributes
-    tool_input = _parse_json_attr(
-        attrs.get("gen_ai.tool.call.arguments") or attrs.get("tool.input")
-    )
+    tool_input = _parse_json_attr(attrs.get("gen_ai.tool.call.arguments") or attrs.get("tool.input"))
 
     # Result from attributes
-    tool_output = _parse_json_or_str(
-        attrs.get("gen_ai.tool.call.result") or attrs.get("tool.output")
-    )
+    tool_output = _parse_json_or_str(attrs.get("gen_ai.tool.call.result") or attrs.get("tool.output"))
 
     # Fallback: extract from gen_ai.input.messages / gen_ai.output.messages
     if not tool_input:
@@ -613,20 +610,24 @@ def _tool_calls_from_parts(parts: list) -> list[ToolCall]:
             continue
         # Inline structured format (ai-evals style)
         if "name" in part:
-            tool_calls.append(ToolCall(
-                name=part.get("name", ""),
-                input=part.get("arguments"),
-            ))
+            tool_calls.append(
+                ToolCall(
+                    name=part.get("name", ""),
+                    input=part.get("arguments"),
+                )
+            )
         # Content-wrapped format (semconv style)
         else:
             tc_data = part.get("content", "")
             if isinstance(tc_data, str):
                 tc_data = _try_json(tc_data)
             if isinstance(tc_data, dict):
-                tool_calls.append(ToolCall(
-                    name=tc_data.get("name", ""),
-                    input=tc_data.get("arguments") or tc_data.get("input"),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        name=tc_data.get("name", ""),
+                        input=tc_data.get("arguments") or tc_data.get("input"),
+                    )
+                )
     return tool_calls
 
 

@@ -149,6 +149,7 @@ class HarnessOTELEvalCaseSource(BaseEvalCaseSource):
         self,
         *,
         limit: int = 50,
+        lookback_hours: int | None = None,
         lookback_days: int = 7,
         extra_filter: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -157,13 +158,17 @@ class HarnessOTELEvalCaseSource(BaseEvalCaseSource):
         Returns a list of dicts with keys: trace_id, name, status_code,
         duration_ms, start_timestamp, model, input_tokens, output_tokens.
 
+        ``lookback_hours`` takes precedence over ``lookback_days`` when both
+        are supplied.  Use ``lookback_hours=4`` to fetch the last 4 hours.
+
         ``extra_filter`` is appended as an additional HQL ``and`` clause, e.g.
         ``"service_name != 'my-service'"`` or ``"model = 'gpt-4o'"``.
         """
         extra_clause = f" and {extra_filter}" if extra_filter else ""
+        lookback_expr = f"ago({lookback_hours}h)" if lookback_hours is not None else f"ago({lookback_days}d)"
         hql = (
             'find event "genai:agent_trace"'
-            f" | filter start_timestamp >= ago({lookback_days}d)"
+            f" | filter start_timestamp >= {lookback_expr}"
             " and start_timestamp < now()"
             " and parent_span_id = ''"
             f" and account_id = '{self._account_id}'"
@@ -222,11 +227,11 @@ class HarnessOTELEvalCaseSource(BaseEvalCaseSource):
 
         if resp.status_code == 401:
             raise PermissionError(
-                f"QueryService returned 401 — check api_key and account_id"
+                "QueryService returned 401 — check api_key and account_id"
             )
         if resp.status_code == 403:
             raise PermissionError(
-                f"QueryService returned 403 — token lacks access to this org/project"
+                "QueryService returned 403 — token lacks access to this org/project"
             )
         if resp.status_code != 200:
             raise RuntimeError(

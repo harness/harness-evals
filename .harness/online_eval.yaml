@@ -1,14 +1,13 @@
 pipeline:
   name: Online Evals Trace TaskCompletion
   identifier: online_evals_trace_task_completion
-  orgIdentifier: SrikarOrg
-  projectIdentifier: SrikarProject
+  orgIdentifier: PROD
+  projectIdentifier: Data_Platform
   tags:
     purpose: online-evals
   properties:
     ci:
       codebase:
-        connectorRef: <+pipeline.variables.repo_connector>
         repoName: <+pipeline.variables.repo_name>
         build:
           type: branch
@@ -17,29 +16,49 @@ pipeline:
   variables:
     - name: trace_ids
       type: String
-      description: Comma-separated trace IDs to evaluate.
+      description: "Comma-separated trace IDs to evaluate. Leave blank to use lookback_hours instead."
+      required: false
+      value: <+input>.default()
+    - name: lookback_hours
+      type: String
+      description: "Fetch all root traces from the last N hours. Used when trace_ids is empty."
+      required: false
+      value: <+input>.default(0)
+    - name: lookback_limit
+      type: String
+      description: "Max number of traces to fetch when using lookback_hours (default: 100)."
+      required: false
+      value: <+input>.default(100)
+    - name: lookback_filter
+      type: String
+      description: "Optional extra HQL filter when using lookback_hours, e.g. model = 'gpt-4o'."
+      required: false
+      value: <+input>.default()
+    - name: dry_run
+      type: String
+      description: "Set to 'true' to fetch and print trace IDs without scoring."
+      required: false
+      value: <+input>.default(false)
+    - name: account_id
+      type: String
+      description: Account whose traces to query with Harness QueryService.
       required: true
-      value: <+input>
+      value: <+input>.default(l7B_kbSEQD2wjrM7PShm5w)
     - name: org_id
       type: String
       description: Org whose traces to query with Harness QueryService.
       required: true
-      value: <+input>.default(SrikarOrg)
+      value: <+input>.default(PROD)
     - name: project_id
       type: String
       description: Project whose traces to query with Harness QueryService.
       required: true
-      value: <+input>.default(SrikarProject)
+      value: <+input>.default(Data_Platform)
     - name: branch
       type: String
       description: Branch ref to clone. Use the current feature branch until these changes are published.
       required: true
       value: <+input>.default(feat/harness-otel-eval-case-source)
-    - name: repo_connector
-      type: String
-      description: Connector used to clone this repository.
-      required: true
-      value: <+input>
     - name: repo_name
       type: String
       description: Repository name/path for the connector.
@@ -49,7 +68,7 @@ pipeline:
       type: String
       description: Connector used to pull the Python image.
       required: true
-      value: <+input>.default(dockerHubAnon)
+      value: <+input>.default(account.harnessImage)
     - name: harness_api_key
       type: Secret
       description: Harness PAT or SAT with QueryService access.
@@ -106,22 +125,37 @@ pipeline:
                       python -m pip install --upgrade pip
                       python -m pip install -e ".[harness,llm]"
 
+                      echo "=== Build online eval args ==="
+                      EVAL_ARGS="--org-id '<+pipeline.variables.org_id>' --project-id '<+pipeline.variables.project_id>' --threshold '<+pipeline.variables.threshold>' --model '<+pipeline.variables.model>' --output-dir /harness/results"
+
+                      TRACE_IDS="<+pipeline.variables.trace_ids>"
+                      LOOKBACK_HOURS="<+pipeline.variables.lookback_hours>"
+                      LOOKBACK_LIMIT="<+pipeline.variables.lookback_limit>"
+                      LOOKBACK_FILTER="<+pipeline.variables.lookback_filter>"
+
+                      if [ -n "$TRACE_IDS" ]; then
+                        EVAL_ARGS="$EVAL_ARGS --trace-ids '$TRACE_IDS'"
+                      else
+                        EVAL_ARGS="$EVAL_ARGS --lookback-hours '$LOOKBACK_HOURS' --lookback-limit '$LOOKBACK_LIMIT'"
+                        if [ -n "$LOOKBACK_FILTER" ]; then
+                          EVAL_ARGS="$EVAL_ARGS --lookback-filter '$LOOKBACK_FILTER'"
+                        fi
+                      fi
+
+                      if [ "<+pipeline.variables.dry_run>" = "true" ]; then
+                        EVAL_ARGS="$EVAL_ARGS --dry-run"
+                      fi
+
                       echo "=== Run online eval ==="
                       mkdir -p /harness/results
-                      python scripts/online_eval.py \
-                        --trace-ids "<+pipeline.variables.trace_ids>" \
-                        --org-id "<+pipeline.variables.org_id>" \
-                        --project-id "<+pipeline.variables.project_id>" \
-                        --threshold "<+pipeline.variables.threshold>" \
-                        --model "<+pipeline.variables.model>" \
-                        --output-dir /harness/results
+                      eval "python scripts/online_eval.py $EVAL_ARGS"
 
                       echo "=== Results ==="
                       ls -la /harness/results
                       python -m json.tool /harness/results/scores.json
                     envVariables:
                       HARNESS_API_KEY: <+pipeline.variables.harness_api_key>
-                      HARNESS_ACCOUNT_ID: <+account.identifier>
+                      HARNESS_ACCOUNT_ID: <+pipeline.variables.account_id>
                       HARNESS_BASE_URL: <+pipeline.variables.harness_base_url>
                       OPENAI_API_KEY: <+pipeline.variables.openai_api_key>
                     reports:

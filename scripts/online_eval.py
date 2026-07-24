@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Online evals: fetch Harness traces by ID, score them, and emit CI reports.
+"""Online evals: fetch Harness traces and score them, emitting CI reports.
+
+Two modes:
+  - Explicit trace IDs:  --trace-ids id1,id2,...
+  - Lookback window:     --lookback-hours 4   (fetch all root traces in the last N hours)
 
 Usage:
     python scripts/online_eval.py \\
         --trace-ids <id1>,<id2> \\
+        --org-id <org> \\
+        --project-id <project>
+
+    python scripts/online_eval.py \\
+        --lookback-hours 4 \\
         --org-id <org> \\
         --project-id <project>
 
@@ -50,7 +59,7 @@ def _build_metrics(args: argparse.Namespace) -> list[Any]:
 
     requested = [m.strip() for m in args.metrics.split(",") if m.strip()]
     metrics = []
-    llm = None  # lazily constructed once if needed
+    llm = None
 
     def _llm() -> OpenAILLM:
         nonlocal llm
@@ -131,6 +140,27 @@ def _write_fetch_failure_junit(junit_path: Path, skipped: list[dict[str, str]]) 
     junit.finalize()
 
 
+async def _resolve_trace_ids(args: argparse.Namespace, source: Any) -> list[str]:
+    """Return trace IDs either from --trace-ids or by listing recent traces."""
+    if args.trace_ids:
+        return _parse_trace_ids(args.trace_ids)
+
+    # Lookback mode: list root traces in the last N hours
+    lookback_hours = int(args.lookback_hours)
+    print(f"Listing traces from the last {lookback_hours} hour(s)...")
+    rows = await source.list_traces(
+        lookback_hours=lookback_hours,
+        limit=args.lookback_limit,
+        extra_filter=args.lookback_filter or None,
+    )
+    if not rows:
+        print("No traces found in the lookback window.", file=sys.stderr)
+        return []
+    trace_ids = [r["trace_id"] for r in rows if r.get("trace_id")]
+    print(f"Found {len(trace_ids)} trace(s) in the last {lookback_hours}h.")
+    return trace_ids
+
+
 async def _run(
     args: argparse.Namespace,
     *,
@@ -140,17 +170,18 @@ async def _run(
     from harness_evals import a_evaluate, summarize
     from harness_evals.sinks.junit_sink import JUnitSink
 
-    trace_ids = _parse_trace_ids(args.trace_ids)
-    if not trace_ids:
-        print("ERROR: no trace IDs provided", file=sys.stderr)
-        return 2
-
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     junit_path = out_dir / "junit.xml"
     scores_path = out_dir / "scores.json"
 
     source = source_factory(args)
+    trace_ids = await _resolve_trace_ids(args, source)
+
+    if not trace_ids:
+        print("ERROR: no trace IDs provided or discovered", file=sys.stderr)
+        return 2
+
     print(f"Fetching {len(trace_ids)} trace(s)...")
     cases = await source.fetch_traces(trace_ids)
 
@@ -163,6 +194,15 @@ async def _run(
             reason = (case.metadata or {}).get("error") or "empty input/output"
             skipped.append({"trace_id": tid, "reason": str(reason)})
             print(f"  skip {tid}: {reason}")
+
+    if args.dry_run:
+        print(f"Dry run — {len(usable)} usable trace(s), {len(skipped)} skipped:")
+        for case in usable:
+            tid = (case.metadata or {}).get("trace_id", "")
+            print(f"  {tid}")
+        for item in skipped:
+            print(f"  {item['trace_id']} (skipped: {item['reason']})")
+        return 0
 
     if not usable:
         print("ERROR: no usable eval cases after fetch", file=sys.stderr)
@@ -256,18 +296,43 @@ async def _run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+
+    # --- Trace source (mutually exclusive modes) ---
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument(
         "--trace-ids",
-        required=True,
+        default="",
         help="Comma-separated trace IDs to evaluate",
     )
+    source_group.add_argument(
+        "--lookback-hours",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Fetch all root traces from the last N hours (alternative to --trace-ids)",
+    )
+    parser.add_argument(
+        "--lookback-limit",
+        type=int,
+        default=100,
+        help="Max traces to fetch when using --lookback-hours (default: 100)",
+    )
+    parser.add_argument(
+        "--lookback-filter",
+        default="",
+        help="Extra HQL filter appended when using --lookback-hours, e.g. \"model = 'gpt-4o'\"",
+    )
+
+    # --- Harness org/project ---
     parser.add_argument("--org-id", required=True, help="Harness org identifier")
     parser.add_argument("--project-id", required=True, help="Harness project identifier")
+
+    # --- Scoring ---
     parser.add_argument(
         "--threshold",
         type=float,
         default=0.7,
-        help="TaskCompletion pass threshold (default: 0.7)",
+        help="Pass threshold for LLM-judged metrics (default: 0.7)",
     )
     parser.add_argument(
         "--fail-below",
@@ -296,12 +361,24 @@ def main() -> None:
         default=30_000.0,
         help="Latency threshold in milliseconds when --metrics includes latency",
     )
+
+    # --- Output ---
     parser.add_argument(
         "--output-dir",
         default="results",
         help="Directory for junit.xml and scores.json (default: results)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Fetch and print trace IDs that would be evaluated, then exit without scoring",
+    )
+
     args = parser.parse_args()
+
+    if not args.trace_ids and args.lookback_hours is None:
+        parser.error("Provide either --trace-ids or --lookback-hours")
+
     raise SystemExit(asyncio.run(_run(args)))
 
 

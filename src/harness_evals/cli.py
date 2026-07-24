@@ -116,7 +116,9 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
     env_var = _PROVIDER_ENV_VARS.get(args.provider)
     api_key = args.api_key or (os.environ.get(env_var) if env_var else None)
     if not api_key:
-        raise HarnessEvalsError(f"No API key provided. Pass --api-key or set {env_var or 'the provider API key'} env var.")
+        raise HarnessEvalsError(
+            f"No API key provided. Pass --api-key or set {env_var or 'the provider API key'} env var."
+        )
 
     scenario = load_scenario(
         prompt=getattr(args, "prompt", None),

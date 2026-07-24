@@ -107,6 +107,7 @@ from harness_evals.metrics.security.vulnerability_correctness import (
 from harness_evals.metrics.similarity.bleu import BLEUMetric
 from harness_evals.metrics.similarity.embedding_similarity import EmbeddingSimilarityMetric
 from harness_evals.metrics.similarity.levenshtein import LevenshteinMetric
+from harness_evals.metrics.similarity.rouge import ROUGEMetric
 from harness_evals.metrics.structural.json_diff import JsonDiffMetric
 from harness_evals.metrics.structural.schema_validation import SchemaValidationMetric
 from harness_evals.metrics.structural.structural_similarity import StructuralSimilarityMetric
@@ -172,6 +173,7 @@ __all__ = [
     "LevenshteinMetric",
     "BLEUMetric",
     "EmbeddingSimilarityMetric",
+    "ROUGEMetric",
     "ContextRelevancyMetric",
     "ContextEntityRecallMetric",
     "AnswerSimilarityMetric",

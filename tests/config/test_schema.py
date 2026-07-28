@@ -43,6 +43,11 @@ class TestLoadsConfig:
         assert cfg.baseline is None
         assert cfg.plugins == []
         assert cfg.judge_llm is None
+        assert cfg.concurrency is None
+
+    def test_concurrency(self) -> None:
+        cfg = loads_config(_MINIMAL_YAML + "concurrency: 1\n")
+        assert cfg.concurrency == 1
 
     def test_conversation_config(self) -> None:
         cfg = loads_config("""\
@@ -143,6 +148,11 @@ class TestValidation:
     def test_unknown_top_level_key(self) -> None:
         with pytest.raises(HarnessEvalsError, match="unknown_key"):
             loads_config(_MINIMAL_YAML + "unknown_key: true\n")
+
+    @pytest.mark.parametrize("value", [0, -1, 1.5, "1", True])
+    def test_invalid_concurrency(self, value) -> None:
+        with pytest.raises(HarnessEvalsError, match="concurrency"):
+            loads_config(_MINIMAL_YAML + f"concurrency: {value!r}\n")
 
     def test_not_a_mapping(self) -> None:
         with pytest.raises(HarnessEvalsError, match="mapping"):

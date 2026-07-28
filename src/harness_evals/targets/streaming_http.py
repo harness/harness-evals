@@ -340,23 +340,25 @@ class StreamingHttpTarget(BaseTarget):
         return output, kwargs, metadata_extra, final_payload
 
     def _capture(self, decoded: list[tuple[str, object]]) -> dict | None:
-        """Capture SSE events into ``{"sse_events": {event_name: [payloads...]}}``.
+        """Capture SSE events grouped and as a chronological timeline.
 
-        Default (``capture_events`` unset/``None``) captures *all* events so
-        metrics can evaluate across the full stream. An explicit list captures
-        only those event names; an explicit empty list captures nothing.
+        Returns ``{"sse_events": {event_name: [payloads...]}, "sse_timeline":
+        [{"event": name, "payload": payload}, ...]}``. Metrics use the grouped
+        map; JSON traces can emit the ordered timeline instead of ``messages``.
         """
         if self.capture_events is None:
             wanted: set[str] | None = None  # capture everything
         else:
             wanted = set(self.capture_events)
         captured: dict[str, list] = {}
+        timeline: list[dict[str, object]] = []
         for name, payload in decoded:
             if wanted is None or name in wanted:
                 captured.setdefault(name, []).append(payload)
+                timeline.append({"event": name, "payload": payload})
         if not captured:
             return None
-        return {"sse_events": captured}
+        return {"sse_events": captured, "sse_timeline": timeline}
 
     def _final_payload(self, decoded: list[tuple[str, object]]) -> object | None:
         """The JSON payload used for output + optional-field extraction.

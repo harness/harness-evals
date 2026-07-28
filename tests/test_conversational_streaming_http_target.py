@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
 from harness_evals.core.types import Message
 from harness_evals.targets.conversational_streaming_http import ConversationalStreamingHttpTarget
 
@@ -210,3 +211,66 @@ async def test_conversational_streaming_target_supports_custom_human_input_event
         "review_id": "req-9",
         "payload": {"request_id": "req-9", "question": "Continue?"},
     }
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_isolates_sessions_between_batch_tasks(monkeypatch):
+    target = _harness_target()
+    requests: list[dict] = []
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        payload = json.loads(body.decode("utf-8"))
+        requests.append(payload)
+        prompt = payload["prompt"]
+        conversation_id = payload.get("conversation_id") or f"conv-{prompt}"
+        return (
+            _sse(
+                [
+                    (
+                        "stream_metadata",
+                        {
+                            "conversation_id": conversation_id,
+                            "session_id": conversation_id,
+                        },
+                    ),
+                    ("assistant_message", {"v": "done"}),
+                ]
+            ),
+            "text/event-stream",
+            1.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+    simulator = ConversationSimulator(max_concurrent=1)
+    goldens = [
+        ConversationGolden(
+            scenario=prompt,
+            expected_outcome="done",
+            mode=ConversationMode.SCRIPTED,
+            turns=[
+                Message(role="user", content=prompt),
+                Message(role="user", content=f"continue-{prompt}"),
+            ],
+        )
+        for prompt in ("one", "two")
+    ]
+
+    await simulator.simulate_batch(goldens, target.agenerate)
+
+    assert requests == [
+        {"prompt": "one", "stream": True},
+        {
+            "prompt": "continue-one",
+            "conversation_id": "conv-one",
+            "session_id": "conv-one",
+            "stream": True,
+        },
+        {"prompt": "two", "stream": True},
+        {
+            "prompt": "continue-two",
+            "conversation_id": "conv-two",
+            "session_id": "conv-two",
+            "stream": True,
+        },
+    ]

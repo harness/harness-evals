@@ -1,0 +1,527 @@
+{
+  "_comment": "Curated, reviewable portability overrides keyed by full conversation_id. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'elicitation_hints'. Never put concrete identifiers in 'elicitation_hints'.",
+  "overrides": {
+    "a57229e8-7688-4947-bdf3-7674387fbd5d": {
+      "scenario_type": "write",
+      "scenario": "Create a reusable Windows scheduled-task step template in the ${HARNESS_PROJECT} project",
+      "expected_outcome": "A reusable Step template is created in ${HARNESS_PROJECT} that registers and starts a Windows scheduled task, parameterized via pipeline variables for task name, executable path, and trigger type, without requiring a pre-existing template to copy.",
+      "initial_prompt": "Create a reusable Step template to register and start a Windows scheduled task, using pipeline variables for the task name, executable path, and trigger type",
+      "elicitation_hints": {
+        "yaml": {
+          "default_action": "accept"
+        }
+      },
+      "reason": "Original prod flow referenced an existing prod template; rewritten to be self-contained and portable"
+    },
+    "38a3984f-ad87-4362-8cca-46eb8e06843e": {
+      "scenario_type": "write",
+      "scenario": "Create an audit pipeline in ${HARNESS_PROJECT}, then extend it with a human approval stage before applying fixes",
+      "expected_outcome": "Turn 1: creates pipeline audit_permissions_${EVAL_RUN_SUFFIX} with a Run step that declares output variables TOTAL_REPOS, WRONG_REPO_COUNT, WRONG_REPOS, and WRONG_PERMISSIONS_JSON. Turn 2: updates that same pipeline to add an Approval stage after the audit Run step for human review before any apply stage.",
+      "turns": [
+        "Create a pipeline named audit_permissions_${EVAL_RUN_SUFFIX} in ${HARNESS_PROJECT} with one Custom stage and a Run step that simulates a permission audit script. The Run step must declare output variables TOTAL_REPOS, WRONG_REPO_COUNT, WRONG_REPOS, and WRONG_PERMISSIONS_JSON.",
+        "Update pipeline audit_permissions_${EVAL_RUN_SUFFIX}: add an Approval stage after the audit Run step so a user can review the audit output and enter which repos to fix before any apply stage runs"
+      ],
+      "elicitation_hints": {
+        "yaml": {
+          "default_action": "accept"
+        }
+      },
+      "sse_checks": [
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_update"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_update"
+            }
+          ]
+        },
+        {
+          "event": "assistant_message",
+          "exists": true
+        }
+      ],
+      "reason": "Two-turn create-then-extend; prod session assumed an existing pipeline fetched via harness_get \u2014 this version is self-contained for eval"
+    },
+    "0aa7ae54-f121-4939-b843-1726e543ad14": {
+      "scenario_type": "write",
+      "scenario": "Create a CCM cost category at account scope",
+      "expected_outcome": "The assistant completes creating a CCM cost category at account scope: collects coherent bucketing/filter answers from the user, calls harness_create for resource_type cost_category (prefer name eval_cost_category_${EVAL_RUN_SUFFIX} when a name is requested), and confirms creation or clearly reports a blocking API/environment error. Any valid bucketing path is acceptable (environment, AWS account, service, region, tag, etc.) \u2014 do not require a specific dimension.",
+      "initial_prompt": "Let's create a Cost Category",
+      "max_elicitation_rounds": 24,
+      "user_persona": "FinOps user who answers CCM workflow questions with concise defaults",
+      "context": [
+        "Org: ${HARNESS_ORG}, Project: ${HARNESS_PROJECT}",
+        "Follow the ccm-cost-categories create flow through harness_create",
+        "Answer elicitations coherently using the agent's offered options when present",
+        "Use category name eval_cost_category_${EVAL_RUN_SUFFIX} when asked for a name",
+        "If asked about shared costs / unallocated costs, prefer skip shared and Unattributed"
+      ],
+      "elicitation_hints": {
+        "llm_on_miss": true,
+        "intents": {
+          "bucketing_criteria": "Environments",
+          "bucket_type": "Environment-based",
+          "bucket_description": "Production, Staging, Development, QA",
+          "filter_type": "Cloud Provider (AWS, GCP, Azure)",
+          "aws_filter_by": "By Account",
+          "cloud_cost_type": "AWS Costs",
+          "cost_bucket_name": "Production",
+          "aws_account_id": "123456789012",
+          "finish_buckets": "Create it with just this one bucket",
+          "select_values": "",
+          "confirm_buckets": "Yes, looks good",
+          "category_name": "eval_cost_category_${EVAL_RUN_SUFFIX}",
+          "shared_costs": "No, skip shared costs",
+          "unallocated_costs": "Show as \"Unattributed\"",
+          "name_template": "By Environment",
+          "aws_grouping": "By AWS Account ID",
+          "bucket_count": "1 bucket"
+        },
+        "matchers": [
+          {
+            "intent": "aws_grouping",
+            "question_contains": [
+              "group your aws costs",
+              "group aws costs into buckets",
+              "how would you like to group your aws"
+            ]
+          },
+          {
+            "intent": "bucket_count",
+            "question_contains": [
+              "how many cost buckets",
+              "how many buckets do you want",
+              "number of cost buckets"
+            ]
+          },
+          {
+            "intent": "category_name",
+            "question_contains": [
+              "name this cost category",
+              "what would you like to name this cost category",
+              "what would you like to name your cost category",
+              "name your cost category"
+            ]
+          },
+          {
+            "intent": "name_template",
+            "question_contains": [
+              "template name",
+              "by environment",
+              "naming template"
+            ]
+          },
+          {
+            "intent": "bucketing_criteria",
+            "question_contains": [
+              "organize your costs",
+              "bucketing criteria"
+            ]
+          },
+          {
+            "intent": "bucket_type",
+            "question_contains": [
+              "what buckets do you want",
+              "buckets do you want to create",
+              "groupings you need"
+            ]
+          },
+          {
+            "intent": "cloud_cost_type",
+            "question_contains": [
+              "what type of costs",
+              "type of costs do you want"
+            ]
+          },
+          {
+            "intent": "bucket_description",
+            "question_contains": [
+              "describe the buckets",
+              "buckets you want in this cost category"
+            ]
+          },
+          {
+            "intent": "filter_type",
+            "question_contains": [
+              "filter costs by",
+              "filter type",
+              "labels or tags",
+              "cloud provider labels",
+              "identify each bucket"
+            ]
+          },
+          {
+            "intent": "aws_filter_by",
+            "question_contains": [
+              "filter aws costs",
+              "how would you like to filter aws"
+            ]
+          },
+          {
+            "intent": "cost_bucket_name",
+            "question_contains": [
+              "name this cost bucket",
+              "name for this cost bucket",
+              "what name should this bucket have",
+              "name should this bucket have"
+            ]
+          },
+          {
+            "intent": "aws_account_id",
+            "question_contains": [
+              "aws account id",
+              "account id(s) to include"
+            ]
+          },
+          {
+            "intent": "finish_buckets",
+            "question_contains": [
+              "add more cost buckets",
+              "create it with just this one bucket"
+            ]
+          },
+          {
+            "intent": "select_values",
+            "question_contains": [
+              "select the fields",
+              "select values"
+            ]
+          },
+          {
+            "intent": "confirm_buckets",
+            "question_contains": [
+              "grouping look correct",
+              "does this grouping"
+            ]
+          },
+          {
+            "intent": "shared_costs",
+            "question_contains": [
+              "shared cost",
+              "add shared costs"
+            ]
+          },
+          {
+            "intent": "unallocated_costs",
+            "question_contains": [
+              "unallocated",
+              "don't match any bucket",
+              "does not match any bucket"
+            ]
+          }
+        ],
+        "yaml": {
+          "default_action": "accept"
+        }
+      },
+      "sse_checks": [
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            },
+            {
+              "path": "$.arguments.resource_type",
+              "equals": "cost_category"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            }
+          ]
+        }
+      ],
+      "reason": "Portable CCM create: path-agnostic expected_outcome so LLM simulator variance (e.g. AWS Account ID vs Environment) is not judged as failure; sse still requires harness_create cost_category."
+    },
+    "9559fb81-ffb2-4ce7-85c5-ee900f9be9a1": {
+      "scenario_type": "write",
+      "scenario": "Create a CCM cost category at account scope by organizing cloud costs into environment buckets",
+      "expected_outcome": "The assistant completes creating a CCM cost category at account scope by organizing costs into environment buckets: collects coherent environment bucketing/filter answers from the user, calls harness_create for resource_type cost_category (prefer name eval_cost_category_${EVAL_RUN_SUFFIX} when a name is requested), and confirms creation or clearly reports a blocking API/environment error. Environment-based bucketing is the preferred path here, but any valid bucketing dimension (AWS account, service, region, tag, etc.) is acceptable \u2014 do not penalize a valid alternate path.",
+      "initial_prompt": "Let's create a Cost Category",
+      "max_elicitation_rounds": 24,
+      "user_persona": "FinOps user who answers CCM workflow questions with concise defaults",
+      "context": [
+        "Org: ${HARNESS_ORG}, Project: ${HARNESS_PROJECT}",
+        "Follow the ccm-cost-categories create flow through harness_create",
+        "Organize costs by environment (Production, Staging, Development, QA); prefer Cloud Provider as the filter type",
+        "Answer elicitations coherently using the agent's offered options when present",
+        "Use category name eval_cost_category_${EVAL_RUN_SUFFIX} when asked for a name",
+        "If asked about shared costs / unallocated costs, prefer skip shared and Unattributed"
+      ],
+      "elicitation_hints": {
+        "llm_on_miss": true,
+        "intents": {
+          "bucketing_criteria": "Environments",
+          "bucket_type": "Environment-based",
+          "bucket_description": "Production, Staging, Development, QA",
+          "filter_type": "Cloud Provider",
+          "cost_bucket_name": "Production",
+          "select_values": "",
+          "confirm_buckets": "Yes, looks good",
+          "finish_buckets": "Create the cost category with these buckets",
+          "category_name": "eval_cost_category_${EVAL_RUN_SUFFIX}",
+          "shared_costs": "No, skip shared costs",
+          "unallocated_costs": "Show as \"Unattributed\"",
+          "name_template": "By Environment"
+        },
+        "matchers": [
+          {
+            "intent": "category_name",
+            "question_contains": [
+              "name this cost category",
+              "what would you like to name this cost category",
+              "what would you like to name your cost category",
+              "name your cost category"
+            ]
+          },
+          {
+            "intent": "cost_bucket_name",
+            "question_contains": [
+              "name this bucket",
+              "name this cost bucket",
+              "name for this cost bucket",
+              "what would you like to name this bucket",
+              "what name should this bucket have",
+              "name should this bucket have"
+            ]
+          },
+          {
+            "intent": "name_template",
+            "question_contains": [
+              "template name",
+              "by environment",
+              "naming template"
+            ]
+          },
+          {
+            "intent": "bucketing_criteria",
+            "question_contains": [
+              "organize your costs",
+              "bucketing criteria"
+            ]
+          },
+          {
+            "intent": "bucket_type",
+            "question_contains": [
+              "what buckets do you want",
+              "buckets do you want to create",
+              "groupings you need",
+              "type of cost buckets"
+            ]
+          },
+          {
+            "intent": "bucket_description",
+            "question_contains": [
+              "describe the buckets",
+              "buckets you want in this cost category"
+            ]
+          },
+          {
+            "intent": "filter_type",
+            "question_contains": [
+              "filter costs by",
+              "filter type",
+              "labels or tags",
+              "cloud provider labels",
+              "identify each bucket"
+            ]
+          },
+          {
+            "intent": "select_values",
+            "question_contains": [
+              "select the fields",
+              "select values"
+            ]
+          },
+          {
+            "intent": "confirm_buckets",
+            "question_contains": [
+              "grouping look correct",
+              "does this grouping"
+            ]
+          },
+          {
+            "intent": "finish_buckets",
+            "question_contains": [
+              "add more cost buckets",
+              "create it with just these",
+              "create the cost category"
+            ]
+          },
+          {
+            "intent": "shared_costs",
+            "question_contains": [
+              "shared cost",
+              "add shared costs"
+            ]
+          },
+          {
+            "intent": "unallocated_costs",
+            "question_contains": [
+              "unallocated",
+              "don't match any bucket",
+              "does not match any bucket"
+            ]
+          }
+        ],
+        "yaml": {
+          "default_action": "accept"
+        }
+      },
+      "sse_checks": [
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            },
+            {
+              "path": "$.arguments.resource_type",
+              "equals": "cost_category"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            }
+          ]
+        }
+      ],
+      "reason": "Portable CCM create: path-agnostic expected_outcome so LLM simulator variance (e.g. AWS Account ID vs Environment) is not judged as failure; sse still requires harness_create cost_category."
+    },
+    "a7df76cb-b530-45f3-84e8-4469249ab5eb": {
+      "scenario_type": "read_only",
+      "scenario": "Explore accessible artifact registries and code repositories that can supply artifacts or source code for a Docker image build",
+      "expected_outcome": "Across the conversation, the assistant lists artifact registries available in the current scope, inspects artifacts from registries selected from its own results, handles empty or unavailable registries honestly, and identifies accessible code repositories that could be used as Docker image build sources.",
+      "turns": [
+        "What artifact registries do I have access to?",
+        "What artifacts are available in the first registry you listed?",
+        "Check another registry from your results and show me its available artifacts.",
+        "Check one more registry from your results. If no other registry exists, tell me clearly.",
+        "What code repositories do I have access to that I can use as the source for building a Docker image?"
+      ],
+      "reason": "Removed production-specific registry names while preserving the original discovery and drill-down workflow"
+    },
+    "dca9b12c-fb72-4056-b471-4f32a83af72b": {
+      "exclude": true,
+      "reason": "oversized (exceeded judge char limit); not curated for v1"
+    },
+    "4dfaebd3-0f1b-4f8b-a189-87087a8d1ee4": {
+      "scenario_type": "write",
+      "scenario": "Create a Split/FME check pipeline in ${HARNESS_PROJECT}, then add a script that verifies access to the Split admin endpoint",
+      "expected_outcome": "Turn 1: creates pipeline eval_split_admin_check_${EVAL_RUN_SUFFIX} in ${HARNESS_PROJECT} with at least one stage/step suitable for FME/Split work (e.g. a Custom/CI stage with a placeholder Run step). Turn 2: updates that same pipeline to add a script/Run step that checks access to the Split (FME) admin API (any reasonable HTTP/curl approach is acceptable; do not require a specific URL or command), then confirms the update or clearly reports a blocking API/environment error. Penalize only if no pipeline is created, no access-check script is added, the task is abandoned, or the assistant falsely claims success after a failed tool result.",
+      "turns": [
+        "Create a pipeline named eval_split_admin_check_${EVAL_RUN_SUFFIX} in ${HARNESS_PROJECT} with one Custom stage and a simple Run step that prints 'placeholder'.",
+        "Update pipeline eval_split_admin_check_${EVAL_RUN_SUFFIX}: add a script/Run step that checks access to the Split admin endpoint (e.g. an HTTP/curl call authenticated with an API key env var such as SPLIT_ADMIN_API_KEY)."
+      ],
+      "max_elicitation_rounds": 8,
+      "user_persona": "Harness user who provides reasonable answers when asked",
+      "context": [
+        "Org: ${HARNESS_ORG}, Project: ${HARNESS_PROJECT}",
+        "Self-contained: create the pipeline first, then add the Split admin access-check script",
+        "Do not assume any pre-existing pipeline exists in the eval project"
+      ],
+      "elicitation_hints": {
+        "llm_on_miss": true,
+        "yaml": {
+          "default_action": "accept"
+        }
+      },
+      "sse_checks": [
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_create"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_update"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_update"
+            }
+          ]
+        },
+        {
+          "event": "assistant_message",
+          "exists": true
+        }
+      ],
+      "reason": "Prod session assumed an existing FME pipeline and called harness_update only. Rewritten as create-then-extend so the eval project does not need a pre-created pipeline."
+    }
+  }
+}

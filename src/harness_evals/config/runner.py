@@ -399,11 +399,18 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
                 agent_fn,
                 metrics=metrics,
                 sinks=sinks,
+                concurrency=cfg.concurrency,
                 simulator_llm=simulator_llm,
                 human_input_simulator=human_input_simulator,
             )
         else:
-            scores = await evaluate_dataset(goldens, target.ainvoke, metrics=metrics, sinks=sinks)
+            scores = await evaluate_dataset(
+                goldens,
+                target.ainvoke,
+                metrics=metrics,
+                sinks=sinks,
+                concurrency=cfg.concurrency,
+            )
 
     if baseline:
         gate_against_baseline(scores, baseline)

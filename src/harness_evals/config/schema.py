@@ -80,6 +80,7 @@ class EvalConfig:
     sinks: list[SinkSpec] = field(default_factory=lambda: [SinkSpec("stdout")])
     baseline: BaselineSpec | None = None
     plugins: list[str] = field(default_factory=list)
+    concurrency: int | None = None
 
 
 _KNOWN_TOP_LEVEL_KEYS = frozenset(
@@ -93,6 +94,7 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset(
         "sinks",
         "baseline",
         "plugins",
+        "concurrency",
     }
 )
 
@@ -157,6 +159,12 @@ def loads_config(text: str, *, base_dir: Path | None = None) -> EvalConfig:
     if not isinstance(plugins, list):
         raise HarnessEvalsError("'plugins' must be a list of module names")
 
+    concurrency = raw.get("concurrency")
+    if concurrency is not None and (
+        isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1
+    ):
+        raise HarnessEvalsError("'concurrency' must be an integer >= 1")
+
     return EvalConfig(
         name=name,
         dataset=dataset,
@@ -167,6 +175,7 @@ def loads_config(text: str, *, base_dir: Path | None = None) -> EvalConfig:
         sinks=sinks,
         baseline=baseline,
         plugins=plugins,
+        concurrency=concurrency,
     )
 
 

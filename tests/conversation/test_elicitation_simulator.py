@@ -1,5 +1,7 @@
 """Tests for ConversationSimulator elicitation sub-loop."""
 
+import json
+
 import pytest
 from examples.harness_sse_elicitation_adapter import ElicitationSimulator
 
@@ -33,7 +35,10 @@ async def test_simulator_uses_initial_prompt_and_resolves_elicitation():
 
     async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
         calls.append(system_event)
-        assert messages[-1].content == "Create a k8s connector"
+        if system_event is None:
+            assert messages[-1].content == "Create a k8s connector"
+        else:
+            assert messages[-1].content == "testconnector"
         if system_event is None:
             return Message(
                 role="assistant",
@@ -56,10 +61,12 @@ async def test_simulator_uses_initial_prompt_and_resolves_elicitation():
 
     assert len(calls) == 2
     assert eval_case.output == "Connector created."
-    assert eval_case.messages == [
-        Message(role="user", content="Create a k8s connector"),
-        Message(role="assistant", content="Connector created."),
-    ]
+    assert eval_case.messages[0].content == "Create a k8s connector"
+    assert eval_case.messages[-1].content == "Connector created."
+    simulated = [m for m in eval_case.messages if (m.metadata or {}).get("simulated")]
+    assert len(simulated) == 1
+    assert simulated[0].content == "testconnector"
+    assert eval_case.metadata.get("elicitation_trace")
 
 
 @pytest.mark.unit
@@ -96,3 +103,200 @@ async def test_simulator_stops_elicitation_loop_at_round_cap():
     final = eval_case.messages[-1]
     assert final.metadata["elicitation_error"] == "max_elicitation_rounds_exceeded"
     assert final.metadata["elicitation_rounds"] == 2
+    simulated = [m for m in eval_case.messages if (m.metadata or {}).get("simulated")]
+    assert len(simulated) == 2
+
+
+@pytest.mark.unit
+async def test_simulator_marks_incomplete_when_empty_after_elicitation():
+    golden = ConversationGolden(
+        scenario="Create a cost category",
+        expected_outcome="Category created",
+        max_turns=1,
+        max_elicitation_rounds=4,
+        initial_prompt="Let's create a Cost Category",
+        elicitation_hints={
+            "intents": {"category_name": "eval_cost_category_test"},
+            "matchers": [{"intent": "category_name", "question_contains": ["name"]}],
+        },
+        metadata={
+            "sse_checks": [
+                {
+                    "event": "assistant_tool_request",
+                    "match": [{"path": "$.name", "contains": "harness_create"}],
+                }
+            ]
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return Message(
+                role="assistant",
+                content="",
+                metadata={
+                    "pending_elicitation": {
+                        "type": "elicitation_free_text",
+                        "payload": {
+                            "review_id": "ask-name",
+                            "content": {"question": "What name would you like?"},
+                        },
+                    }
+                },
+            )
+        # Resume returns empty with no pending and no create tool — incomplete.
+        return Message(role="assistant", content="", metadata={"sse_events": {}})
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert "incomplete_empty_after_elicitation" in (eval_case.metadata.get("elicitation_error") or "")
+    assert eval_case.metadata["elicitation_rounds"] == 1
+
+
+@pytest.mark.unit
+async def test_plain_text_followup_uses_elicitation_hints():
+    golden = ConversationGolden(
+        scenario="Create a cost category",
+        expected_outcome="Category created",
+        max_turns=1,
+        max_elicitation_rounds=4,
+        initial_prompt="Let's create a Cost Category",
+        elicitation_hints={
+            "intents": {"category_name": "eval_cost_category_test"},
+            "matchers": [
+                {
+                    "intent": "category_name",
+                    "question_contains": ["name your cost category"],
+                }
+            ],
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return Message(
+                role="assistant",
+                content="What would you like to name your Cost Category?",
+            )
+        return Message(role="assistant", content="Thanks, creating it now.")
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert calls == 2
+    simulated = [m for m in eval_case.messages if (m.metadata or {}).get("plain_text_followup")]
+    assert len(simulated) == 1
+    assert simulated[0].content == "eval_cost_category_test"
+    assert eval_case.metadata["elicitation_trace"][0]["kind"] == "plain_text_user_reply"
+
+
+@pytest.mark.unit
+async def test_eval_case_sse_events_live_at_top_level_not_on_messages():
+    golden = ConversationGolden(
+        scenario="List projects",
+        expected_outcome="Projects listed",
+        max_turns=1,
+        initial_prompt="List projects",
+    )
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        return Message(
+            role="assistant",
+            content="Here are the projects.",
+            metadata={
+                "sse_events": {
+                    "assistant_tool_request": [{"v": [{"name": "mcp__harness__harness_list"}]}],
+                    "assistant_tool_result": [{"v": [{"name": "mcp__harness__harness_list", "result": "{}"}]}],
+                    "assistant_message": [{"v": "Here are the projects."}],
+                }
+            },
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert "assistant_tool_request" in eval_case.metadata["sse_events"]
+    for msg in eval_case.messages or []:
+        assert "sse_events" not in (msg.metadata or {})
+
+
+@pytest.mark.unit
+async def test_simulator_inserts_tool_calls_and_results_in_message_order():
+    golden = ConversationGolden(
+        scenario="List projects",
+        expected_outcome="Projects listed",
+        max_turns=1,
+        initial_prompt="List projects",
+    )
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        return Message(
+            role="assistant",
+            content="Here are the projects.",
+            metadata={
+                "sse_events": {
+                    "assistant_tool_request": [
+                        {"v": [{"name": "harness_list", "arguments": {"resource_type": "project"}}]}
+                    ],
+                    "assistant_tool_result": [
+                        {"v": [{"name": "harness_list", "result": {"items": [{"id": "p1"}]}}]}
+                    ],
+                },
+                "sse_timeline": [
+                    {
+                        "event": "assistant_tool_request",
+                        "payload": {
+                            "v": [
+                                {
+                                    "name": "harness_list",
+                                    "arguments": {"resource_type": "project"},
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "event": "assistant_tool_result",
+                        "payload": {
+                            "v": [
+                                {
+                                    "name": "harness_list",
+                                    "result": {"items": [{"id": "p1"}]},
+                                }
+                            ]
+                        },
+                    },
+                    {"event": "assistant_message", "payload": {"v": "Here are the projects."}},
+                ],
+            },
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert [message.role for message in eval_case.messages or []] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    tool_request = eval_case.messages[1]
+    assert tool_request.tool_calls[0].name == "harness_list"
+    assert tool_request.tool_calls[0].input == {"resource_type": "project"}
+    tool_result = eval_case.messages[2]
+    assert tool_result.tool_calls[0].name == "harness_list"
+    assert tool_result.tool_calls[0].output == {"items": [{"id": "p1"}]}
+    assert json.loads(tool_result.content) == {"items": [{"id": "p1"}]}
+    assert eval_case.messages[3].content == "Here are the projects."
+    assert "sse_timeline" not in (eval_case.messages[3].metadata or {})
+    serialized_messages = eval_case.to_dict()["messages"]
+    assert serialized_messages[1]["tool_calls"][0]["name"] == "harness_list"
+    assert serialized_messages[1]["tool_calls"][0]["input"] == {"resource_type": "project"}
+    assert serialized_messages[2]["tool_calls"][0]["name"] == "harness_list"
+    assert serialized_messages[2]["tool_calls"][0]["output"] == {"items": [{"id": "p1"}]}

@@ -580,7 +580,7 @@ def _text_from_parts(parts: list) -> str | None:
     """Extract concatenated text from a parts array.
 
     Supports both ``{"type": "text", "content": "..."}`` (semconv)
-    and ``{"type": "text", "text": "..."}`` (ai-evals / some exporters).
+    and ``{"type": "text", "text": "..."}`` (some exporters).
     """
     if not parts:
         return None
@@ -608,7 +608,7 @@ def _tool_calls_from_parts(parts: list) -> list[ToolCall]:
     for part in parts:
         if not isinstance(part, dict) or part.get("type") != "tool_call":
             continue
-        # Inline structured format (ai-evals style)
+        # Inline structured format
         if "name" in part:
             tool_calls.append(
                 ToolCall(

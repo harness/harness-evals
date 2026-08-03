@@ -96,6 +96,7 @@ Follow semver: patch for fixes, minor for new metrics/features, major for breaki
 - Never modify `Golden`, `EvalCase`, or `Score` fields without updating PLAN.md
 - Never average safety scores into an overall score — report them separately
 - Don't use `print()` — use the sink system for output
+- Never reference internal Harness repos, services, environments, or design docs
 
 ## Project Structure
 
@@ -130,7 +131,13 @@ harness-evals/
 │   │   ├── sink.py                  # BaseSink ABC
 │   │   └── runner.py                # evaluate(), assert_test(), evaluate_cases(), evaluate_dataset()
 │   │
+│   ├── adapters/                    # External trace/span shapes → EvalCase
+│   │   └── trace.py                 # spans_to_eval_case() (+ span-scope variant),
+│   │                                # semconv + Langfuse dialect coalescing
+│   │
 │   ├── metrics/
+│   │   ├── factory.py               # build_metric()/build_llm_provider() — shared
+│   │                                # metric construction (allow_code_loading guard)
 │   │   ├── deterministic/           # ExactMatch, Contains, Regex, NumericDiff, ListContains, Webhook
 │   │   ├── structural/              # JsonDiff, SchemaValidation, StructuralSimilarity
 │   │   ├── operational/             # Latency, TokenCost, CostEfficiency, RetryCount, TurnLatency, TurnTokenCost
@@ -269,7 +276,8 @@ harness-evals/
 ├── tests/
 │   ├── conftest.py                  # Shared fixtures
 │   ├── test_core.py                 # Golden, EvalCase, Score, evaluate, assert_test, etc.
-│   ├── metrics/                     # One test file per metric category
+│   ├── adapters/                    # Trace adapter dialect + parity tests
+│   ├── metrics/                     # One test file per metric category (+ test_factory.py)
 │   └── benchmarks/                  # Tests for academic benchmarks (mocked, no HF calls)
 │
 └── examples/

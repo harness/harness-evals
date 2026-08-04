@@ -554,7 +554,7 @@ def test_convert_end_to_end_all_goldens_validate(tmp_path):
     if not review.exists() or not conversations.exists():
         pytest.skip("local production-conversation fixtures are not committed")
 
-    emitted, total, manifest_path = golden_builder.convert(review, conversations, overrides, output)
+    emitted, total, manifest_path = golden_builder.convert(review, [conversations], overrides, output)
     assert emitted > 0
     assert total > 0
     assert emitted <= total
@@ -662,3 +662,398 @@ def test_outcome_metric_includes_pending_and_tools():
     assert "Single bucket" in llm.prompt
     assert "harness_create" in llm.prompt
     assert score.value == pytest.approx(0.8)
+
+
+def _minimal_conversation(**overrides: object) -> dict:
+    base: dict = {
+        "conversation_id": "conv-1",
+        "input": "Let's create a Cost Category",
+        "output": "Created.",
+        "messages": [
+            {"role": "user", "content": "Let's create a Cost Category"},
+            {
+                "role": "assistant",
+                "content": "Called tool `Skill`.",
+                "tool_calls": [
+                    {
+                        "name": "Skill",
+                        "input": {"skill": "ccm-cost-categories"},
+                        "output": "waiting for user to review the yaml",
+                    }
+                ],
+            },
+        ],
+        "tool_calls": [
+            {
+                "name": "Skill",
+                "input": {"skill": "ccm-cost-categories"},
+                "output": "waiting for user to review the yaml",
+            },
+            {
+                "name": "mcp__harness__harness_create",
+                "input": {"resource_type": "cost_category"},
+                "output": '{"status": "ERROR", "message": "failed"}',
+            },
+        ],
+        "metadata": {
+            "module": "ce",
+            "environment": "prod1",
+            "num_turns": 12,
+            "num_tool_calls": 9,
+            "total_cost_usd": 0.42,
+            "truncated_tool_use_ids": ["tool-big"],
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+class FakeSignalsLLM(BaseLLM):
+    def __init__(self, payload: dict | None = None) -> None:
+        self.prompt = ""
+        self.system_prompt = ""
+        self.payload = payload or {
+            "high_turns": True,
+            "high_cost": True,
+            "high_tool_count": True,
+            "large_tool_output": True,
+            "tool_failure": True,
+            "skill_loading": True,
+            "hitl_loop": True,
+            "multi_turn": True,
+            "write_flow": True,
+            "read_only": False,
+            "scenario_type": "write",
+            "module_tag": "module:ce",
+            "signal_tags": [
+                "high_turns",
+                "high_cost",
+                "high_tool_count",
+                "large_tool_output",
+                "tool_failure",
+                "skill_loading",
+                "hitl_loop",
+                "multi_turn",
+                "write_flow",
+                "module:ce",
+            ],
+            "confidence": 0.9,
+            "reasoning": "High-turn CE write with skill + review gate + tool error.",
+            "evidence": ["num_turns=12", "Skill tool", "status ERROR"],
+            "criterion_notes": {
+                "hitl_loop": "same bucket question asked twice after answer",
+                "write_flow": "created cost category",
+                "read_only": "not applicable",
+            },
+        }
+
+    async def generate(self, prompt: str, **kwargs: object) -> str:
+        return ""
+
+    async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
+        self.prompt = prompt
+        self.system_prompt = str(kwargs.get("system_prompt") or "")
+        return dict(self.payload)
+
+
+@pytest.mark.unit
+def test_conversation_signals_extracts_structural_facts_for_llm_prompt():
+    from conversation_signals import extract_structural_facts
+
+    facts = extract_structural_facts(_minimal_conversation())
+    assert facts["num_turns"] == 12
+    assert facts["total_cost_usd"] == 0.42
+    assert facts["num_tool_calls"] == 9
+    assert facts["truncated_tool_outputs"] == 1
+    assert facts["module"] == "ce"
+    assert "Skill" in facts["tool_names_sample"]
+
+
+@pytest.mark.unit
+def test_conversation_signals_quality_gate_only_good_and_bad():
+    from conversation_signals import quality_eligible_for_signals, resolve_quality
+
+    assert quality_eligible_for_signals("good")
+    assert quality_eligible_for_signals("bad")
+    assert not quality_eligible_for_signals("unclear")
+    assert not quality_eligible_for_signals("useless")
+    assert resolve_quality({"quality": "needs_improvement"}) == "good"
+
+
+@pytest.mark.unit
+def test_conversation_signals_llm_metric_assigns_tags_for_good_row():
+    from conversation_signals import HarnessConversationSignalsMetric
+
+    conversation = _minimal_conversation()
+    eval_case = EvalCase.from_dict(
+        {
+            "input": conversation["input"],
+            "output": conversation["output"],
+            "messages": conversation["messages"],
+            "tool_calls": conversation["tool_calls"],
+            "metadata": {
+                "round1_quality": "good",
+                "canonical_conversation": conversation,
+                "module": "ce",
+            },
+        }
+    )
+    llm = FakeSignalsLLM()
+    score = asyncio.run(HarnessConversationSignalsMetric(llm=llm).a_measure(eval_case))
+    assert "num_turns" in llm.prompt
+    assert "0.42" in llm.prompt
+    assert score.metadata["scenario_type"] == "write"
+    assert "high_turns" in score.metadata["signal_tags"]
+    assert "skill_loading" in score.metadata["signal_tags"]
+    assert "module:ce" in score.metadata["signal_tags"]
+    assert score.metadata["skipped"] is False
+
+
+@pytest.mark.unit
+def test_conversation_signals_llm_metric_skips_unclear_quality():
+    from conversation_signals import HarnessConversationSignalsMetric
+
+    conversation = _minimal_conversation()
+    eval_case = EvalCase.from_dict(
+        {
+            "input": conversation["input"],
+            "output": conversation["output"],
+            "messages": conversation["messages"],
+            "tool_calls": conversation["tool_calls"],
+            "metadata": {
+                "round1_quality": "unclear",
+                "canonical_conversation": conversation,
+            },
+        }
+    )
+    llm = FakeSignalsLLM()
+    score = asyncio.run(HarnessConversationSignalsMetric(llm=llm).a_measure(eval_case))
+    assert score.metadata["skipped"] is True
+    assert score.metadata["signals_skipped_reason"] == "quality=unclear"
+    assert llm.prompt == ""
+
+
+@pytest.mark.unit
+def test_conversation_candidate_score_structural_criteria():
+    from conversation_candidate_score import compute_eval_candidate_score, compute_structural_criteria
+
+    facts = {
+        "module": "ce",
+        "num_turns": 12,
+        "total_cost_usd": 0.42,
+        "num_tool_calls": 9,
+        "truncated_tool_outputs": 1,
+        "max_tool_output_bytes": 9000,
+    }
+    structural = compute_structural_criteria(facts)
+    assert structural["high_turns"] is True
+    assert structural["high_cost"] is True
+    assert structural["high_tool_count"] is True
+    assert structural["large_tool_output"] is True
+    assert structural["multi_turn"] is True
+    assert compute_eval_candidate_score({**structural, **dict.fromkeys(
+        ("tool_failure", "skill_loading", "hitl_loop", "write_flow", "read_only"), False
+    )}) == round((5 / 10) * 5, 2)
+
+
+@pytest.mark.unit
+def test_conversation_candidate_score_llm_metric_scores_good_row():
+    from conversation_candidate_score import HarnessConversationCandidateScoreMetric
+
+    conversation = _minimal_conversation()
+    eval_case = EvalCase.from_dict(
+        {
+            "input": conversation["input"],
+            "output": conversation["output"],
+            "messages": conversation["messages"],
+            "tool_calls": conversation["tool_calls"],
+            "metadata": {
+                "usefulness": "useful",
+                "canonical_conversation": conversation,
+            },
+        }
+    )
+    llm = FakeSignalsLLM()
+    score = asyncio.run(HarnessConversationCandidateScoreMetric(llm=llm).a_measure(eval_case))
+    assert score.metadata["eval_candidate_score"] == round((9 / 10) * 5, 2)
+    assert score.metadata["criteria"]["tool_failure"] is True
+    assert score.metadata["criteria"]["skill_loading"] is True
+    assert "harness_create failed" in score.reason
+    assert "12 turns" in score.reason or "12 turn" in score.reason
+    assert "$0.42" in score.reason
+    assert "ccm-cost-categories" in score.reason
+    assert "Summary:" not in score.reason
+    assert "/tmp/" not in score.reason
+    assert llm.prompt
+
+
+@pytest.mark.unit
+def test_build_eval_candidate_reasoning_uses_concrete_values():
+    from conversation_candidate_score import (
+        build_eval_candidate_reasoning,
+        compute_structural_criteria,
+        extract_structural_facts,
+        merge_criteria,
+    )
+    from conversation_signals import extract_structural_facts as signals_facts
+
+    conversation = _minimal_conversation()
+    facts = signals_facts(conversation)
+    structural = compute_structural_criteria(facts)
+    llm_result = {
+        "tool_failure": True,
+        "skill_loading": True,
+        "hitl_loop": True,
+        "write_flow": True,
+        "read_only": False,
+        "criterion_notes": {
+            "hitl_loop": "same bucket question asked twice after answer",
+        },
+    }
+    criteria = merge_criteria(structural, llm_result, facts)
+    reasoning = build_eval_candidate_reasoning(
+        criteria,
+        facts,
+        conversation,
+        llm_result,
+        score_value=4.09,
+    )
+    assert "12 turn" in reasoning
+    assert "harness_create failed" in reasoning
+    assert "ccm-cost-categories" in reasoning
+    assert "same bucket question" in reasoning
+    assert "Summary:" not in reasoning
+
+
+@pytest.mark.unit
+def test_conversation_candidate_score_skips_useless():
+    from conversation_candidate_score import HarnessConversationCandidateScoreMetric
+
+    conversation = _minimal_conversation()
+    eval_case = EvalCase.from_dict(
+        {
+            "input": conversation["input"],
+            "output": conversation["output"],
+            "messages": conversation["messages"],
+            "tool_calls": conversation["tool_calls"],
+            "metadata": {
+                "usefulness": "useless",
+                "canonical_conversation": conversation,
+            },
+        }
+    )
+    llm = FakeSignalsLLM()
+    score = asyncio.run(HarnessConversationCandidateScoreMetric(llm=llm).a_measure(eval_case))
+    assert score.metadata["skipped"] is True
+    assert score.metadata["eval_candidate_score"] == 0.0
+    assert llm.prompt == ""
+
+
+class CombinedFakeLLM(BaseLLM):
+    """Returns quality or candidate-score JSON depending on prompt content."""
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    async def generate(self, prompt: str, **kwargs: object) -> str:
+        return ""
+
+    async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
+        self.prompts.append(prompt)
+        if "eval golden selection" in prompt:
+            return {
+                "high_turns": True,
+                "high_cost": True,
+                "high_tool_count": True,
+                "large_tool_output": True,
+                "tool_failure": True,
+                "skill_loading": True,
+                "hitl_loop": True,
+                "multi_turn": True,
+                "write_flow": True,
+                "read_only": False,
+                "reasoning": "Stressful read with tool failure.",
+                "evidence": ["status ERROR"],
+                "criterion_notes": {
+                    "hitl_loop": "AskUserQuestion repeated after user answered",
+                    "write_flow": "read-only inspection",
+                    "read_only": "list and explain task",
+                },
+            }
+        return {
+            "usefulness": "useful",
+            "quality": "good",
+            "golden_readiness": "ready",
+            "goal_achievement": 0.9,
+            "resolution": 0.8,
+            "tool_use_quality": 0.7,
+            "confidence": 0.85,
+            "reasoning": "Good outcome.",
+            "evidence": ["diagnose returned failed step"],
+        }
+
+
+@pytest.mark.unit
+def test_quality_eval_merges_candidate_score_into_review_csv(tmp_path: Path):
+    import run_conversation_quality_eval as quality_eval
+
+    conversation = _minimal_conversation()
+    case = EvalCase.from_dict(
+        {
+            "input": conversation["input"],
+            "output": conversation["output"],
+            "messages": conversation["messages"],
+            "tool_calls": conversation["tool_calls"],
+            "metadata": {
+                "conversation_id": conversation["conversation_id"],
+                "module": "ce",
+                "environment": "prod1",
+                "canonical_file": "sample.conversation.json",
+                "num_turns": 12,
+                "total_cost_usd": 0.42,
+                "canonical_conversation": conversation,
+            },
+        }
+    )
+    llm = CombinedFakeLLM()
+    quality_metric = HarnessConversationQualityMetric(llm=llm)
+    candidate_metric = __import__(
+        "conversation_candidate_score", fromlist=["HarnessConversationCandidateScoreMetric"]
+    ).HarnessConversationCandidateScoreMetric(llm=llm)
+
+    rows = asyncio.run(
+        quality_eval.evaluate_cases(
+            [case],
+            quality_metric,
+            candidate_metric,
+            concurrency=1,
+        )
+    )
+    assert rows[0]["quality"] == "good"
+    assert float(rows[0]["eval_candidate_score"]) > 0
+
+    low_row = dict(rows[0])
+    low_row["conversation_id"] = "low-score"
+    low_row["eval_candidate_score"] = 1.0
+    high_row = dict(rows[0])
+    high_row["conversation_id"] = "high-score"
+    high_row["eval_candidate_score"] = 4.5
+    assert rows[0]["session_turns"] == 12
+    assert rows[0]["session_cost_usd"] == 0.42
+
+    output_dir = tmp_path / "results" / "random-200"
+    quality_eval.write_outputs(
+        [low_row, high_row],
+        output_dir,
+        provider="openai",
+        model="gpt-4o",
+        with_candidate_score=True,
+    )
+
+    with (output_dir / "review.csv").open(newline="") as handle:
+        review_rows = list(csv.DictReader(handle))
+    assert review_rows[0]["conversation_id"] == "high-score"
+    assert "eval_candidate_score" in review_rows[0]
+    summary = json.loads((output_dir / "summary.json").read_text())
+    assert summary["with_candidate_score"] is True
+    assert summary["top_15_by_eval_candidate_score"][0]["conversation_id"] == "high-score"

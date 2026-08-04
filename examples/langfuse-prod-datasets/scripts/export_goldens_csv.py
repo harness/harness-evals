@@ -59,6 +59,8 @@ COLUMNS = [
     "source_file",
     "expected_outcome",
     "reasoning",
+    "eval_candidate_score",
+    "eval_candidate_hits",
     "notes",
 ]
 
@@ -116,6 +118,37 @@ def _index_results(paths: list[Path]) -> dict[str, dict[str, Any]]:
             ):
                 by_id[conv_id] = enriched
     return by_id
+
+
+def _index_candidate_scores(paths: list[Path]) -> dict[str, dict[str, Any]]:
+    """Map conversation_id -> Round 4 eval candidate score row."""
+    by_id: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        if not path.is_file():
+            continue
+        for row in _load_jsonl(path):
+            conv_id = str(row.get("conversation_id") or "")
+            if not conv_id:
+                continue
+            by_id[conv_id] = row
+    return by_id
+
+
+def _discover_candidate_score_paths(extra: list[Path]) -> list[Path]:
+    candidates: list[Path] = [
+        DATASET_ROOT / "results" / "review-with-candidate-scores.jsonl"
+    ]
+    if RESULTS_ROOT.is_dir():
+        candidates.extend(sorted(RESULTS_ROOT.glob("*/review-with-candidate-scores.jsonl")))
+    seen: set[Path] = set()
+    paths: list[Path] = []
+    for path in [*candidates, *extra]:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+        paths.append(resolved)
+    return paths
 
 
 def _discover_result_paths(extra: list[Path]) -> list[Path]:
@@ -197,6 +230,8 @@ def _apply_judge_fields(row: dict[str, str], judge: dict[str, Any] | None) -> No
         "tool_use_quality",
         "reasoning",
         "canonical_file",
+        "eval_candidate_score",
+        "eval_candidate_hits",
     ):
         value = judge.get(key)
         if value is not None and str(value).strip() != "":
@@ -225,12 +260,26 @@ def _apply_judge_fields(row: dict[str, str], judge: dict[str, Any] | None) -> No
         row["original_prompt"] = str(judge["original_prompt"])
 
 
+def _apply_candidate_score_fields(
+    row: dict[str, str], candidate: dict[str, Any] | None
+) -> None:
+    if not candidate:
+        return
+    score = candidate.get("eval_candidate_score")
+    if score is not None and str(score).strip() != "":
+        row["eval_candidate_score"] = score if not isinstance(score, float) else round(score, 2)
+    hits = candidate.get("eval_candidate_hits")
+    if hits is not None and str(hits).strip() != "":
+        row["eval_candidate_hits"] = str(hits)
+
+
 def build_rows(
     *,
     goldens_path: Path,
     manifest_path: Path,
     candidate_result_paths: list[Path],
     all_result_paths: list[Path],
+    candidate_score_paths: list[Path],
     date_added: str,
 ) -> list[dict[str, str]]:
     goldens = _load_jsonl(goldens_path)
@@ -238,6 +287,7 @@ def build_rows(
         str(row.get("conversation_id") or ""): row for row in _load_jsonl(manifest_path)
     }
     judge_by_id = _index_results(all_result_paths)
+    candidate_score_by_id = _index_candidate_scores(candidate_score_paths)
 
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -288,6 +338,7 @@ def build_rows(
             }
         )
         _apply_judge_fields(row, judge)
+        _apply_candidate_score_fields(row, candidate_score_by_id.get(conv_id))
         if not row["canonical_file"] and row["source_file"]:
             # Manifest stores *.md; prefer *.conversation.json when available.
             stem = Path(row["source_file"]).stem
@@ -339,6 +390,7 @@ def build_rows(
                 }
             )
             _apply_judge_fields(row, judge)
+            _apply_candidate_score_fields(row, candidate_score_by_id.get(conv_id))
             _enrich_from_conversation(row)
             if not row["scenario_type"]:
                 row["scenario_type"] = _infer_scenario_type(row)
@@ -376,6 +428,13 @@ def main() -> int:
         help="Result JSONL files whose `good` rows become candidates",
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--candidate-scores",
+        type=Path,
+        action="append",
+        default=[],
+        help="Round 4 review-with-candidate-scores JSONL (auto-discovered if omitted)",
+    )
     parser.add_argument("--date-added", default=_today())
     args = parser.parse_args()
 
@@ -388,11 +447,13 @@ def main() -> int:
                 candidate_paths.append(path)
 
     all_result_paths = _discover_result_paths(candidate_paths)
+    candidate_score_paths = _discover_candidate_score_paths(args.candidate_scores)
     rows = build_rows(
         goldens_path=args.goldens,
         manifest_path=args.manifest,
         candidate_result_paths=candidate_paths,
         all_result_paths=all_result_paths,
+        candidate_score_paths=candidate_score_paths,
         date_added=args.date_added,
     )
     write_csv(rows, args.output)

@@ -605,6 +605,8 @@ def _golden_from_override(
         golden["context"] = override["context"]
     if "user_persona" in override:
         golden["user_persona"] = override["user_persona"]
+    if "improve_later" in override:
+        golden["metadata"]["improve_later"] = override["improve_later"]
     return _finalize(golden, manifest, "override", scenario_type)
 
 
@@ -640,19 +642,73 @@ def _finalize(
     )
 
 
+def find_conversation_files(
+    conversations_dirs: list[Path],
+    *,
+    only_in_review: set[str] | None = None,
+    review_order: list[str] | None = None,
+) -> list[Path]:
+    """Resolve canonical conversation files across one or more dataset directories."""
+    if only_in_review is not None:
+        by_id: dict[str, Path] = {}
+        for conversations_dir in conversations_dirs:
+            if not conversations_dir.is_dir():
+                continue
+            for canonical_path in conversations_dir.glob("*.conversation.json"):
+                conversation = json.loads(canonical_path.read_text())
+                cid = conversation.get("conversation_id") or ""
+                if cid in only_in_review and cid not in by_id:
+                    by_id[cid] = canonical_path
+        order = review_order if review_order is not None else sorted(by_id)
+        return [by_id[cid] for cid in order if cid in by_id]
+
+    files: list[Path] = []
+    seen: set[str] = set()
+    for conversations_dir in conversations_dirs:
+        if not conversations_dir.is_dir():
+            continue
+        for canonical_path in sorted(conversations_dir.glob("*.conversation.json")):
+            conversation = json.loads(canonical_path.read_text())
+            cid = conversation.get("conversation_id") or ""
+            if cid and cid in seen:
+                continue
+            if cid:
+                seen.add(cid)
+            files.append(canonical_path)
+    return files
+
+
 def convert(
     review_path: Path,
-    conversations_dir: Path,
+    conversations_dirs: list[Path],
     overrides_path: Path,
     output_path: Path,
+    *,
+    only_in_review: bool = False,
 ) -> tuple[int, int, Path]:
     review = load_review(review_path)
     overrides = load_overrides(overrides_path)
+    review_ids = set(review) if only_in_review else None
+    review_order = list(review) if only_in_review else None
+    canonical_files = find_conversation_files(
+        conversations_dirs,
+        only_in_review=review_ids,
+        review_order=review_order,
+    )
+
+    if only_in_review:
+        missing = set(review) - {
+            json.loads(path.read_text()).get("conversation_id") or "" for path in canonical_files
+        }
+        if missing:
+            print(f"Warning: {len(missing)} review row(s) missing *.conversation.json", file=sys.stderr)
+            for cid in sorted(missing)[:5]:
+                print(f"  missing: {cid}", file=sys.stderr)
 
     goldens: list[dict[str, Any]] = []
     manifest_records: list[ManifestRecord] = []
 
-    for canonical_path in sorted(conversations_dir.glob("*.conversation.json")):
+    for canonical_path in canonical_files:
         conversation = json.loads(canonical_path.read_text())
         cid = conversation.get("conversation_id") or ""
         review_row = review.get(cid, {})
@@ -709,25 +765,41 @@ def main() -> int:
     parser.add_argument(
         "--conversations",
         type=Path,
+        action="append",
         required=True,
-        help="Directory of *.conversation.json (relative to dataset root or absolute)",
+        help="Directory of *.conversation.json (repeatable; relative to dataset root or absolute)",
+    )
+    parser.add_argument(
+        "--only-in-review",
+        action="store_true",
+        help="Process only conversation IDs present in the review CSV (recommended for goldens-final.csv)",
     )
     parser.add_argument("--overrides", type=Path, default=DEFAULT_OVERRIDES)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
 
     review_path = args.review if args.review.is_absolute() else DATASET_ROOT / args.review
-    conversations_dir = (
-        args.conversations if args.conversations.is_absolute() else DATASET_ROOT / args.conversations
-    )
+    conversations_dirs = [
+        d if d.is_absolute() else DATASET_ROOT / d for d in args.conversations
+    ]
     overrides_path = args.overrides if args.overrides.is_absolute() else DATASET_ROOT / args.overrides
 
     if not review_path.is_file():
         parser.error(f"review file not found: {review_path}")
-    if not conversations_dir.is_dir():
-        parser.error(f"conversations dir not found: {conversations_dir}")
+    if not any(d.is_dir() for d in conversations_dirs):
+        parser.error(f"no conversations dir found among: {conversations_dirs}")
 
-    goldens, total, manifest_path = convert(review_path, conversations_dir, overrides_path, args.output)
+    if args.output.is_absolute():
+        output_path = args.output
+    else:
+        output_path = (Path.cwd() / args.output).resolve()
+    goldens, total, manifest_path = convert(
+        review_path,
+        conversations_dirs,
+        overrides_path,
+        output_path,
+        only_in_review=args.only_in_review,
+    )
     _print_summary(goldens, total, manifest_path)
     print(f"Wrote goldens to {args.output}")
     print(f"Wrote manifest to {manifest_path}")

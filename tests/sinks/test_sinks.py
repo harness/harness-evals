@@ -253,6 +253,31 @@ class TestJsonSink:
         assert "sse_events" not in record["eval_case"]["metadata"]
         assert record["eval_case"]["metadata"]["expected_outcome"] == "A pipeline is created"
 
+    def test_include_eval_case_preserves_sse_event_names_without_messages(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="Create a pipeline",
+            output="Pipeline created",
+            messages=[Message(role="user", content="Create a pipeline")],
+            metadata={
+                "sse_events": {
+                    "elicitation_yaml": [{"review_id": "rev-1"}],
+                    "assistant_tool_request": [{"v": [{"name": "harness_create"}]}],
+                },
+                "sse_event_names": ["assistant_tool_request", "elicitation_yaml"],
+            },
+        )
+        sink = JsonSink(str(path), include_eval_case=True, omit_messages=False)
+
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert "sse_events" not in record["eval_case"]["metadata"]
+        assert record["eval_case"]["metadata"]["sse_event_names"] == [
+            "assistant_tool_request",
+            "elicitation_yaml",
+        ]
+
     def test_sse_as_timeline_omits_messages(self, tmp_path, scores):
         path = tmp_path / "results.jsonl"
         eval_case = EvalCase(

@@ -82,35 +82,101 @@ an LLM and does not assign categories.
 ```bash
 export OPENAI_API_KEY=...
 python scripts/run_conversation_quality_eval.py \
-  --input review-batches/module-coverage-005.jsonl \
+  --input review-batches/module-coverage-200.jsonl \
   --provider openai \
   --model gpt-4o
 ```
 
-The judge reads each complete conversation and assigns:
+Pass ``--no-with-candidate-score`` to skip the 0–5 eval candidacy column.
+
+Eval candidacy criteria (equal weight, combined into ``eval_candidate_score``):
+
+| Criterion | When true |
+|---|---|
+| `high_turns` | `num_turns >= 10` |
+| `high_cost` | `total_cost_usd >= 0.25` |
+| `high_tool_count` | `num_tool_calls >= 8` |
+| `large_tool_output` | truncated payload or max output >= 8KB |
+| `tool_failure` | tool errors / 4xx–5xx in trajectory |
+| `skill_loading` | skill launch / skill workflow |
+| `hitl_loop` | same HITL question repeated after user already answered |
+| `multi_turn` | `num_turns >= 2` |
+| `write_flow` | create / update / delete task |
+| `read_only` | list / explain / validate only |
+
+Score formula: ``(criteria_hits / 10) * 5``.
+
+The judge also assigns:
 
 - `usefulness`: `useful` or `useless`
-- `quality` (agent outcome):
-  - `good` — agent substantially satisfied the request
-  - `bad` — agent materially failed
-  - `unclear` — evidence is insufficient to decide good vs bad
-  - `not_applicable` — only when usefulness is useless
-- `golden_readiness` (portability; independent of quality):
-  - `ready` — portable with only org/project placeholders
-  - `needs_rewrite` — keep it, but rewrite production-specific entity refs first
-    (can apply to good *or* bad outcomes)
-
-`final_category` is kept as a compatibility alias of agent `quality` (or
-`useless` when usefulness is useless). It is **not** where portability lives.
+- `quality` (agent outcome): `good`, `bad`, `unclear`, or `not_applicable`
+- `golden_readiness` (portability): `ready` or `needs_rewrite`
 
 The runner writes:
 
-- `results.jsonl` — detailed categories, component scores, confidence, reasoning,
-  and cited evidence
-- `review.csv` — blank human quality / golden_readiness / notes columns
-- `summary.json` — quality/readiness/module distribution and run configuration
+- `results.jsonl` — full judge output (component scores, confidence,
+  `final_category` alias, `eval_candidate_score`, evidence)
+- `review.csv` — slim human-review sheet: IDs, `session_turns`, `session_cost_usd`,
+  labels, `tool_use_quality`, reasoning, candidate score columns, blank human
+  override fields; sorted by `eval_candidate_score` descending (highest first)
+- `summary.json` — distributions and `top_15_by_eval_candidate_score`
 
 Human notes are not included in the judge prompt.
+
+## 5b. Round 3 — weakness / coverage signal tags (LLM, good / bad only)
+
+Round 1 does **not** produce these tags. After the v3 quality judge, run a
+**separate LLM categorization** on rows already labeled ``quality=good`` or
+``quality=bad`` (``unclear`` / ``useless`` are skipped). Canonical conversation
+stats (turns, cost, tool counts, truncated payloads) are injected into the
+prompt as facts; the judge assigns the bucket tags.
+
+```bash
+OPENAI_API_KEY=... python scripts/run_conversation_signals_eval.py \
+  --review results/module-coverage-200/review.csv \
+  --review results/random-200/review.csv \
+  --conversations . \
+  --output results/review-with-signals.csv \
+  --provider openai \
+  --model gpt-4o
+```
+
+Each tagged row gets a semicolon-separated ``signal_tags`` column:
+
+| Tag | When |
+|---|---|
+| `high_turns` | `num_turns >= 10` |
+| `high_cost` | `total_cost_usd >= 0.25` |
+| `high_tool_count` | `num_tool_calls >= 8` |
+| `large_tool_output` | truncated tool payload or max output >= 8KB |
+| `tool_failure` | tool errors / failures in the trajectory |
+| `skill_loading` | skill launch / skill workflow |
+| `hitl_loop` | same HITL question repeated after user already answered |
+| `multi_turn` | `num_turns >= 2` |
+| `write_flow` / `read_only` | mutation vs inspection (exactly one) |
+| `module:<name>` | Harness module from metadata |
+
+Also writes ``scenario_type``, ``signals_reasoning``, structural counters, and
+``signals_skipped_reason`` for non-good/bad rows.
+
+## 5c. Round 4 — re-score candidacy only (optional)
+
+**Default path:** Step 5 already writes ``eval_candidate_score`` into
+``results/<batch>/review.csv``. You only need this separate script to re-score
+existing review CSVs without re-running the quality judge.
+
+```bash
+OPENAI_API_KEY=... python scripts/run_conversation_candidate_eval.py \
+  --review results/module-coverage-200/review.csv \
+  --review results/random-200/review.csv \
+  --conversations . \
+  --output results/review-with-candidate-scores.csv \
+  --provider openai \
+  --model gpt-4o
+```
+
+Writes a combined ``review-with-candidate-scores.csv`` (does not overwrite
+per-batch ``review.csv`` unless you pass ``--output`` to that path).
 
 ## 6. Export categorization results to Excel
 
@@ -162,10 +228,52 @@ and provisional `golden_id` values from:
 | `date_promoted` | When a candidate was written into `prod-conversation.goldens.jsonl` (blank until promoted) |
 | `dataset_source` | `prod-conversation.goldens.jsonl`, `module-coverage-200`, `random-200`, etc. |
 | `portability_action` | Manifest action for promoted rows; `pending_review` for candidates |
+| `eval_candidate_score` | Round 4 score 0–5 (higher = better golden candidate) |
+| `eval_candidate_hits` | Criteria matched (0–10) |
 
 Fill `notes` during human review. When a candidate is promoted, set
 `status=in_goldens`, fill `date_promoted`, and rebuild the JSONL via
 `build_conversation_goldens.py` (then re-run `export_goldens_csv.py`).
+
+## 6c. Build final eval dataset from `goldens-final.csv`
+
+After human review, promote the shortlisted rows in `goldens-final.csv` into
+portable live-eval goldens:
+
+```bash
+python scripts/build_conversation_goldens.py \
+  --review goldens-final.csv \
+  --conversations module-coverage \
+  --conversations random \
+  --only-in-review \
+  --output ../prod-conversation-final.goldens.jsonl
+```
+
+Each row needs a curated entry in `conversation-golden-overrides.json` (portable
+`scenario`, behavioral `expected_outcome`, `turns`/`initial_prompt`,
+`elicitation_hints`, `sse_checks`).
+
+**Update-use-case pattern:** when the prod conversation mutates an existing
+entity, rewrite as **create-then-update** (turn 1 creates a portable stand-in,
+turn 2 performs the mutation). This avoids assuming pre-existing prod pipelines
+in the eval project. Add `elicitation_hints` with `intents` + `matchers` for
+YAML review (`yaml.default_action: accept`), confirm/save prompts, and other
+workflow questions; set `llm_on_miss: true` for the long tail.
+
+The builder emits:
+
+- `../prod-conversation-final.goldens.jsonl` — 11 validated `ConversationGolden` rows
+- `../prod-conversation-final.goldens.manifest.jsonl` — emit/exclude audit trail
+
+Run the live eval from the repository root:
+
+```bash
+cd ../..
+export SSE_ENDPOINT_URL=...
+export HARNESS_ACCOUNT=... HARNESS_ORG=... HARNESS_PROJECT=...
+export TOKEN=... OPENAI_API_KEY=... EVAL_RUN_SUFFIX="$(date +%s)"
+PYTHONPATH=. poetry run harness-evals run examples/prod-conversation-final.eval.yaml
+```
 
 ## 7. Build live conversation goldens
 

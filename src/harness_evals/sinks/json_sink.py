@@ -97,8 +97,13 @@ def _eval_case_for_json(
                 metadata["sse_events"] = _truncate_tool_results(metadata["sse_events"])
                 metadata.pop("sse_timeline", None)
         else:
-            for key in ("sse_events", "sse_timeline", "sse_event_names"):
-                metadata.pop(key, None)
+            # Full message traces are kept; drop bulky SSE payloads but retain the
+            # event-name index so post-run inspection can answer "did X fire?"
+            event_names = metadata.pop("sse_event_names", None)
+            metadata.pop("sse_events", None)
+            metadata.pop("sse_timeline", None)
+            if isinstance(event_names, list) and event_names:
+                metadata["sse_event_names"] = event_names
         data["metadata"] = metadata
 
     if not omit_messages:

@@ -97,8 +97,9 @@ def _eval_case_for_json(
                 metadata["sse_events"] = _truncate_tool_results(metadata["sse_events"])
                 metadata.pop("sse_timeline", None)
         else:
-            # Full message traces are kept; drop bulky SSE payloads but retain the
-            # event-name index so post-run inspection can answer "did X fire?"
+            # Review (AIPLAT-952): When omit_messages=false we keep full message traces for
+            # conversation eval debugging. Strip bulky sse_events/timeline payloads but retain
+            # sse_event_names so result JSONL can assert elicitation_yaml fired without re-fetching logs.
             event_names = metadata.pop("sse_event_names", None)
             metadata.pop("sse_events", None)
             metadata.pop("sse_timeline", None)

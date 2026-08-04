@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Round 4: eval candidate score (0–5) for golden selection.
 
+Review (AIPLAT-952): Standalone re-score path when you already have review.csv from Round 1.
+Default path merges this into run_conversation_quality_eval.py. Eight stress criteria
+(write_flow/read_only excluded). Exports criterion_* yes/no columns per row.
+
 Runs after Round 1 quality categorization. Scores each non-useless row using
-eleven equally-weighted criteria (high_turns, high_cost, tool_failure, etc.).
+eight equally-weighted criteria (high_turns, high_cost, tool_failure, etc.).
 Higher score = more valuable eval golden candidate.
 
 Usage:

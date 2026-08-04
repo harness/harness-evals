@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Probe live Harness SSE for elicitation_yaml on a single conversation turn.
 
+Review (AIPLAT-952): Dev helper used while curating write-flow goldens — confirms
+elicitation_yaml / pending_human_input appear in the SSE stream before encoding checks in JSONL.
+
 Usage (env vars required):
   export SSE_ENDPOINT_URL="https://qa.harness.io/gateway/harness-intelligence/api/v2/chat?orgIdentifier=AI_Devops&projectIdentifier=AICHAT"
   export HARNESS_ACCOUNT="..."

@@ -1,3 +1,5 @@
+# Review (AIPLAT-952): Live eval suite — 8 production write/mutation conversations.
+# Requires disposable project + EVAL_RUN_SUFFIX; asserts elicitation_yaml on create rows.
 # Write-flow prod conversation eval goldens (8 rows).
 # Run against a DISPOSABLE eval project — rows create/update resources.
 #

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Round 3: LLM weakness / coverage signal tags for good/bad conversations.
 
+Review (AIPLAT-952): Exports signal_tags + module_tag to review CSV. scenario_type
+(write vs read) was removed from Round 3 output — that split lives in golden builder only.
+
 Runs **after** ``run_conversation_quality_eval.py`` (Round 1). Only rows with
 agent ``quality`` (or ``human_quality``) of ``good`` or ``bad`` are judged.
 ``unclear`` / ``useless`` rows are copied through with ``signals_skipped_reason``.
@@ -54,6 +57,7 @@ from harness_evals.core.runner import a_evaluate  # noqa: E402
 
 SIGNAL_COLUMNS = [
     "signal_tags",
+    # Review (AIPLAT-952): scenario_type dropped — not part of scoring anymore.
     "module_tag",
     "signals_confidence",
     "signals_reasoning",

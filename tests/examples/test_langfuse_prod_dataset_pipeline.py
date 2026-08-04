@@ -1,4 +1,8 @@
-"""Tests for the production conversation dataset preparation and judge."""
+"""Tests for the production conversation dataset preparation and judge.
+
+Review (AIPLAT-952): Covers golden builder, Round 3/4 metrics, combined quality+candidate
+CSV export, and readonly/write SSE check conventions. write_flow/read_only removed from scoring tests.
+"""
 
 from __future__ import annotations
 

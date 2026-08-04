@@ -1,3 +1,5 @@
+# Review (AIPLAT-952): Live eval suite — 3 production conversations with no harness_create/update.
+# Split from prod-conversation-write.goldens.jsonl for safe runs against shared QA projects.
 # Read-only prod conversation eval goldens (3 rows).
 # Safe to run against shared eval projects — no create/update expected.
 #

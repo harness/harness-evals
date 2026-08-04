@@ -1,5 +1,9 @@
 """LLM judge for weakness / stress signal tags (Round 3).
 
+Review (AIPLAT-952): New metric for golden curation pipeline. Tags stress/coverage
+dimensions only — write vs read classification was removed from scoring (still used
+when building goldens via build_conversation_goldens.scenario_type_of).
+
 Runs **after** the v3 quality judge (Round 1). Only conversations already labeled
 ``quality=good`` or ``quality=bad`` are eligible. Round 1 does **not** produce
 these tags — it only assigns usefulness / quality / golden_readiness.
@@ -30,6 +34,8 @@ PROMPT_VERSION = "conversation-signals-v3"
 
 QUALITY_FOR_SIGNALS = frozenset({"good", "bad"})
 
+# Review (AIPLAT-952): Structural + transcript stress tags only. write_flow/read_only
+# were removed — mutation vs inspection is not a scoring dimension.
 SIGNAL_TAG_VALUES = (
     "high_turns",
     "high_cost",

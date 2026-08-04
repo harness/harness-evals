@@ -254,6 +254,8 @@ class TestJsonSink:
         assert record["eval_case"]["metadata"]["expected_outcome"] == "A pipeline is created"
 
     def test_include_eval_case_preserves_sse_event_names_without_messages(self, tmp_path, scores):
+        # Review (AIPLAT-952): JsonSink must keep sse_event_names when omit_messages=false
+        # so conversation eval results can assert elicitation_yaml without full sse_events blob.
         path = tmp_path / "results.jsonl"
         eval_case = EvalCase(
             input="Create a pipeline",

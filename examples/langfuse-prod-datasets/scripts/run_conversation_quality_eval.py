@@ -76,6 +76,7 @@ def load_ineligible(path: Path) -> list[dict[str, Any]]:
 
 
 def _blank_candidate_fields() -> dict[str, Any]:
+    """Review (AIPLAT-952): Empty Round-4 columns for review.csv when candidate scoring is off."""
     row: dict[str, Any] = {
         "eval_candidate_score": "",
         "eval_candidate_hits": "",
@@ -88,6 +89,7 @@ def _blank_candidate_fields() -> dict[str, Any]:
 
 
 def _candidate_fields_from_score(score_metadata: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Review (AIPLAT-952): Flatten HarnessConversationCandidateScoreMetric into CSV columns."""
     out = _blank_candidate_fields()
     if score_metadata.get("skipped"):
         out["eval_candidate_score"] = score_metadata.get("eval_candidate_score", 0.0)
@@ -107,7 +109,7 @@ def _candidate_fields_from_score(score_metadata: dict[str, Any], reason: str) ->
 
 
 def _session_stats_fields(case: EvalCase) -> dict[str, Any]:
-    """Turn count and session cost from canonical conversation metadata."""
+    """Review (AIPLAT-952): session_turns / session_cost_usd for sorting review.csv by stress."""
     facts = extract_structural_facts(conversation_from_eval_case(case))
     num_turns = int(facts.get("num_turns") or 0)
     if num_turns == 0 and case.messages:
@@ -138,6 +140,7 @@ async def evaluate_cases(
             quality_metadata = dict(quality_score.metadata or {})
 
             candidate_fields = _blank_candidate_fields()
+            # Review (AIPLAT-952): Round 4 runs in same pass as Round 1; usefulness gates skip.
             if candidate_metric is not None:
                 case_for_candidate = EvalCase.from_dict(case.to_dict())
                 meta = dict(case_for_candidate.metadata or {})

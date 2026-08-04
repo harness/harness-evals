@@ -1,5 +1,9 @@
 # Production Conversation Quality Dataset
 
+<!-- Review (AIPLAT-952): Pipeline docs for prod → portable live-eval goldens.
+     Shipped artifacts in this PR: prod-conversation-readonly/write.*, overrides JSON,
+     Round 3/4 metrics (8 stress criteria; no write_flow/read_only scoring), build scripts. -->
+
 This directory contains a reproducible pipeline for sampling Harness Agent v3
 conversations from production Langfuse traces and turning them into portable
 live-eval goldens. Early steps only prepare and categorize fetched

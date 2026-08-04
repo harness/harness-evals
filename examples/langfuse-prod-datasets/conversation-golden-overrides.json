@@ -1,5 +1,5 @@
 {
-  "_comment": "Curated, reviewable portability overrides keyed by full conversation_id. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'elicitation_hints'. Never put concrete identifiers in 'elicitation_hints'.",
+  "_comment": "Review (AIPLAT-952): Curated portability overrides for goldens-final.csv → prod-conversation-*.goldens.jsonl. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'elicitation_hints'. scenario_type here is for golden builder only (not LLM scoring). Never put concrete identifiers in 'elicitation_hints'.",
   "overrides": {
     "a57229e8-7688-4947-bdf3-7674387fbd5d": {
       "scenario_type": "write",

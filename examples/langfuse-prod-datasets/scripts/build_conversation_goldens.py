@@ -32,6 +32,10 @@ Outputs:
 * ``examples/prod-conversation.goldens.manifest.jsonl`` — one record per source
   conversation with the decision (emitted / excluded), action, and reason.
 
+Review (AIPLAT-952): Use ``--only-in-review`` with ``goldens-final.csv`` to emit
+``examples/prod-conversation-readonly.goldens.jsonl`` and ``prod-conversation-write.goldens.jsonl``
+via manual split after build, or point ``--output`` at the combined file.
+
 Usage:
   python scripts/build_conversation_goldens.py \
       --review results/module-coverage-030/review.csv \
@@ -606,6 +610,7 @@ def _golden_from_override(
     if "user_persona" in override:
         golden["user_persona"] = override["user_persona"]
     if "improve_later" in override:
+        # Review (AIPLAT-952): Human notes for goldens that need env seeding (e.g. OPA policy).
         golden["metadata"]["improve_later"] = override["improve_later"]
     return _finalize(golden, manifest, "override", scenario_type)
 
@@ -648,7 +653,11 @@ def find_conversation_files(
     only_in_review: set[str] | None = None,
     review_order: list[str] | None = None,
 ) -> list[Path]:
-    """Resolve canonical conversation files across one or more dataset directories."""
+    """Resolve canonical conversation files across one or more dataset directories.
+
+    Review (AIPLAT-952): Supports --conversations module-coverage --conversations random
+    and --only-in-review to build exactly the goldens-final.csv subset into JSONL.
+    """
     if only_in_review is not None:
         by_id: dict[str, Path] = {}
         for conversations_dir in conversations_dirs:

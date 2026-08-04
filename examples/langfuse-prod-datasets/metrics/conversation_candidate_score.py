@@ -1,5 +1,9 @@
 """LLM-assisted eval candidate score (Round 4).
 
+Review (AIPLAT-952): Ranks production conversations for golden promotion (0–5).
+Eight equally-weighted stress/coverage criteria — write_flow/read_only are intentionally
+excluded; use prod-conversation-readonly vs prod-conversation-write datasets for that split.
+
 Scores each conversation 0–5 for golden selection. Eight equally-weighted
 criteria contribute one point each when true; the final score is
 ``(hits / 8) * 5``.
@@ -25,6 +29,7 @@ from conversation_signals import extract_structural_facts, format_structural_fac
 
 PROMPT_VERSION = "conversation-candidate-score-v6"
 
+# Review (AIPLAT-952): 8 criteria → score = (hits / 8) * 5. Exported as criterion_* columns in review.csv.
 CRITERIA = (
     "high_turns",
     "high_cost",

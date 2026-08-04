@@ -5,7 +5,14 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.1]
+
+### Fixed
+
+- **`BedrockAnthropicLLM.generate_json`**: no longer sends the Anthropic-only `output_config`
+  field, which the AWS Bedrock endpoint rejects with `400: output_config.format: Extra inputs
+  are not permitted`. Now appends the JSON schema to the prompt and extracts the object from
+  the response text (matching `BedrockOpenAILLM`). Plain `generate` is unchanged.
 
 ## [0.14.1]
 

@@ -25,9 +25,9 @@ from harness_evals.llm.openai import OpenAILLM
 class BedrockAnthropicLLM(AnthropicLLM):
     """Anthropic Claude accessed through **AWS Bedrock**. Requires ``pip install harness-evals[llm]``.
 
-    Reuses :class:`AnthropicLLM`'s request logic (``generate`` / ``generate_json`` with the
-    Anthropic ``output_config`` structured-output path and token-usage recording); only the
-    underlying client and auth differ.
+    Reuses :class:`AnthropicLLM`'s ``generate`` path and token-usage recording; only the
+    underlying client and auth differ. ``generate_json`` is overridden to append the schema to
+    the prompt instead of sending ``output_config`` (which the Bedrock endpoint rejects with 400).
 
     **Auth is Bedrock API key (bearer token) only** — via ``api_key`` or the
     ``AWS_BEARER_TOKEN_BEDROCK`` env var. It does **not** use ``ANTHROPIC_API_KEY``, and it does
@@ -68,6 +68,14 @@ class BedrockAnthropicLLM(AnthropicLLM):
         if region:
             client_kwargs["aws_region"] = region
         self._client = anthropic.AsyncAnthropicBedrock(**client_kwargs)
+
+    async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
+        instruction = (
+            f"{prompt}\n\nRespond with ONLY a single JSON object matching this schema "
+            f"(no markdown, no commentary, no <reasoning> tags):\n{json.dumps(schema)}"
+        )
+        text = await self.generate(instruction, **kwargs)
+        return _extract_json_object(text)
 
 
 _REASONING_RE = re.compile(r"<reasoning>.*?</reasoning>", re.DOTALL | re.IGNORECASE)

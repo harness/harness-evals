@@ -29,6 +29,9 @@ class BedrockAnthropicLLM(AnthropicLLM):
     underlying client and auth differ. ``generate_json`` is overridden to append the schema to
     the prompt instead of sending ``output_config`` (which the Bedrock endpoint rejects with 400).
 
+    Sampling params (``temperature``, ``top_p``, ``top_k``) are sent only when explicitly set;
+    some Claude 4 models on Bedrock deprecate ``temperature`` and 400 if it is sent.
+
     **Auth is Bedrock API key (bearer token) only** — via ``api_key`` or the
     ``AWS_BEARER_TOKEN_BEDROCK`` env var. It does **not** use ``ANTHROPIC_API_KEY``, and it does
     not support AWS IAM/SigV4 credentials (that path needs the ``anthropic[bedrock]``/boto3
@@ -39,7 +42,7 @@ class BedrockAnthropicLLM(AnthropicLLM):
         self,
         model: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
         api_key: str | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_tokens: int = 4096,
         *,
         aws_region: str | None = None,
@@ -134,7 +137,7 @@ class BedrockOpenAILLM(OpenAILLM):
         self,
         model: str = "openai.gpt-oss-120b-1:0",
         api_key: str | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_tokens: int = 4096,
         *,
         aws_region: str | None = None,

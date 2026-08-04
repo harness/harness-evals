@@ -141,19 +141,25 @@ def reconstruct_stream_messages(
     *,
     output_path: str,
     tool_calls_path: str | None,
+    tool_calls_event: str | Sequence[str] | None = None,
+    tool_results_event: str | Sequence[str] | None = None,
+    tool_results_path: str | None = None,
 ) -> list[Message] | None:
     """Rebuild an ordered trajectory from decoded SSE events, in stream order.
 
-    Applies ``output_path`` and ``tool_calls_path`` to *every* JSON chunk as it
-    arrives, interleaving assistant text with tool calls and tool results the
-    way the agent emitted them:
+    Applies ``output_path`` and tool extraction paths to JSON chunks as they
+    arrive, interleaving assistant text with tool calls and tool results the way
+    the agent emitted them:
 
     - text resolved via ``output_path`` is buffered and flushed as an
       ``assistant`` message at each tool boundary and at end of stream;
     - a chunk whose ``tool_calls_path`` resolves to tool *calls* becomes an
-      ``assistant`` message carrying those ``ToolCall`` objects;
+      ``assistant`` message carrying those ``ToolCall`` objects. When
+      ``tool_calls_event`` is set, only matching SSE events are considered;
     - a chunk carrying tool *results* (output but no input) becomes ``tool``
-      messages so metrics can see what each call returned.
+      messages so metrics can see what each call returned. Results may either
+      be inferred from ``tool_calls_path`` entries, or extracted explicitly via
+      ``tool_results_path`` scoped by ``tool_results_event``.
 
     Returns ``None`` when the stream carried no structure this can assemble
     (no tool calls and no text deltas) — the caller then falls back to the
@@ -170,11 +176,11 @@ def reconstruct_stream_messages(
             messages.append(Message(role="assistant", content="".join(text_buffer)))
             text_buffer.clear()
 
-    for _name, payload in decoded:
+    for name, payload in decoded:
         if not isinstance(payload, (dict, list)):
             continue
 
-        if tool_calls_path is not None:
+        if tool_calls_path is not None and _event_matches(name, tool_calls_event):
             raw_tools = extract_path(payload, tool_calls_path)
             if isinstance(raw_tools, list) and raw_tools:
                 calls: list[ToolCall] = []
@@ -197,6 +203,17 @@ def reconstruct_stream_messages(
                     messages.append(Message(role="tool", content=content, tool_calls=[result]))
                     produced = True
 
+        if tool_results_path is not None and _event_matches(name, tool_results_event):
+            raw_results = extract_path(payload, tool_results_path)
+            if isinstance(raw_results, list) and raw_results:
+                for entry in raw_results:
+                    if not isinstance(entry, dict) or "name" not in entry:
+                        continue
+                    result = ToolCall.from_dict(entry)
+                    content = "" if result.output is None else _as_content(result.output)
+                    messages.append(Message(role="tool", content=content, tool_calls=[result]))
+                    produced = True
+
         text_val = extract_path(payload, output_path)
         if isinstance(text_val, str) and text_val:
             text_buffer.append(text_val)
@@ -207,3 +224,11 @@ def reconstruct_stream_messages(
     if not produced:
         return None
     return messages
+
+
+def _event_matches(event_name: str, selector: str | Sequence[str] | None) -> bool:
+    if selector is None:
+        return True
+    if isinstance(selector, str):
+        return event_name == selector
+    return event_name in selector

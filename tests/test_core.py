@@ -695,9 +695,7 @@ class TestEvaluateDataset:
         def on_result(index, total, eval_case, scores):
             calls.append((index, total, eval_case.input, len(scores)))
 
-        results = await evaluate_dataset(
-            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
-        )
+        results = await evaluate_dataset(goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result)
         assert len(results) == 3
         assert len(calls) == 3
         # Every item reported exactly once, with the correct total and a score list.
@@ -717,9 +715,7 @@ class TestEvaluateDataset:
         def on_result(index, total, eval_case, scores):
             seen.append(any((s.metadata or {}).get("target_error") for s in scores))
 
-        results = await evaluate_dataset(
-            goldens, bad_agent, metrics=[ExactMatchMetric()], on_result=on_result
-        )
+        results = await evaluate_dataset(goldens, bad_agent, metrics=[ExactMatchMetric()], on_result=on_result)
         assert len(results) == 1
         assert seen == [True]
 
@@ -733,9 +729,7 @@ class TestEvaluateDataset:
         def boom(index, total, eval_case, scores):
             raise RuntimeError("callback boom")
 
-        results = await evaluate_dataset(
-            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=boom
-        )
+        results = await evaluate_dataset(goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=boom)
         assert len(results) == 1
         assert results[0][0].passed
 
@@ -751,9 +745,7 @@ class TestEvaluateDataset:
         async def on_result(index, total, eval_case, scores):
             calls.append(index)
 
-        results = await evaluate_dataset(
-            goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result
-        )
+        results = await evaluate_dataset(goldens, agent_fn, metrics=[ExactMatchMetric()], on_result=on_result)
         assert len(results) == 2
         assert sorted(calls) == [0, 1]
 

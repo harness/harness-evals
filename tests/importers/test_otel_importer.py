@@ -133,18 +133,22 @@ class TestOTELSemconvFormat:
                     "gen_ai.response.model": "claude-sonnet-4-6-20250514",
                     "gen_ai.usage.input_tokens": 100,
                     "gen_ai.usage.output_tokens": 50,
-                    "gen_ai.input_messages": json.dumps([
-                        {
-                            "role": "user",
-                            "parts": [{"type": "text", "content": "What is 2+2?"}],
-                        }
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {
-                            "role": "assistant",
-                            "parts": [{"type": "text", "content": "4"}],
-                        }
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [
+                            {
+                                "role": "user",
+                                "parts": [{"type": "text", "content": "What is 2+2?"}],
+                            }
+                        ]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [
+                            {
+                                "role": "assistant",
+                                "parts": [{"type": "text", "content": "4"}],
+                            }
+                        ]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 1500000000,
@@ -175,18 +179,25 @@ class TestOTELSemconvFormat:
                     "gen_ai.request.model": "gpt-4",
                     "gen_ai.usage.input_tokens": 200,
                     "gen_ai.usage.output_tokens": 80,
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "Look up order 123"}]},
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {
-                            "role": "assistant",
-                            "parts": [
-                                {"type": "text", "content": "Let me look that up."},
-                                {"type": "tool_call", "content": json.dumps({"name": "lookup_order", "arguments": {"id": "123"}})},
-                            ],
-                        }
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [
+                            {"role": "user", "parts": [{"type": "text", "content": "Look up order 123"}]},
+                        ]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [
+                            {
+                                "role": "assistant",
+                                "parts": [
+                                    {"type": "text", "content": "Let me look that up."},
+                                    {
+                                        "type": "tool_call",
+                                        "content": json.dumps({"name": "lookup_order", "arguments": {"id": "123"}}),
+                                    },
+                                ],
+                            }
+                        ]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 2000000000,
@@ -223,17 +234,24 @@ class TestOTELSemconvFormat:
                     "gen_ai.operation.name": "chat",
                     "gen_ai.provider.name": "openai",
                     "gen_ai.request.model": "gpt-4",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]},
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {
-                            "role": "assistant",
-                            "parts": [
-                                {"type": "tool_call", "content": json.dumps({"name": "get_weather", "arguments": {"city": "NYC"}})},
-                            ],
-                        }
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [
+                            {"role": "user", "parts": [{"type": "text", "content": "hello"}]},
+                        ]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [
+                            {
+                                "role": "assistant",
+                                "parts": [
+                                    {
+                                        "type": "tool_call",
+                                        "content": json.dumps({"name": "get_weather", "arguments": {"city": "NYC"}}),
+                                    },
+                                ],
+                            }
+                        ]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 2000000000,
@@ -259,12 +277,16 @@ class TestOTELSemconvFormat:
                     "gen_ai.provider.name": "openai",
                     "gen_ai.request.model": "gpt-4",
                     "gen_ai.system_instructions": "You are helpful.",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "hi"}]},
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "hello!"}]},
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [
+                            {"role": "user", "parts": [{"type": "text", "content": "hi"}]},
+                        ]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [
+                            {"role": "assistant", "parts": [{"type": "text", "content": "hello!"}]},
+                        ]
+                    ),
                     "gen_ai.usage.input_tokens": 20,
                     "gen_ai.usage.output_tokens": 5,
                 },
@@ -278,7 +300,6 @@ class TestOTELSemconvFormat:
         assert ec.messages[0].role == "user"
         assert ec.messages[1].role == "assistant"
         assert ec.messages[1].content == "hello!"
-
 
 
 @pytest.mark.unit
@@ -295,12 +316,16 @@ class TestOTELEvalCaseSourceFetch:
                     "gen_ai.operation.name": "chat",
                     "gen_ai.provider.name": "openai",
                     "gen_ai.request.model": "gpt-4",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "what is 2+2?"}]},
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "4"}]},
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [
+                            {"role": "user", "parts": [{"type": "text", "content": "what is 2+2?"}]},
+                        ]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [
+                            {"role": "assistant", "parts": [{"type": "text", "content": "4"}]},
+                        ]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 2000000000,
@@ -338,12 +363,12 @@ class TestAgentRootOnlyOutput:
                 "name": "invoke_agent",
                 "attributes": {
                     "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]}
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "hello"}]}]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 2000000000,
@@ -361,12 +386,12 @@ class TestAgentRootOnlyOutput:
                 "name": "invoke_agent",
                 "attributes": {
                     "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]}
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "hello"}]}]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 3000000000,
@@ -377,12 +402,12 @@ class TestAgentRootOnlyOutput:
                 "attributes": {
                     "gen_ai.operation.name": "chat",
                     "gen_ai.system": "openai",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "hello"}]}
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "hello"}]}]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "hi there"}]}]
+                    ),
                     "gen_ai.usage.input_tokens": 5,
                     "gen_ai.usage.output_tokens": 3,
                 },
@@ -406,9 +431,9 @@ class TestMultiTurnUserRecovery:
                 "name": "invoke_agent",
                 "attributes": {
                     "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "first question"}]}
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "first question"}]}]
+                    ),
                 },
                 "start_time_unix_nano": 1000000000,
                 "end_time_unix_nano": 5000000000,
@@ -419,12 +444,12 @@ class TestMultiTurnUserRecovery:
                 "attributes": {
                     "gen_ai.operation.name": "chat",
                     "gen_ai.system": "openai",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "first question"}]}
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "first answer"}]}
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "first question"}]}]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "first answer"}]}]
+                    ),
                     "gen_ai.usage.input_tokens": 5,
                     "gen_ai.usage.output_tokens": 3,
                 },
@@ -437,14 +462,16 @@ class TestMultiTurnUserRecovery:
                 "attributes": {
                     "gen_ai.operation.name": "chat",
                     "gen_ai.system": "openai",
-                    "gen_ai.input_messages": json.dumps([
-                        {"role": "user", "parts": [{"type": "text", "content": "first question"}]},
-                        {"role": "assistant", "parts": [{"type": "text", "content": "first answer"}]},
-                        {"role": "user", "parts": [{"type": "text", "content": "second question"}]}
-                    ]),
-                    "gen_ai.output_messages": json.dumps([
-                        {"role": "assistant", "parts": [{"type": "text", "content": "second answer"}]}
-                    ]),
+                    "gen_ai.input_messages": json.dumps(
+                        [
+                            {"role": "user", "parts": [{"type": "text", "content": "first question"}]},
+                            {"role": "assistant", "parts": [{"type": "text", "content": "first answer"}]},
+                            {"role": "user", "parts": [{"type": "text", "content": "second question"}]},
+                        ]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "second answer"}]}]
+                    ),
                     "gen_ai.usage.input_tokens": 10,
                     "gen_ai.usage.output_tokens": 5,
                 },

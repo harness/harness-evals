@@ -31,13 +31,16 @@ This example assumes a service that streams events shaped like this:
 
 ```text
 event: tool_call
-data: {"name": "search", "args": {"q": "capital of France"}}
+data: {"tools": [{"name": "search", "input": {"q": "capital of France"}}]}
 
 event: token
 data: The capital
 
 event: token
 data:  of France is Paris.
+
+event: tool_result
+data: {"results": [{"name": "search", "output": "Paris"}]}
 
 event: final
 data: {"answer": "The capital of France is Paris."}
@@ -59,8 +62,13 @@ target:
     stream: true
   output_event: final
   output_path: $.answer
+  tool_calls_event: tool_call
+  tool_calls_path: $.tools
+  tool_results_event: tool_result
+  tool_results_path: $.results
   capture_events:
     - tool_call
+    - tool_result
     - usage
 ```
 
@@ -71,6 +79,16 @@ The same `{{...}}` placeholders work in `headers` values (e.g. `Authorization: "
 `output_event` selects which SSE event becomes the gradeable output. Here the `final` event carries the answer. If you omit `output_event`, the target grades the last JSON `data` payload instead (or, for a plain token stream with no JSON, the concatenated text of `data` lines).
 
 `output_path` extracts the exact field to grade from the selected event payload (`$.answer`).
+
+`tool_calls_event` selects which SSE event(s) carry tool call payloads, and
+`tool_calls_path` extracts the list of calls from those payloads. If
+`tool_calls_event` is omitted, `tool_calls_path` keeps the backward-compatible
+behavior and is applied to every JSON event while reconstructing the trajectory.
+
+`tool_results_event` and `tool_results_path` are optional selectors for streams
+that emit tool results separately from tool calls. Extracted results become
+`tool` messages in `EvalCase.messages`, so trajectory metrics can see what each
+tool returned.
 
 `capture_events` controls what is preserved in `EvalCase.metadata["sse_events"]` for metrics to evaluate. If omitted, **all** events are captured by default; provide an explicit list to restrict capture to those event names (an empty list `[]` captures nothing). `output_event` is independent — it only selects the primary `EvalCase.output`; every other event still reaches metrics via `sse_events`.
 

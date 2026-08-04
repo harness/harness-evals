@@ -3,6 +3,7 @@
 import json
 
 import pytest
+import harness_evals.config.runner as config_runner
 
 from harness_evals.config.runner import run_config
 from harness_evals.config.schema import ConversationSpec, EvalConfig, MetricSpec, TargetSpec, load_config
@@ -40,6 +41,12 @@ class AlwaysPassMetric(BaseMetric):
 def test_config_runner_replays_k8s_connector_flow_through_conversation_target(tmp_path, monkeypatch):
     responses = iter(k8s_connector_turn_responses())
     requests: list[dict] = []
+    captured_concurrency: list[int | None] = []
+    original_evaluate_dataset = config_runner.evaluate_dataset
+
+    async def capture_evaluate_dataset(*args, **kwargs):
+        captured_concurrency.append(kwargs.get("concurrency"))
+        return await original_evaluate_dataset(*args, **kwargs)
 
     def fake_execute(self, body: bytes, headers: dict[str, str]):
         requests.append(json.loads(body.decode("utf-8")))
@@ -51,6 +58,7 @@ def test_config_runner_replays_k8s_connector_flow_through_conversation_target(tm
     monkeypatch.setattr(ConversationalStreamingHttpTarget, "_execute_with_retries", fake_execute)
     monkeypatch.setattr(ConversationalStreamingHttpTarget, "_execute_async", fake_execute_async)
     monkeypatch.setattr("harness_evals.config.runner.build_llm", lambda spec: StopLLM())
+    monkeypatch.setattr(config_runner, "evaluate_dataset", capture_evaluate_dataset)
 
     dataset_path = tmp_path / "goldens.jsonl"
     dataset_path.write_text(
@@ -99,6 +107,7 @@ def test_config_runner_replays_k8s_connector_flow_through_conversation_target(tm
     config_path.write_text(
         f"""\
 name: conversation-runner-test
+concurrency: 1
 plugins:
   - examples.harness_sse_elicitation_adapter
   - examples.sse_events_match_metric
@@ -149,6 +158,7 @@ sinks: []
 
     scores = run_config(load_config(str(config_path)), baseline=None)
 
+    assert captured_concurrency == [1]
     assert scores[0][0].passed
     assert len(requests) == 6
     assert requests[0]["prompt"] == "Create a k8s connector"

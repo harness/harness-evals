@@ -66,6 +66,7 @@ target:
     - elicitation_form
     - elicitation_free_text
     - elicitation_select
+    - elicitation_multi_select
     - elicitation_yaml
   completion_events:
     - assistant_message
@@ -84,6 +85,7 @@ target:
     - elicitation_form
     - elicitation_free_text
     - elicitation_select
+    - elicitation_multi_select
     - elicitation_yaml
     - entity_mutation
     - assistant_message
@@ -91,10 +93,9 @@ target:
 
 metrics:
   - {kind: goal_accuracy, threshold: 0.7}
-  # turn_relevancy omitted: Harness elicitation runs over human_input HTTP round-trips,
-  # but eval_case.messages only keeps the initial user prompt and final assistant_message.
-  # The judge then pairs "create …" with a completion summary and scores it irrelevant
-  # even when goal_accuracy and sse_events_match pass. Use goal_accuracy for outcome.
+  # turn_relevancy omitted: elicitation still spans many human_input round-trips; even with
+  # tool call/result messages expanded from sse_timeline, pairing every user turn to the
+  # right assistant slice is noisy for Harness. Prefer goal_accuracy + sse_events_match.
   - kind: sse_events_match
     threshold: 0.8
     params:

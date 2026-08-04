@@ -725,6 +725,69 @@ async def test_sse_reconstructs_interleaved_trajectory(monkeypatch: pytest.Monke
 
 
 @pytest.mark.unit
+async def test_sse_tool_events_filter_calls_and_extract_explicit_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse(
+        'event: message\ndata: {"output": "checking"}',
+        'event: debug\ndata: {"tools": [{"name": "ignored", "input": {}}]}',
+        'event: tool_call\ndata: {"tools": [{"name": "search", "input": {"q": "cats"}}]}',
+        'event: tool_result\ndata: {"results": [{"name": "search", "result": "found 3"}]}',
+        'event: final\ndata: {"output": "done"}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        output_event="final",
+        tool_calls_event="tool_call",
+        tool_calls_path="$.tools",
+        tool_results_event="tool_result",
+        tool_results_path="$.results",
+    )
+    result = await target.ainvoke(Golden(input="find cats"))
+
+    assert result.output == "done"
+    assert result.tool_calls is not None
+    assert [tc.name for tc in result.tool_calls] == ["search"]
+    assert result.tool_calls[0].input == {"q": "cats"}
+    assert result.messages is not None
+    assert [(m.role, m.content) for m in result.messages] == [
+        ("user", "find cats"),
+        ("assistant", "checking"),
+        ("assistant", None),
+        ("tool", "found 3"),
+        ("assistant", "done"),
+    ]
+    assert result.messages[2].tool_calls is not None
+    assert result.messages[2].tool_calls[0].name == "search"
+    assert result.messages[3].tool_calls is not None
+    assert result.messages[3].tool_calls[0].output == "found 3"
+
+
+@pytest.mark.unit
+async def test_sse_tool_events_accept_multiple_call_event_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse(
+        'event: assistant_tool_request\ndata: {"tools": [{"name": "search", "input": {"q": "cats"}}]}',
+        'event: tool_call\ndata: {"tools": [{"name": "summarize", "input": {"id": "doc-1"}}]}',
+        'event: final\ndata: {"output": "done"}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        output_event="final",
+        tool_calls_event=["assistant_tool_request", "tool_call"],
+        tool_calls_path="$.tools",
+    )
+    result = await target.ainvoke(Golden(input="find cats"))
+
+    assert result.tool_calls is not None
+    assert [tc.name for tc in result.tool_calls] == ["search", "summarize"]
+    assert result.messages is not None
+    assistant_tool_messages = [m for m in result.messages if m.tool_calls]
+    assert len(assistant_tool_messages) == 2
+
+
+@pytest.mark.unit
 async def test_sse_reconstruction_yields_to_reported_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     # Even with a rich interleaved stream, an explicit messages_path wins.
     body = _sse(

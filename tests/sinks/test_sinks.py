@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness_evals import EvalCase, Score
+from harness_evals import EvalCase, Message, Score
 from harness_evals.sinks.csv_sink import CsvSink
 from harness_evals.sinks.json_sink import JsonSink
 from harness_evals.sinks.junit_sink import JUnitSink
@@ -224,6 +224,73 @@ class TestJsonSink:
         record = json.loads(path.read_text().strip())
         for s in record["scores"]:
             assert "passed" in s
+
+    def test_include_eval_case_writes_conversation_trace(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="Create a pipeline",
+            output="Pipeline created",
+            messages=[
+                Message(role="user", content="Create a pipeline"),
+                Message(
+                    role="assistant",
+                    content="Pipeline created",
+                    metadata={"conversation_id": "conv-1"},
+                ),
+            ],
+            metadata={
+                "expected_outcome": "A pipeline is created",
+                "sse_events": {"entity_mutation": [{"resource_type": "pipeline"}]},
+            },
+        )
+        sink = JsonSink(str(path), include_eval_case=True)
+
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert record["eval_case"]["messages"][1]["metadata"]["conversation_id"] == "conv-1"
+        assert "sse_events" not in (record["eval_case"]["messages"][1].get("metadata") or {})
+        assert "sse_events" not in record["eval_case"]["metadata"]
+        assert record["eval_case"]["metadata"]["expected_outcome"] == "A pipeline is created"
+
+    def test_sse_as_timeline_omits_messages(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="Create a pipeline",
+            output="Pipeline created",
+            messages=[
+                Message(role="user", content="Create a pipeline"),
+                Message(role="assistant", content="Pipeline created"),
+            ],
+            metadata={
+                "sse_events": {"assistant_message": [{"v": "Pipeline created"}]},
+                "sse_timeline": [
+                    {"event": "assistant_tool_request", "payload": {"v": [{"name": "harness_create"}]}},
+                    {"event": "assistant_message", "payload": {"v": "Pipeline created"}},
+                ],
+            },
+        )
+        sink = JsonSink(str(path), include_eval_case=True, omit_messages=True, sse_as_timeline=True)
+
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert "messages" not in record["eval_case"]
+        events = record["eval_case"]["metadata"]["sse_events"]
+        assert isinstance(events, list)
+        assert events[0]["event"] == "assistant_tool_request"
+        assert events[1]["event"] == "assistant_message"
+        assert "sse_timeline" not in record["eval_case"]["metadata"]
+
+    def test_overwrite_replaces_previous_run(self, tmp_path, eval_case, scores):
+        path = tmp_path / "results.jsonl"
+        first = JsonSink(str(path), overwrite=True)
+        first.write(scores, eval_case)
+        second = JsonSink(str(path), overwrite=True)
+        second.write(scores, eval_case)
+
+        lines = path.read_text().strip().splitlines()
+        assert len(lines) == 1
 
 
 # ---------------------------------------------------------------------------

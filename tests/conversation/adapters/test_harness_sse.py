@@ -98,6 +98,247 @@ async def test_free_text_elicitation_maps_question_to_intent():
 
 
 @pytest.mark.unit
+async def test_form_text_field_uses_intent_value():
+    golden = ConversationGolden(
+        scenario="Create a CCM cost category",
+        expected_outcome="Cost category created",
+        elicitation_hints={
+            "intents": {
+                "cost_bucket_name": "Production",
+                "aws_filter_by": "By Account",
+            },
+            "matchers": [
+                {
+                    "intent": "cost_bucket_name",
+                    "question_contains": ["name this cost bucket", "name for this cost bucket"],
+                },
+                {
+                    "intent": "aws_filter_by",
+                    "question_contains": ["filter aws costs", "filter AWS costs"],
+                },
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "ask-bucket-form",
+                "content": {
+                    "fields": [
+                        {
+                            "key": "q0",
+                            "label": "What would you like to name this cost bucket?",
+                            "type": "text",
+                        },
+                        {
+                            "key": "q1",
+                            "label": "How would you like to filter AWS costs for this bucket?",
+                            "type": "select",
+                            "options": [
+                                {"label": "By Account", "value": "By Account"},
+                                {"label": "By Service", "value": "By Service"},
+                            ],
+                        },
+                    ]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {
+        "What would you like to name this cost bucket?": "Production",
+        "How would you like to filter AWS costs for this bucket?": "By Account",
+    }
+
+
+@pytest.mark.unit
+async def test_llm_on_miss_falls_back_when_matcher_misses():
+    class ScriptedLLM(BaseLLM):
+        async def generate(self, prompt: str, **kwargs) -> str:
+            return ""
+
+        async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+            return {
+                "result": {
+                    "success": True,
+                    "action_id": "respond",
+                    "free_text": "Create it with just this one bucket",
+                }
+            }
+
+    golden = ConversationGolden(
+        id="ce-cost-category",
+        scenario="Create a CCM cost category",
+        expected_outcome="Cost category created",
+        elicitation_hints={
+            "llm_on_miss": True,
+            "intents": {"category_name": "eval_cost_category_test"},
+            "matchers": [
+                {"intent": "category_name", "question_contains": ["name your cost category"]},
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_free_text",
+            "payload": {
+                "review_id": "ask-more-buckets",
+                "content": {
+                    "question": "Would you like to add more cost buckets to this category, or create it with just this one bucket?"
+                },
+            },
+        }
+    )
+
+    adapter = HarnessSseElicitationAdapter()
+    adapter.llm = ScriptedLLM()
+    result = await adapter.respond(pending, golden, [])
+
+    assert result["result"]["free_text"] == "Create it with just this one bucket"
+    assert len(adapter.intent_misses) == 1
+    assert adapter.intent_misses[0].reason == "hint_miss_llm_fallback"
+    assert adapter.intent_misses[0].fallback == "llm"
+
+
+@pytest.mark.unit
+async def test_llm_on_miss_falls_back_when_select_options_empty():
+    """Empty option lists must miss so llm_on_miss can answer instead of raising."""
+
+    class ScriptedLLM(BaseLLM):
+        async def generate(self, prompt: str, **kwargs) -> str:
+            return ""
+
+        async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+            return {
+                "result": {
+                    "success": True,
+                    "action_id": "respond",
+                    "selection": "Environment-based",
+                }
+            }
+
+    golden = ConversationGolden(
+        id="ce-empty-select-options",
+        scenario="Create a CCM cost category",
+        expected_outcome="Cost category created",
+        elicitation_hints={
+            "llm_on_miss": True,
+            "intents": {"bucket_type": "Environment-based"},
+            "matchers": [
+                {
+                    "intent": "bucket_type",
+                    "question_contains": ["what buckets do you want", "buckets do you want to create"],
+                }
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {
+                "review_id": "ask-buckets",
+                "content": {
+                    "question": "What buckets do you want to create for this cost category?",
+                    "items": [],
+                },
+            },
+        }
+    )
+
+    adapter = HarnessSseElicitationAdapter()
+    adapter.llm = ScriptedLLM()
+    result = await adapter.respond(pending, golden, [])
+
+    assert result["result"]["selection"] == "Environment-based"
+    assert len(adapter.intent_misses) == 1
+    assert adapter.intent_misses[0].reason == "hint_miss_llm_fallback"
+    assert adapter.intent_misses[0].fallback == "llm"
+
+
+@pytest.mark.unit
+async def test_category_name_stays_deterministic_with_llm_on_miss():
+    class FailingLLM(BaseLLM):
+        async def generate(self, prompt: str, **kwargs) -> str:
+            raise AssertionError("LLM should not be called when matcher resolves")
+
+        async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called when matcher resolves")
+
+    golden = ConversationGolden(
+        scenario="Create a CCM cost category",
+        expected_outcome="Cost category created",
+        elicitation_hints={
+            "llm_on_miss": True,
+            "intents": {"category_name": "eval_cost_category_test"},
+            "matchers": [
+                {"intent": "category_name", "question_contains": ["name your cost category"]},
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_free_text",
+            "payload": {
+                "review_id": "ask-name",
+                "content": {"question": "What would you like to name your Cost Category?"},
+            },
+        }
+    )
+
+    adapter = HarnessSseElicitationAdapter()
+    adapter.llm = FailingLLM()
+    result = await adapter.respond(pending, golden, [])
+
+    assert result["result"]["free_text"] == "eval_cost_category_test"
+    assert adapter.intent_misses == []
+
+
+@pytest.mark.unit
+async def test_select_elicitation_uses_content_items():
+    golden = ConversationGolden(
+        scenario="Create a CCM cost category",
+        expected_outcome="Cost category created",
+        elicitation_hints={
+            "intents": {"bucket_type": "Environment-based"},
+            "matchers": [
+                {
+                    "intent": "bucket_type",
+                    "question_contains": ["what buckets do you want", "buckets do you want to create"],
+                }
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {
+                "review_id": "ask-buckets",
+                "content": {
+                    "question": "What buckets do you want to create for this cost category?",
+                    "items": [
+                        {"id": "0", "label": "Team-based", "description": "Buckets like Engineering"},
+                        {"id": "1", "label": "Environment-based", "description": "Production, Staging, Dev"},
+                        {"id": "2", "label": "Region-based", "description": "US-East, EU"},
+                    ],
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["capability_id"] == "ask-buckets"
+    assert result["result"]["selection"] == "Environment-based"
+    assert result["result"]["selected_value"] == "Environment-based"
+    assert result["result"]["form_values"] == {
+        "What buckets do you want to create for this cost category?": "Environment-based",
+    }
+
+
+@pytest.mark.unit
 async def test_select_elicitation_maps_question_to_intent():
     pending = PendingHumanInput.from_metadata(
         {
@@ -120,6 +361,7 @@ async def test_select_elicitation_maps_question_to_intent():
 
     assert result["capability_id"] == "ask-delegate"
     assert result["result"]["action_id"] == "respond"
+    assert result["result"]["selection"] == "hello"
     assert result["result"]["selected_value"] == "hello"
     assert result["result"]["form_values"] == {
         "Which delegate selector tag should be used for this connector?": "hello"
@@ -147,6 +389,7 @@ async def test_project_question_maps_to_project_id_not_scope():
     result = await HarnessSseElicitationAdapter().respond(pending, _golden(), [])
 
     assert result["capability_id"] == "ask-project"
+    assert result["result"]["selection"] == "AICHAT"
     assert result["result"]["selected_value"] == "AICHAT"
     assert result["result"]["form_values"] == {
         "Which project in the 'AI_Devops' org should the connector be created in?": "AICHAT"
@@ -222,6 +465,7 @@ async def test_adapter_uses_llm_for_select_without_elicitation_hints():
     result = await adapter.respond(pending, golden, [])
 
     assert result["capability_id"] == "ask-scope"
+    assert result["result"]["selection"] == "Account"
     assert result["result"]["selected_value"] == "Account"
     assert result["result"]["form_values"] == {
         "What scope should this service be created at?": "Account",
@@ -405,7 +649,7 @@ async def test_llm_fallback_records_no_hints_miss(caplog):
 
 
 @pytest.mark.unit
-async def test_form_field_intent_miss_records_no_intent_match(caplog):
+async def test_form_field_intent_miss_raises_unresolved(caplog):
     caplog.set_level(logging.WARNING, logger=_INTENT_MISS_LOGGER)
     adapter = HarnessSseElicitationAdapter()
     pending = PendingHumanInput.from_metadata(
@@ -417,6 +661,7 @@ async def test_form_field_intent_miss_records_no_intent_match(caplog):
                     "fields": [
                         {
                             "label": "Which org should be used?",
+                            "type": "select",
                             "options": [
                                 {"label": "AI_Devops", "value": "AI_Devops"},
                                 {"label": "Other", "value": "Other"},
@@ -428,12 +673,12 @@ async def test_form_field_intent_miss_records_no_intent_match(caplog):
         }
     )
 
-    result = await adapter.respond(pending, _golden(), [])
+    with pytest.raises(ValueError, match="Unresolved elicitation_form"):
+        await adapter.respond(pending, _golden(), [])
 
-    assert result["result"]["form_values"]["Which org should be used?"] == "AI_Devops"
     assert len(adapter.intent_misses) == 1
     assert adapter.intent_misses[0].reason == "no_intent_match"
-    assert adapter.intent_misses[0].fallback == "first_option"
+    assert adapter.intent_misses[0].fallback == "unresolved"
     assert "no_intent_match" in caplog.text
 
 
@@ -461,7 +706,7 @@ async def test_free_text_intent_miss_records_no_intent_match(caplog):
 
 
 @pytest.mark.unit
-async def test_select_intent_miss_records_no_intent_match(caplog):
+async def test_select_intent_miss_raises_unresolved(caplog):
     caplog.set_level(logging.WARNING, logger=_INTENT_MISS_LOGGER)
     adapter = HarnessSseElicitationAdapter()
     pending = PendingHumanInput.from_metadata(
@@ -480,12 +725,12 @@ async def test_select_intent_miss_records_no_intent_match(caplog):
         }
     )
 
-    result = await adapter.respond(pending, _golden(), [])
+    with pytest.raises(ValueError, match="Unresolved elicitation_select"):
+        await adapter.respond(pending, _golden(), [])
 
-    assert result["result"]["selected_value"] == "AI_Devops"
     assert len(adapter.intent_misses) == 1
     assert adapter.intent_misses[0].reason == "no_intent_match"
-    assert adapter.intent_misses[0].fallback == "first_option"
+    assert adapter.intent_misses[0].fallback == "unresolved"
     assert "no_intent_match" in caplog.text
 
 
@@ -516,12 +761,89 @@ async def test_select_intent_miss_records_missing_intent_value(caplog):
         }
     )
 
-    await adapter.respond(pending, golden, [])
+    with pytest.raises(ValueError, match="Unresolved elicitation_select"):
+        await adapter.respond(pending, golden, [])
 
     assert len(adapter.intent_misses) == 1
     assert adapter.intent_misses[0].reason == "missing_intent_value"
     assert adapter.intent_misses[0].intent == "org_id"
+    assert adapter.intent_misses[0].fallback == "unresolved"
     assert "missing_intent_value" in caplog.text
+
+
+@pytest.mark.unit
+async def test_multi_select_returns_selection_labels():
+    golden = ConversationGolden(
+        scenario="Create cost category",
+        expected_outcome="Category created",
+        elicitation_hints={
+            "intents": {"cloud_providers": "AWS, GCP"},
+            "matchers": [{"intent": "cloud_providers", "question_contains": ["cloud provider"]}],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_multi_select",
+            "payload": {
+                "review_id": "ask-providers",
+                "content": {
+                    "question": "Which cloud provider(s) should this bucket match?",
+                    "items": [
+                        {"id": "0", "label": "AWS"},
+                        {"id": "1", "label": "GCP"},
+                        {"id": "2", "label": "Azure"},
+                        {"id": "3", "label": "All Providers"},
+                    ],
+                    "allow_multiple": True,
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["capability_id"] == "ask-providers"
+    assert result["result"]["selections"] == ["AWS", "GCP"]
+    assert result["result"]["selection"] == "AWS"
+
+
+@pytest.mark.unit
+async def test_form_text_field_keeps_custom_value_even_with_options():
+    golden = ConversationGolden(
+        scenario="Create cost category",
+        expected_outcome="Category created",
+        elicitation_hints={
+            "intents": {"category_name": "test"},
+            "matchers": [{"intent": "category_name", "question_contains": ["name this cost category"]}],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "ask-form",
+                "content": {
+                    "fields": [
+                        {
+                            "key": "q0",
+                            "label": "What would you like to name this cost category?",
+                            "type": "text",
+                            "options": [
+                                {"label": "Team Costs", "value": "Team Costs"},
+                                {"label": "Service Costs", "value": "Service Costs"},
+                            ],
+                        }
+                    ]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {
+        "What would you like to name this cost category?": "test",
+    }
 
 
 @pytest.mark.unit
@@ -535,7 +857,7 @@ def test_simulator_exports_intent_misses_in_metadata():
             elicitation_type="elicitation_select",
             question="Which org should be used?",
             golden_id="k8s-connector-create",
-            fallback="first_option",
+            fallback="unresolved",
         )
     )
     simulator = ConversationSimulator(human_input_simulator=HumanInputSimulator(adapter=adapter))
@@ -550,7 +872,7 @@ def test_simulator_exports_intent_misses_in_metadata():
             "question": "Which org should be used?",
             "intent": None,
             "golden_id": "k8s-connector-create",
-            "fallback": "first_option",
+            "fallback": "unresolved",
         }
     ]
 

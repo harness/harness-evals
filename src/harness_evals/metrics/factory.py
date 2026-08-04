@@ -233,8 +233,8 @@ def _build_llm_metric(
         if metric_class is AnswerCorrectnessMetric:
             try:
                 embedding = OpenAIEmbedding()
-            except ImportError:
-                raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'")
+            except ImportError as err:
+                raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'") from err
             metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
         else:
             kind_kwargs: dict[str, Any] = {}
@@ -379,8 +379,7 @@ def _build_code_metric(
         else:
             if suite_path is None:
                 raise ValueError(
-                    f"Code metric path '{path}' is a relative file path but "
-                    "no suite_path was provided to resolve it"
+                    f"Code metric path '{path}' is a relative file path but no suite_path was provided to resolve it"
                 )
             full_path = (suite_path.parent / path).resolve()
             suite_dir = suite_path.parent.resolve()

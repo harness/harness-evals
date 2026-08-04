@@ -245,9 +245,7 @@ async def test_simulator_inserts_tool_calls_and_results_in_message_order():
                     "assistant_tool_request": [
                         {"v": [{"name": "harness_list", "arguments": {"resource_type": "project"}}]}
                     ],
-                    "assistant_tool_result": [
-                        {"v": [{"name": "harness_list", "result": {"items": [{"id": "p1"}]}}]}
-                    ],
+                    "assistant_tool_result": [{"v": [{"name": "harness_list", "result": {"items": [{"id": "p1"}]}}]}],
                 },
                 "sse_timeline": [
                     {

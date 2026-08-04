@@ -414,9 +414,7 @@ class ConversationSimulator:
                             "assistant_preview": (assistant_msg.content or "")[:240],
                         }
                     )
-                incomplete = _incomplete_after_elicitation(
-                    assistant_msg, golden, accumulated_sse, rounds
-                )
+                incomplete = _incomplete_after_elicitation(assistant_msg, golden, accumulated_sse, rounds)
                 if incomplete:
                     metadata = dict(assistant_msg.metadata or {})
                     metadata["elicitation_error"] = incomplete
@@ -442,9 +440,7 @@ class ConversationSimulator:
                         assistant_msg.content,
                         sorted((assistant_msg.metadata or {}).get("sse_events", {})),
                     )
-                return _finalize_elicitation(
-                    assistant_msg, accumulated_sse, accumulated_timeline, trace, rounds
-                )
+                return _finalize_elicitation(assistant_msg, accumulated_sse, accumulated_timeline, trace, rounds)
 
             _logger.debug(
                 "Elicitation round %d/%d: pending=%s correlation_id=%s",
@@ -496,9 +492,7 @@ class ConversationSimulator:
                 "reason": f"Stopped after {rounds} elicitation round(s).",
             }
         )
-        return _finalize_elicitation(
-            assistant_msg, accumulated_sse, accumulated_timeline, trace, rounds
-        )
+        return _finalize_elicitation(assistant_msg, accumulated_sse, accumulated_timeline, trace, rounds)
 
     async def _call_agent(
         self,
@@ -659,9 +653,10 @@ def _plain_text_followup(
         return None
 
     lowered = content.lower()
-    if "cost category" in lowered and sum(
-        1 for token in ("name", "bucket", "structure", "organize") if token in lowered
-    ) >= 2:
+    if (
+        "cost category" in lowered
+        and sum(1 for token in ("name", "bucket", "structure", "organize") if token in lowered) >= 2
+    ):
         composite = _composite_cost_category_answer(golden, used_intents)
         if composite is not None:
             return composite

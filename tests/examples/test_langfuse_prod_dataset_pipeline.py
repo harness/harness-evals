@@ -151,9 +151,7 @@ def test_structurally_empty_conversation_is_ineligible():
 
 @pytest.mark.unit
 def test_normalize_categories_keeps_quality_and_readiness_orthogonal():
-    usefulness, quality, readiness, final = normalize_categories(
-        "useful", "bad", "needs_rewrite"
-    )
+    usefulness, quality, readiness, final = normalize_categories("useful", "bad", "needs_rewrite")
     assert usefulness == "useful"
     assert quality == "bad"
     assert readiness == "needs_rewrite"
@@ -162,9 +160,7 @@ def test_normalize_categories_keeps_quality_and_readiness_orthogonal():
 
 @pytest.mark.unit
 def test_legacy_needs_improvement_review_maps_to_quality_and_readiness():
-    quality, readiness = golden_builder._resolve_review_labels(
-        {"final_category": "needs_improvement"}
-    )
+    quality, readiness = golden_builder._resolve_review_labels({"final_category": "needs_improvement"})
     assert quality == "good"
     assert readiness == "needs_rewrite"
 
@@ -423,25 +419,30 @@ def test_ce_cost_category_override_is_write_with_elicitation_hints():
 @pytest.mark.unit
 def test_ce_golden_matches_observed_aws_bucket_questions():
     dataset_path = REPO_ROOT / "examples" / "prod-conversation.goldens.jsonl"
-    ce_data = next(
-        json.loads(line)
-        for line in dataset_path.read_text().splitlines()
-        if '"id":"ce-' in line
-    )
+    ce_data = next(json.loads(line) for line in dataset_path.read_text().splitlines() if '"id":"ce-' in line)
     golden = ConversationGolden.from_dict(ce_data)
 
-    assert resolve_intent(
-        "How would you like to group your AWS costs into buckets?",
-        golden,
-    ) == "aws_grouping"
-    assert resolve_intent(
-        "How many cost buckets do you want to create?",
-        golden,
-    ) == "bucket_count"
-    assert resolve_intent(
-        "What name should this bucket have?",
-        golden,
-    ) == "cost_bucket_name"
+    assert (
+        resolve_intent(
+            "How would you like to group your AWS costs into buckets?",
+            golden,
+        )
+        == "aws_grouping"
+    )
+    assert (
+        resolve_intent(
+            "How many cost buckets do you want to create?",
+            golden,
+        )
+        == "bucket_count"
+    )
+    assert (
+        resolve_intent(
+            "What name should this bucket have?",
+            golden,
+        )
+        == "cost_bucket_name"
+    )
 
 
 @pytest.mark.unit

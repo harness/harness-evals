@@ -25,18 +25,25 @@ class TestBuildMetric:
     def test_llm_build_injects_judge_metadata(self):
         m = build_metric(
             "llm",
-            {"kind": "geval", "criteria": "Is it correct?",
-             "metadata": {"provider": "openai", "model": "gpt-4o",
-                          "api_key": "k", "base_url": "https://api.openai.com/v1"}},
-            score_name="geval_correctness", threshold=0.8,
+            {
+                "kind": "geval",
+                "criteria": "Is it correct?",
+                "metadata": {
+                    "provider": "openai",
+                    "model": "gpt-4o",
+                    "api_key": "k",
+                    "base_url": "https://api.openai.com/v1",
+                },
+            },
+            score_name="geval_correctness",
+            threshold=0.8,
         )
         assert m.name == "geval_correctness"
 
     def test_llm_unknown_kind_falls_back_to_geval(self):
         m = build_metric(
             "llm",
-            {"criteria": "rate it",
-             "metadata": {"provider": "openai", "model": "gpt-4o", "api_key": "k"}},
+            {"criteria": "rate it", "metadata": {"provider": "openai", "model": "gpt-4o", "api_key": "k"}},
             score_name="custom_judge",
         )
         assert m.name == "custom_judge"

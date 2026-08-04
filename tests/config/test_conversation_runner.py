@@ -3,8 +3,8 @@
 import json
 
 import pytest
-import harness_evals.config.runner as config_runner
 
+import harness_evals.config.runner as config_runner
 from harness_evals.config.runner import run_config
 from harness_evals.config.schema import ConversationSpec, EvalConfig, MetricSpec, TargetSpec, load_config
 from harness_evals.core.eval_case import EvalCase

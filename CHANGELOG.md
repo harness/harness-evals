@@ -5,6 +5,15 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.2]
+
+### Fixed
+
+- **CI publish unblocked**: fixed lint (`ruff check` B904 in `metrics/factory.py`, import sort in
+  `tests/config/test_conversation_runner.py`) and formatting (`ruff format` across 7 files) errors
+  introduced in 0.16.0. These failed the `test` job's lint step, which skipped the `publish` job —
+  so 0.16.0 and 0.16.1 never reached PyPI. No runtime behavior change.
+
 ## [0.16.1]
 
 ### Fixed

@@ -721,9 +721,6 @@ class FakeSignalsLLM(BaseLLM):
             "skill_loading": True,
             "hitl_loop": True,
             "multi_turn": True,
-            "write_flow": True,
-            "read_only": False,
-            "scenario_type": "write",
             "module_tag": "module:ce",
             "signal_tags": [
                 "high_turns",
@@ -734,7 +731,6 @@ class FakeSignalsLLM(BaseLLM):
                 "skill_loading",
                 "hitl_loop",
                 "multi_turn",
-                "write_flow",
                 "module:ce",
             ],
             "confidence": 0.9,
@@ -742,8 +738,6 @@ class FakeSignalsLLM(BaseLLM):
             "evidence": ["num_turns=12", "Skill tool", "status ERROR"],
             "criterion_notes": {
                 "hitl_loop": "same bucket question asked twice after answer",
-                "write_flow": "created cost category",
-                "read_only": "not applicable",
             },
         }
 
@@ -802,7 +796,6 @@ def test_conversation_signals_llm_metric_assigns_tags_for_good_row():
     score = asyncio.run(HarnessConversationSignalsMetric(llm=llm).a_measure(eval_case))
     assert "num_turns" in llm.prompt
     assert "0.42" in llm.prompt
-    assert score.metadata["scenario_type"] == "write"
     assert "high_turns" in score.metadata["signal_tags"]
     assert "skill_loading" in score.metadata["signal_tags"]
     assert "module:ce" in score.metadata["signal_tags"]
@@ -852,8 +845,8 @@ def test_conversation_candidate_score_structural_criteria():
     assert structural["large_tool_output"] is True
     assert structural["multi_turn"] is True
     assert compute_eval_candidate_score({**structural, **dict.fromkeys(
-        ("tool_failure", "skill_loading", "hitl_loop", "write_flow", "read_only"), False
-    )}) == round((5 / 10) * 5, 2)
+        ("tool_failure", "skill_loading", "hitl_loop"), False
+    )}) == round((5 / 8) * 5, 2)
 
 
 @pytest.mark.unit
@@ -875,7 +868,7 @@ def test_conversation_candidate_score_llm_metric_scores_good_row():
     )
     llm = FakeSignalsLLM()
     score = asyncio.run(HarnessConversationCandidateScoreMetric(llm=llm).a_measure(eval_case))
-    assert score.metadata["eval_candidate_score"] == round((9 / 10) * 5, 2)
+    assert score.metadata["eval_candidate_score"] == round((8 / 8) * 5, 2)
     assert score.metadata["criteria"]["tool_failure"] is True
     assert score.metadata["criteria"]["skill_loading"] is True
     assert "harness_create failed" in score.reason
@@ -904,8 +897,6 @@ def test_build_eval_candidate_reasoning_uses_concrete_values():
         "tool_failure": True,
         "skill_loading": True,
         "hitl_loop": True,
-        "write_flow": True,
-        "read_only": False,
         "criterion_notes": {
             "hitl_loop": "same bucket question asked twice after answer",
         },
@@ -970,14 +961,10 @@ class CombinedFakeLLM(BaseLLM):
                 "skill_loading": True,
                 "hitl_loop": True,
                 "multi_turn": True,
-                "write_flow": True,
-                "read_only": False,
                 "reasoning": "Stressful read with tool failure.",
                 "evidence": ["status ERROR"],
                 "criterion_notes": {
                     "hitl_loop": "AskUserQuestion repeated after user answered",
-                    "write_flow": "read-only inspection",
-                    "read_only": "list and explain task",
                 },
             }
         return {

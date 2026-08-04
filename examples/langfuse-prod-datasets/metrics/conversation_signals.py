@@ -26,7 +26,7 @@ from harness_evals.plugins import register_metric
 
 from conversation_quality import format_conversation
 
-PROMPT_VERSION = "conversation-signals-v2"
+PROMPT_VERSION = "conversation-signals-v3"
 
 QUALITY_FOR_SIGNALS = frozenset({"good", "bad"})
 
@@ -39,15 +39,13 @@ SIGNAL_TAG_VALUES = (
     "skill_loading",
     "hitl_loop",
     "multi_turn",
-    "write_flow",
-    "read_only",
 )
 
 _SYSTEM_PROMPT = """You categorize production Harness AI agent conversations into
 stress / coverage buckets used for golden selection. Use only the conversation
 transcript, tool evidence, and the supplied structural facts. Apply the threshold
 rules exactly when facts are given. Cite brief evidence for softer tags
-(skill_loading, hitl_loop, tool_failure, write vs read).
+(skill_loading, hitl_loop, tool_failure).
 
 hitl_loop means the same HITL or approval question is asked again after the user
 already answered — not merely that an approval gate occurred once."""
@@ -72,12 +70,8 @@ Tag definitions (apply when true):
 - hitl_loop: the same HITL / AskUserQuestion / approval prompt is asked again after
   the user already responded (repeated question loop — not a single approval gate)
 - multi_turn: num_turns >= 2
-- write_flow: mutation / create / update / delete / deploy style task (or write tools)
-- read_only: inspection / list / explain / validate without mutation
-  (exactly one of write_flow or read_only must be true)
 
 Also set:
-- scenario_type: "write" if write_flow else "read_only"
 - module_tag: "module:<name>" using the module from structural facts when present,
   else "module:none"
 - signal_tags: list of all true tags from the enum above, plus module_tag
@@ -100,9 +94,6 @@ _RESPONSE_SCHEMA = {
         "skill_loading",
         "hitl_loop",
         "multi_turn",
-        "write_flow",
-        "read_only",
-        "scenario_type",
         "module_tag",
         "signal_tags",
         "confidence",
@@ -118,9 +109,6 @@ _RESPONSE_SCHEMA = {
         "skill_loading": {"type": "boolean"},
         "hitl_loop": {"type": "boolean"},
         "multi_turn": {"type": "boolean"},
-        "write_flow": {"type": "boolean"},
-        "read_only": {"type": "boolean"},
-        "scenario_type": {"type": "string", "enum": ["write", "read_only"]},
         "module_tag": {"type": "string"},
         "signal_tags": {
             "type": "array",
@@ -210,18 +198,7 @@ def format_structural_facts(facts: dict[str, Any]) -> str:
 
 
 def normalize_signal_result(result: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:
-    """Normalize LLM output into stable tag lists and scenario_type."""
-    write_flow = bool(result.get("write_flow"))
-    read_only = bool(result.get("read_only"))
-    if write_flow == read_only:
-        # Prefer write when both/neither set and create/update tools appear.
-        tool_blob = " ".join(str(name) for name in facts.get("tool_names_sample") or [])
-        write_flow = any(
-            token in tool_blob
-            for token in ("harness_create", "harness_update", "harness_delete")
-        ) or write_flow
-        read_only = not write_flow
-
+    """Normalize LLM output into stable tag lists."""
     flags = {
         "high_turns": bool(result.get("high_turns")),
         "high_cost": bool(result.get("high_cost")),
@@ -231,11 +208,8 @@ def normalize_signal_result(result: dict[str, Any], facts: dict[str, Any]) -> di
         "skill_loading": bool(result.get("skill_loading")),
         "hitl_loop": bool(result.get("hitl_loop")),
         "multi_turn": bool(result.get("multi_turn")),
-        "write_flow": write_flow,
-        "read_only": read_only,
     }
 
-    scenario_type = "write" if write_flow else "read_only"
     module = str(facts.get("module") or "none")
     module_tag = str(result.get("module_tag") or f"module:{module}").strip()
     if not module_tag.startswith("module:"):
@@ -253,11 +227,6 @@ def normalize_signal_result(result: dict[str, Any], facts: dict[str, Any]) -> di
     allowed = set(SIGNAL_TAG_VALUES) | {module_tag}
     filtered = [tag for tag in llm_tags if tag in allowed]
     if filtered:
-        # Ensure write/read exclusivity and module tag presence.
-        if write_flow and "read_only" in filtered:
-            filtered = [tag for tag in filtered if tag != "read_only"]
-        if read_only and "write_flow" in filtered:
-            filtered = [tag for tag in filtered if tag != "write_flow"]
         if module_tag not in filtered:
             filtered.append(module_tag)
         tags = filtered
@@ -266,7 +235,6 @@ def normalize_signal_result(result: dict[str, Any], facts: dict[str, Any]) -> di
     evidence = [str(item) for item in (result.get("evidence") or [])]
     return {
         **flags,
-        "scenario_type": scenario_type,
         "module_tag": module_tag,
         "signal_tags": tags,
         "confidence": confidence,
@@ -367,12 +335,8 @@ class HarnessConversationSignalsMetric(LLMConversationMetric):
         normalized = normalize_signal_result(result, facts)
         tag_count = len(normalized["signal_tags"])
         # Score is informational: fraction of possible stress tags (excluding module).
-        stress_tags = [
-            tag
-            for tag in normalized["signal_tags"]
-            if tag in SIGNAL_TAG_VALUES and tag not in {"write_flow", "read_only"}
-        ]
-        value = min(1.0, len(stress_tags) / 8.0) if tag_count else 0.0
+        stress_tags = [tag for tag in normalized["signal_tags"] if tag in SIGNAL_TAG_VALUES]
+        value = min(1.0, len(stress_tags) / len(SIGNAL_TAG_VALUES)) if tag_count else 0.0
 
         return Score(
             name=self.name,
@@ -383,7 +347,6 @@ class HarnessConversationSignalsMetric(LLMConversationMetric):
                 "prompt_version": PROMPT_VERSION,
                 "skipped": False,
                 "signal_tags": normalized["signal_tags"],
-                "scenario_type": normalized["scenario_type"],
                 "module_tag": normalized["module_tag"],
                 "confidence": normalized["confidence"],
                 "evidence": normalized["evidence"],

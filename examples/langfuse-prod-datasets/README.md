@@ -101,10 +101,8 @@ Eval candidacy criteria (equal weight, combined into ``eval_candidate_score``):
 | `skill_loading` | skill launch / skill workflow |
 | `hitl_loop` | same HITL question repeated after user already answered |
 | `multi_turn` | `num_turns >= 2` |
-| `write_flow` | create / update / delete task |
-| `read_only` | list / explain / validate only |
 
-Score formula: ``(criteria_hits / 10) * 5``.
+Score formula: ``(criteria_hits / 8) * 5``.
 
 The judge also assigns:
 
@@ -153,10 +151,9 @@ Each tagged row gets a semicolon-separated ``signal_tags`` column:
 | `skill_loading` | skill launch / skill workflow |
 | `hitl_loop` | same HITL question repeated after user already answered |
 | `multi_turn` | `num_turns >= 2` |
-| `write_flow` / `read_only` | mutation vs inspection (exactly one) |
 | `module:<name>` | Harness module from metadata |
 
-Also writes ``scenario_type``, ``signals_reasoning``, structural counters, and
+Also writes ``module_tag``, ``signals_reasoning``, structural counters, and
 ``signals_skipped_reason`` for non-good/bad rows.
 
 ## 5c. Round 4 — re-score candidacy only (optional)

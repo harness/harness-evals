@@ -1,8 +1,8 @@
 """LLM-assisted eval candidate score (Round 4).
 
-Scores each conversation 0–5 for golden selection. Ten equally-weighted
+Scores each conversation 0–5 for golden selection. Eight equally-weighted
 criteria contribute one point each when true; the final score is
-``(hits / 10) * 5``.
+``(hits / 8) * 5``.
 
 Threshold-based criteria are computed from canonical conversation facts.
 Transcript-based criteria are judged by the LLM.
@@ -23,7 +23,7 @@ from harness_evals.plugins import register_metric
 from conversation_quality import format_conversation
 from conversation_signals import extract_structural_facts, format_structural_facts
 
-PROMPT_VERSION = "conversation-candidate-score-v5"
+PROMPT_VERSION = "conversation-candidate-score-v6"
 
 CRITERIA = (
     "high_turns",
@@ -34,13 +34,9 @@ CRITERIA = (
     "skill_loading",
     "hitl_loop",
     "multi_turn",
-    "write_flow",
-    "read_only",
 )
 
-_TRANSCRIPT_CRITERIA = frozenset(
-    {"tool_failure", "skill_loading", "hitl_loop", "write_flow", "read_only"}
-)
+_TRANSCRIPT_CRITERIA = frozenset({"tool_failure", "skill_loading", "hitl_loop"})
 
 _FAILURE_MARKERS = (
     '"status": "error"',
@@ -88,20 +84,16 @@ Criteria definitions:
 - hitl_loop: the same HITL / AskUserQuestion / approval prompt is asked again after the
   user already responded (repeated question loop — not a single approval gate)
 - multi_turn: num_turns >= 2
-- write_flow: create / update / delete / deploy style task or write tools
-- read_only: list / explain / validate without mutation (mutually exclusive with write_flow)
 
 Return a boolean for every criterion. For precomputed structural criteria, return the
-given value. Exactly one of write_flow or read_only must be true.
+given value.
 
 For each criterion in criterion_notes, write one short plain-English phrase (under 12
-words). Only fill notes for hitl_loop, write_flow, and read_only — structural criteria
-and tool_failure / skill_loading are formatted separately.
+words). Only fill notes for hitl_loop — structural criteria and tool_failure /
+skill_loading are formatted separately.
 
 Examples:
 - hitl_loop: "same bucket question(duplicate) asked twice after user answered"
-- write_flow: "created cost category"
-- read_only: "listed pipelines only"
 
 Do not include file paths, YAML dumps, or exception type names.
 
@@ -146,24 +138,12 @@ def merge_criteria(
     facts: dict[str, Any],
 ) -> dict[str, bool]:
     """Merge structural facts with LLM transcript criteria."""
-    write_flow = bool(llm_result.get("write_flow"))
-    read_only = bool(llm_result.get("read_only"))
-    if write_flow == read_only:
-        tool_blob = " ".join(str(name) for name in facts.get("tool_names_sample") or [])
-        write_flow = any(
-            token in tool_blob
-            for token in ("harness_create", "harness_update", "harness_delete")
-        )
-        read_only = not write_flow
-
     merged = dict(structural)
     merged.update(
         {
             "tool_failure": bool(llm_result.get("tool_failure")),
             "skill_loading": bool(llm_result.get("skill_loading")),
             "hitl_loop": bool(llm_result.get("hitl_loop")),
-            "write_flow": write_flow,
-            "read_only": read_only,
         }
     )
     return {name: bool(merged.get(name)) for name in CRITERIA}
@@ -363,7 +343,7 @@ def build_eval_candidate_reasoning(
                 if name in structural_names
                 else _deterministic_transcript_line(name, matched, conversation)
             )
-        elif name in {"hitl_loop", "write_flow", "read_only"}:
+        elif name == "hitl_loop":
             note = _sanitize_note(llm_notes.get(name, ""))
             if note:
                 line = f"{'yes' if matched else 'no'} — {note}"
@@ -452,8 +432,6 @@ class HarnessConversationCandidateScoreMetric(LLMConversationMetric):
                     "tool_failure": False,
                     "skill_loading": False,
                     "hitl_loop": False,
-                    "write_flow": False,
-                    "read_only": True,
                 },
                 facts,
             )

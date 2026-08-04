@@ -54,7 +54,6 @@ from harness_evals.core.runner import a_evaluate  # noqa: E402
 
 SIGNAL_COLUMNS = [
     "signal_tags",
-    "scenario_type",
     "module_tag",
     "signals_confidence",
     "signals_reasoning",
@@ -143,7 +142,6 @@ def build_eval_case(
 def _blank_signal_fields(reason: str = "") -> dict[str, str]:
     return {
         "signal_tags": "",
-        "scenario_type": "",
         "module_tag": "",
         "signals_confidence": "",
         "signals_reasoning": "",
@@ -306,7 +304,6 @@ async def async_main(args: argparse.Namespace) -> int:
                 continue
             tags = meta.get("signal_tags") or []
             out["signal_tags"] = ";".join(str(tag) for tag in tags)
-            out["scenario_type"] = str(meta.get("scenario_type") or "")
             out["module_tag"] = str(meta.get("module_tag") or "")
             out["signals_confidence"] = str(meta.get("confidence") or "")
             out["signals_reasoning"] = str(payload.get("reason") or "")

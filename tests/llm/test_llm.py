@@ -129,9 +129,15 @@ class TestOpenAILLMParams:
         llm = self._make()
         await llm.generate("hi")
         call_kwargs = self.mock_create.call_args[1]
+        assert "temperature" not in call_kwargs
         assert "top_p" not in call_kwargs
         assert "frequency_penalty" not in call_kwargs
         assert "presence_penalty" not in call_kwargs
+
+    async def test_temperature_forwarded(self):
+        llm = self._make(temperature=0.7)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["temperature"] == 0.7
 
     async def test_top_p_forwarded(self):
         llm = self._make(top_p=0.9)
@@ -218,8 +224,14 @@ class TestAnthropicLLMParams:
         llm = self._make()
         await llm.generate("hi")
         call_kwargs = self.mock_create.call_args[1]
+        assert "temperature" not in call_kwargs
         assert "top_p" not in call_kwargs
         assert "top_k" not in call_kwargs
+
+    async def test_temperature_forwarded(self):
+        llm = self._make(temperature=0.5)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["temperature"] == 0.5
 
     async def test_top_p_forwarded(self):
         llm = self._make(top_p=0.9)
@@ -363,11 +375,17 @@ class TestBedrockAnthropicLLM:
         assert result == {"score": 0.5}
 
     async def test_sampling_params_forwarded(self):
-        llm = self._make(top_p=0.9, top_k=40)
+        llm = self._make(temperature=0.3, top_p=0.9, top_k=40)
         await llm.generate("hi")
         kw = self.mock_create.call_args[1]
+        assert kw["temperature"] == 0.3
         assert kw["top_p"] == 0.9
         assert kw["top_k"] == 40
+
+    async def test_temperature_omitted_by_default(self):
+        llm = self._make()
+        await llm.generate("hi")
+        assert "temperature" not in self.mock_create.call_args[1]
 
     def test_env_fallback_for_bearer_and_region(self, monkeypatch):
         # With no constructor api_key/aws_region, the SDK client gets the values from env.

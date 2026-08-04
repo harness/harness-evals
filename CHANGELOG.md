@@ -5,6 +5,15 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.3]
+
+### Fixed
+
+- **LLM sampling params are now opt-in**: `AnthropicLLM`/`OpenAILLM` (and their Bedrock
+  subclasses) send `temperature` only when it is explicitly configured; otherwise it is omitted
+  so the model applies its own default. Fixes `400: `temperature` is deprecated for this model`
+  raised by newer Claude 4 inference profiles on AWS Bedrock. `max_tokens` is still always sent.
+
 ## [0.16.2]
 
 ### Fixed

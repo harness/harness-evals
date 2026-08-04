@@ -30,7 +30,7 @@ class OpenAILLM(BaseLLM):
         self,
         model: str = "gpt-4o",
         api_key: str | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_tokens: int = 4096,
         *,
         base_url: str | None = None,
@@ -61,7 +61,11 @@ class OpenAILLM(BaseLLM):
         self._client = openai.AsyncOpenAI(**client_kwargs)
 
     def _optional_params(self) -> dict[str, Any]:
+        # Send only params that are explicitly set; omit the rest so the model applies its own
+        # defaults. Some newer models reject/deprecate sampling knobs like ``temperature``.
         params: dict[str, Any] = {}
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
         if self.top_p is not None:
             params["top_p"] = self.top_p
         if self.frequency_penalty is not None:
@@ -81,7 +85,6 @@ class OpenAILLM(BaseLLM):
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=self._messages(prompt, kwargs.get("system_prompt")),
-            temperature=self.temperature,
             max_completion_tokens=self.max_tokens,
             **self._optional_params(),
         )
@@ -93,7 +96,6 @@ class OpenAILLM(BaseLLM):
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=self._messages(prompt, kwargs.get("system_prompt")),
-            temperature=self.temperature,
             max_completion_tokens=self.max_tokens,
             **self._optional_params(),
             response_format={

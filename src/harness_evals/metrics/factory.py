@@ -149,7 +149,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
     model = metadata.get("model", "gpt-4o-mini")
     api_key = metadata.get("api_key")
     base_url = metadata.get("base_url")
-    temperature = float(metadata["temperature"]) if metadata.get("temperature") is not None else 0.0
+    temperature = float(metadata["temperature"]) if metadata.get("temperature") is not None else None
     max_tokens = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else 4096
 
     # Harness-managed connectors route through the OpenAI-compatible LLM

@@ -7,6 +7,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`BedrockAnthropicLLM.generate_json`**: no longer sends the Anthropic-only `output_config`
+  field, which the AWS Bedrock endpoint rejects with `400: output_config.format: Extra inputs
+  are not permitted`. Now appends the JSON schema to the prompt and extracts the object from
+  the response text (matching `BedrockOpenAILLM`). Plain `generate` is unchanged.
+
 ## [0.12.2]
 
 ### Added

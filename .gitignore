@@ -38,19 +38,7 @@ Thumbs.db
 
 # Example output artifacts
 examples/output/*
-
-# harness-evals local-run scratch (gitignored)
-local-run/aiplat-ua/
-
-# Langfuse trace curation — local fetch/cache only
-scripts/langfuse-trace-curation/cache/
-scripts/langfuse-trace-curation/random/
-scripts/langfuse-trace-curation/module-coverage/
-scripts/langfuse-trace-curation/review-batches/
-scripts/langfuse-trace-curation/results/
-scripts/langfuse-trace-curation/eval-datasets/
-scripts/langfuse-trace-curation/pilot-sample-*.json
-.harness/evals/datasets/aiplat-ua/conversation/conversation.goldens.manifest.jsonl
+examples/prod-conversation.goldens.manifest.jsonl
 
 # Local-only example configs/datasets (never committed)
 examples/*.local.*

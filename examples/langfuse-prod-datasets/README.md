@@ -1,8 +1,9 @@
 # Production Conversation Quality Dataset
 
 <!-- Review (AIPLAT-952): Pipeline docs for prod → portable live-eval goldens.
-     Shipped artifacts in this PR: prod-conversation-readonly/write.*, overrides JSON,
-     Round 3/4 metrics (8 stress criteria; no write_flow/read_only scoring), build scripts. -->
+     Shipped artifacts: prod-conversation-readonly/write.*, overrides JSON,
+     expected_tool_calls + tool_argument_match grading, outcome judge compaction,
+     committed readonly results JSONL, Round 3/4 metrics, build scripts. -->
 
 This directory contains a reproducible pipeline for sampling Harness Agent v3
 conversations from production Langfuse traces and turning them into portable
@@ -266,15 +267,66 @@ The builder emits:
 - `../prod-conversation-final.goldens.jsonl` — 11 validated `ConversationGolden` rows
 - `../prod-conversation-final.goldens.manifest.jsonl` — emit/exclude audit trail
 
-Run the live eval from the repository root:
+Run the live eval from the repository root. This PR ships **split suites** (read-only
+vs write) rather than a single combined file:
+
+| Suite | Goldens | Eval YAML | Safe for shared QA? |
+|-------|---------|-----------|---------------------|
+| Read-only | `prod-conversation-readonly.goldens.jsonl` (3 rows) | `prod-conversation-readonly.eval.yaml` | Yes |
+| Write | `prod-conversation-write.goldens.jsonl` (8 rows) | `prod-conversation-write.eval.yaml` | No — disposable project + `EVAL_RUN_SUFFIX` |
+
+#### Read-only suite (shared QA project OK)
+
+Three rows from `goldens-final.csv`: SCS component discovery, account template usage
+audit, and pipeline error analysis. No `harness_create` / `harness_update` expected.
+
+```bash
+cd ../..   # repository root (harness-evals/)
+
+export SSE_ENDPOINT_URL=...       # unified agent SSE endpoint
+export HARNESS_ACCOUNT=...
+export HARNESS_ORG=...
+export HARNESS_PROJECT=...        # shared QA project is fine
+export TOKEN=...                  # Bearer PAT/SAT with project access
+export OPENAI_API_KEY=...         # simulator LLM + outcome judge (gpt-4o)
+
+PYTHONPATH=. poetry run harness-evals run examples/prod-conversation-readonly.eval.yaml
+```
+
+Sample results are committed at
+`examples/output/prod-conversation-readonly-results.jsonl`.
+
+Metrics:
+
+- `outcome_goal_accuracy` (threshold 0.7) — judges against curated `expected_outcome`;
+  compacts tool-role payloads so long runs stay under model context limits
+- `sse_events_match` (1.0) — per-row `metadata.sse_checks`
+- `tool_argument_match` (1.0) — ordered `expected_tool_calls` Harness MCP milestones
+  (subsequence mode; `Skill` / `Grep` / `Read` excluded)
+
+#### Write suite (disposable project required)
+
+Eight mutation rows. Creates/updates real entities — use a throwaway project.
 
 ```bash
 cd ../..
+
 export SSE_ENDPOINT_URL=...
-export HARNESS_ACCOUNT=... HARNESS_ORG=... HARNESS_PROJECT=...
-export TOKEN=... OPENAI_API_KEY=... EVAL_RUN_SUFFIX="$(date +%s)"
-PYTHONPATH=. poetry run harness-evals run examples/prod-conversation-final.eval.yaml
+export HARNESS_ACCOUNT=...
+export HARNESS_ORG=...
+export HARNESS_PROJECT=<disposable-eval-project>
+export TOKEN=...
+export OPENAI_API_KEY=...
+export EVAL_RUN_SUFFIX="$(date +%s)"
+export GITHUB_ORG=your-github-org   # optional; SCS golden defaults to eval_github_org
+
+PYTHONPATH=. poetry run harness-evals run examples/prod-conversation-write.eval.yaml
 ```
+
+Results: `examples/output/prod-conversation-write-results.jsonl`
+
+Same three metrics as read-only. Write rows also assert `elicitation_yaml` in
+per-row `sse_checks` where the prod flow required YAML review.
 
 ## 7. Build live conversation goldens
 
@@ -327,25 +379,43 @@ in `elicitation_hints`.
 
 ## 8. Run the goldens against a live agent
 
-Use a **disposable eval project** — write rows create real entities.
+Use a **disposable eval project** for write rows. Read-only rows are safe on a
+shared QA project.
 
-Run this command from the repository root (`harness-evals/`), not from this
-dataset directory:
+Run from the repository root (`harness-evals/`), not from this dataset directory.
+
+### Read-only suite (3 rows)
 
 ```bash
 cd ../..
-export SSE_ENDPOINT_URL=http://localhost:8000/stream
+export SSE_ENDPOINT_URL=...
+export HARNESS_ACCOUNT=...
+export HARNESS_ORG=...
+export HARNESS_PROJECT=...
+export TOKEN=...
+export OPENAI_API_KEY=...
+
+PYTHONPATH=. poetry run harness-evals run examples/prod-conversation-readonly.eval.yaml
+```
+
+### Write suite (8 rows)
+
+```bash
+cd ../..
+export SSE_ENDPOINT_URL=...
 export HARNESS_ACCOUNT=...
 export HARNESS_ORG=...
 export HARNESS_PROJECT=<disposable-eval-project>
 export TOKEN=...
 export OPENAI_API_KEY=...
-export EVAL_RUN_SUFFIX="$(date +%s)"   # unique-ify created entity names
-PYTHONPATH=. poetry run harness-evals run examples/prod-conversation.eval.yaml
+export EVAL_RUN_SUFFIX="$(date +%s)"
+export GITHUB_ORG=your-github-org   # optional
+
+PYTHONPATH=. poetry run harness-evals run examples/prod-conversation-write.eval.yaml
 ```
 
-`examples/prod-conversation.eval.yaml` omits `conversation.mode` so each golden's
-own mode (`scripted`) is respected, grades outcomes with the
-`outcome_goal_accuracy` plugin metric (which reads the golden's curated
-`expected_outcome`), and requires every per-row `sse_checks` assertion to pass
-(`sse_events_match` threshold `1.0`).
+Both suites use `conversation.elicitation_adapter: harness_sse`, grade outcomes with
+`outcome_goal_accuracy` (reads each golden's curated `expected_outcome`), require
+every per-row `sse_checks` assertion to pass (`sse_events_match` threshold `1.0`),
+and grade Harness MCP tool order via `tool_argument_match` against `expected_tool_calls`
+(subsequence mode; agent utilities like `Skill` are excluded from tool-order grading).

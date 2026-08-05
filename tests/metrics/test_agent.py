@@ -123,6 +123,44 @@ class TestToolCorrectnessExact:
 
 
 # ---------------------------------------------------------------------------
+# ToolCorrectnessMetric — subsequence mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestToolCorrectnessSubsequence:
+    def test_exact_subsequence_with_extras(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="Skill"),
+                ToolCall(name="mcp__harness__harness_list"),
+                ToolCall(name="Read"),
+                ToolCall(name="harness_get"),
+            ],
+            expected_tools=["Skill", "harness_list", "harness_get"],
+        )
+        score = ToolCorrectnessMetric(mode="subsequence").measure(ec)
+        assert score.passed
+        assert score.value == 1.0
+
+    def test_out_of_order_fails_partially(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[ToolCall(name="harness_get"), ToolCall(name="harness_list")],
+            expected_tools=["harness_list", "harness_get"],
+        )
+        score = ToolCorrectnessMetric(mode="subsequence").measure(ec)
+        assert score.value == 0.5
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError, match="subsequence"):
+            ToolCorrectnessMetric(mode="invalid")
+
+
+# ---------------------------------------------------------------------------
 # ToolCorrectnessMetric — subset mode
 # ---------------------------------------------------------------------------
 
@@ -396,6 +434,43 @@ class TestToolArgumentMatch:
         score = ToolArgumentMatchMetric().measure(ec)
         assert score.value == 1.0
 
+    def test_subsequence_with_resource_type_and_extras(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="Skill", input={"skill": "kg_analysis"}),
+                ToolCall(name="mcp__harness__harness_list", input={"resource_type": "template", "page": 0}),
+                ToolCall(name="Read", input={"path": "/tmp/out"}),
+                ToolCall(name="harness_list", input={"resource_type": "pipeline"}),
+                ToolCall(name="harness_get", input={"resource_type": "pipeline", "resource_id": "p1"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="harness_list", input={"resource_type": "template"}),
+                ToolCall(name="harness_list", input={"resource_type": "pipeline"}),
+                ToolCall(name="harness_get", input={"resource_type": "pipeline"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric(pair="subsequence", arg_match="subset").measure(ec)
+        assert score.passed
+        assert score.value == 1.0
+
+    def test_subsequence_out_of_order_partial_credit(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[
+                ToolCall(name="harness_get", input={"resource_type": "pipeline"}),
+                ToolCall(name="harness_list", input={"resource_type": "pipeline"}),
+            ],
+            expected_tool_calls=[
+                ToolCall(name="harness_list", input={"resource_type": "pipeline"}),
+                ToolCall(name="harness_get", input={"resource_type": "pipeline"}),
+            ],
+        )
+        score = ToolArgumentMatchMetric(pair="subsequence", arg_match="subset").measure(ec)
+        assert score.value == 0.5
+
     def test_invalid_pair_raises(self):
         with pytest.raises(ValueError, match="pair must be"):
             ToolArgumentMatchMetric(pair="invalid")
@@ -403,6 +478,12 @@ class TestToolArgumentMatch:
     def test_invalid_arg_match_raises(self):
         with pytest.raises(ValueError, match="arg_match must be"):
             ToolArgumentMatchMetric(arg_match="invalid")
+
+    def test_skip_when_missing_expected_tool_calls(self):
+        ec = EvalCase(input="task", output="result", tool_calls=[ToolCall(name="harness_list")])
+        score = ToolArgumentMatchMetric(skip_when_missing=True).measure(ec)
+        assert score.passed
+        assert score.metadata.get("skipped") is True
 
     def test_from_dict_round_trip_rehydrates_expected_tool_calls(self):
         ec = EvalCase.from_dict(

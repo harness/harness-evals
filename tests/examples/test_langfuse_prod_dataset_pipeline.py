@@ -33,7 +33,7 @@ from conversation_quality import (  # noqa: E402
     format_conversation,
     normalize_categories,
 )
-from examples.outcome_goal_metric import OutcomeGoalAccuracyMetric  # noqa: E402
+from examples.outcome_goal_metric import OutcomeGoalAccuracyMetric, _format_conversation  # noqa: E402
 
 from harness_evals.conversation.golden import ConversationGolden, ConversationMode  # noqa: E402
 from harness_evals.conversation.human_input import resolve_intent  # noqa: E402
@@ -472,6 +472,49 @@ def test_read_only_sse_checks_require_tool_result_and_primary_tool_name():
 
 
 @pytest.mark.unit
+def test_read_only_golden_includes_expected_tool_calls_from_sse_checks():
+    conv = _conv(
+        [{"role": "user", "content": "What projects have ai evals"}],
+        tool_calls=[{"name": "mcp__harness__harness_list", "input": {"resource_type": "project"}}],
+    )
+    golden, record = golden_builder.build_golden(conv, {"final_category": "good"}, None)
+    assert record.decision == "emitted"
+    assert golden["expected_tool_calls"] == [{"name": "harness_list"}]
+
+
+def test_read_only_golden_skips_skill_in_expected_tool_calls():
+    conv = _conv(
+        [{"role": "user", "content": "load a skill"}],
+        tool_calls=[{"name": "Skill", "input": {"skill": "debug-pipeline"}}],
+    )
+    override = {
+        "scenario": "Portable scenario",
+        "expected_outcome": "Uses harness_list",
+        "initial_prompt": "List pipelines",
+        "sse_checks": [
+            {
+                "event": "assistant_tool_request",
+                "path": "$.v[*]",
+                "match": [{"path": "$.name", "equals": "Skill"}],
+            },
+            {
+                "event": "assistant_tool_request",
+                "path": "$.v[*]",
+                "match": [
+                    {"path": "$.name", "contains": "harness_list"},
+                    {"path": "$.arguments.resource_type", "equals": "pipeline"},
+                ],
+            },
+        ],
+    }
+    golden, record = golden_builder.build_golden(conv, {"final_category": "good"}, override)
+    assert record.decision == "emitted"
+    assert golden["expected_tool_calls"] == [
+        {"name": "harness_list", "input": {"resource_type": "pipeline"}}
+    ]
+
+
+@pytest.mark.unit
 def test_read_only_pipeline_verify_uses_validate_tool_in_sse_checks():
     conv = _conv(
         [{"role": "user", "content": "verify this pipeline yaml"}],
@@ -666,6 +709,60 @@ def test_outcome_metric_includes_pending_and_tools():
     assert "Single bucket" in llm.prompt
     assert "harness_create" in llm.prompt
     assert score.value == pytest.approx(0.8)
+
+
+@pytest.mark.unit
+def test_outcome_metric_truncates_large_tool_trace():
+    huge = "x" * 50_000
+    eval_case = EvalCase.from_dict(
+        {
+            "input": "Audit templates",
+            "output": "done",
+            "messages": [
+                {"role": "user", "content": "Check templates"},
+                {
+                    "role": "tool",
+                    "content": huge,
+                    "tool_calls": [
+                        {
+                            "name": "harness_list",
+                            "input": {"resource_type": "template"},
+                            "output": None,
+                        }
+                    ],
+                },
+                {"role": "assistant", "content": "Found 3 templates in use."},
+            ],
+            "metadata": {"expected_outcome": "Template usage summary with evidence"},
+        }
+    )
+    text, meta = _format_conversation(
+        eval_case.messages,
+        eval_case.metadata or {},
+        max_chars=100_000,
+    )
+    assert len(text) < 100_000
+    assert "truncated" in text
+    assert huge not in text
+    assert meta["judge_conversation_truncated"] is False
+
+
+@pytest.mark.unit
+def test_outcome_metric_prod_readonly_row2_fits_judge_budget():
+    results_path = REPO_ROOT / "examples" / "output" / "prod-conversation-readonly-results.jsonl"
+    if not results_path.exists():
+        pytest.skip("prod readonly results not present locally")
+    rows = [json.loads(line) for line in results_path.read_text().splitlines() if line.strip()]
+    if len(rows) < 2:
+        pytest.skip("expected at least two readonly result rows")
+    eval_case = EvalCase.from_dict(rows[1]["eval_case"])
+    text, meta = _format_conversation(
+        eval_case.messages,
+        eval_case.metadata or {},
+        max_chars=100_000,
+    )
+    assert len(text) <= 100_000
+    assert meta["judge_conversation_chars"] == len(text)
 
 
 def _minimal_conversation(**overrides: object) -> dict:

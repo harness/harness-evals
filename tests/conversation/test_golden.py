@@ -9,7 +9,7 @@ from harness_evals.conversation import (
     load_conversation_dataset,
     save_conversation_dataset,
 )
-from harness_evals.core.types import Message
+from harness_evals.core.types import Message, ToolCall
 
 
 @pytest.mark.unit
@@ -135,6 +135,27 @@ class TestConversationGolden:
     def test_rejects_invalid_sse_checks(self):
         with pytest.raises(TypeError, match="sse_checks"):
             ConversationGolden(scenario="S", expected_outcome="O", metadata={"sse_checks": "bad"})
+
+    def test_expected_tool_calls_validation(self):
+        with pytest.raises(TypeError, match="expected_tool_calls"):
+            ConversationGolden(
+                scenario="S",
+                expected_outcome="O",
+                expected_tool_calls=[ToolCall(name="")],
+            )
+
+    def test_expected_tool_calls_roundtrip(self):
+        g = ConversationGolden(
+            scenario="S",
+            expected_outcome="O",
+            expected_tool_calls=[
+                ToolCall(name="harness_list", input={"resource_type": "pipeline"}),
+                ToolCall(name="harness_get", input={"resource_type": "pipeline"}),
+            ],
+        )
+        restored = ConversationGolden.from_dict(g.to_dict())
+        assert len(restored.expected_tool_calls) == 2
+        assert restored.expected_tool_calls[0].input == {"resource_type": "pipeline"}
 
 
 @pytest.mark.unit

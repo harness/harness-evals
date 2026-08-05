@@ -1,5 +1,5 @@
 {
-  "_comment": "Review (AIPLAT-952): Curated portability overrides for goldens-final.csv → prod-conversation-*.goldens.jsonl. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'elicitation_hints'. scenario_type here is for golden builder only (not LLM scoring). Never put concrete identifiers in 'elicitation_hints'.",
+  "_comment": "Review (AIPLAT-952): Curated portability overrides for goldens-final.csv → prod-conversation-*.goldens.jsonl. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'expected_tool_calls' (ordered Harness MCP milestones with optional resource_type; auto-derived from sse_checks when omitted), 'elicitation_hints'. scenario_type here is for golden builder only (not LLM scoring). Never put concrete identifiers in 'elicitation_hints'.",
   "overrides": {
     "a57229e8-7688-4947-bdf3-7674387fbd5d": {
       "scenario_type": "write",
@@ -1393,10 +1393,9 @@
     "8710e2d8-ac9a-4355-9d37-558661053812": {
       "scenario_type": "read_only",
       "scenario": "Discover unique SCS component names across repositories in ${HARNESS_PROJECT}",
-      "expected_outcome": "Turn 1: uses harness_list, harness_search, HQL, or equivalent to find unique component names across repositories in ${HARNESS_PROJECT}. Turn 2: searches for a named component (eval_search_component) and reports found/not-found with evidence. Honest empty results or module-unavailable explanations are acceptable.",
+      "expected_outcome": "Uses harness_list, harness_search, HQL, or equivalent to find unique component names across repositories in ${HARNESS_PROJECT}. Honest empty results or module-unavailable explanations are acceptable.",
       "turns": [
-        "How can I get the unique component names used in all repositories of project ${HARNESS_PROJECT}?",
-        "Do we have a component called eval_search_component in any repository in this project?"
+        "How can I get the unique component names used in all repositories of project ${HARNESS_PROJECT}?"
       ],
       "max_elicitation_rounds": 6,
       "user_persona": "Security engineer auditing component usage",
@@ -1825,30 +1824,68 @@
     },
     "fd6230c7-799e-4489-a286-74305676c26e": {
       "scenario_type": "read_only",
-      "scenario": "Troubleshoot IDP workflow configuration error for missing template trigger action",
-      "expected_outcome": "Turn 1: investigates IDP workflow configuration via harness_get/harness_list, identifies missing or misconfigured template/trigger actions, and proposes concrete fix options. Turn 2: focuses on workflow eval_mobile_app_${EVAL_RUN_SUFFIX} as an IDP software-template workflow (not a CD pipeline). Does not require a specific failed pipeline execution ID from production.",
+      "scenario": "Analyze recent pipeline errors in ${HARNESS_ORG} / ${HARNESS_PROJECT} and explain likely causes and next actions",
+      "expected_outcome": "Turn 1: loads debug-pipeline or related skills via Skill, then uses read-only Harness MCP tools (harness_list, harness_diagnose, harness_get, HQL) to investigate pipeline or execution failures in ${HARNESS_ORG} / ${HARNESS_PROJECT}. Summarizes root-cause evidence and recommended next steps without creating or updating resources. Honest no-failures-visible or blocking-error explanations with evidence of what was checked are acceptable.",
       "turns": [
-        "My IDP workflow fails with NotFoundError: Template action with ID trigger:harness is not found. What are my options to make this workflow run?",
-        "The workflow identifier is eval_mobile_app_${EVAL_RUN_SUFFIX}. It is an IDP software template workflow, not a CD pipeline."
+        "Analyze Pipeline Errors"
       ],
-      "max_elicitation_rounds": 8,
-      "user_persona": "Platform engineer fixing IDP workflow configuration",
+      "max_elicitation_rounds": 6,
+      "user_persona": "IDP or platform engineer investigating failures; provides ${HARNESS_ORG} / ${HARNESS_PROJECT} scope or a representative pipeline when asked",
       "context": [
         "Org: ${HARNESS_ORG}, Project: ${HARNESS_PROJECT}",
-        "Troubleshooting only \u2014 do not require harness_diagnose on a production execution ID",
-        "Validates skill_loading via Skill tool invocation in trajectory"
+        "Diagnostic task only — do not run destructive actions or mutate resources",
+        "If no failures are visible in the eval project, the assistant should say so and explain what it checked",
+        "Validates skill_loading (debug-pipeline, kg_analysis, hql_reference, idp_information_retrieval) and read-only pipeline failure analysis"
       ],
       "elicitation_hints": {
-        "llm_on_miss": true
+        "llm_on_miss": true,
+        "intents": {
+          "scope_focus": "${HARNESS_ORG} / ${HARNESS_PROJECT}",
+          "pipeline_scope": "Most recent failed pipeline executions in this project"
+        },
+        "matchers": [
+          {
+            "intent": "scope_focus",
+            "question_contains": [
+              "which org",
+              "which project",
+              "what scope",
+              "narrow down",
+              "focus on"
+            ]
+          },
+          {
+            "intent": "pipeline_scope",
+            "question_contains": [
+              "which pipeline",
+              "execution",
+              "plan execution",
+              "failed run",
+              "recent failure"
+            ]
+          }
+        ]
       },
       "sse_checks": [
         {
           "event": "assistant_tool_request",
-          "exists": true
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "equals": "Skill"
+            }
+          ]
         },
         {
           "event": "assistant_tool_result",
-          "exists": true
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "equals": "Skill"
+            }
+          ]
         },
         {
           "event": "assistant_tool_request",
@@ -1856,7 +1893,11 @@
           "match": [
             {
               "path": "$.name",
-              "equals": "Skill"
+              "contains": "harness_list"
+            },
+            {
+              "path": "$.arguments.resource_type",
+              "equals": "pipeline"
             }
           ]
         },
@@ -1866,16 +1907,40 @@
           "match": [
             {
               "path": "$.name",
-              "equals": "Skill"
+              "contains": "harness_list"
             }
           ]
+        },
+        {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_diagnose"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "contains": "harness_diagnose"
+            }
+          ]
+        },
+        {
+          "event": "entity_mutation",
+          "exists": false
         },
         {
           "event": "assistant_message",
           "exists": true
         }
       ],
-      "reason": "Prod 'Analyze Pipeline Errors' prompt triggers error-analysis exclusion; rewritten as IDP workflow config troubleshooting"
+      "reason": "Prod Analyze Pipeline Errors session (goldens-final.csv); portable read-only diagnostic golden with original prompt kept verbatim"
     }
   }
 }

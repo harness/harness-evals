@@ -334,10 +334,15 @@ class ConversationSimulator:
         if intent_misses:
             metadata["elicitation_intent_misses"] = intent_misses
 
+        expanded_messages = _history_with_chronological_tool_events(history)
+        tool_calls = _tool_calls_from_messages(expanded_messages)
+
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
-            messages=_history_with_chronological_tool_events(history),
+            messages=expanded_messages,
+            tool_calls=tool_calls or None,
+            expected_tool_calls=golden.expected_tool_calls,
             metadata=metadata,
             tags=golden.tags,
         )
@@ -618,6 +623,8 @@ def _incomplete_after_elicitation(
 
 
 def _expected_tool_names_from_golden(golden: ConversationGolden) -> list[str]:
+    if golden.expected_tool_calls:
+        return [call.name for call in golden.expected_tool_calls]
     checks = (golden.metadata or {}).get("sse_checks") or []
     names: list[str] = []
     for check in checks:
@@ -863,6 +870,63 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
     return expanded
 
 
+def _tool_calls_from_messages(messages: list[Message]) -> list[ToolCall]:
+    """Collect Harness MCP tool requests from the expanded message trace in order."""
+    calls: list[ToolCall] = []
+    for msg in messages:
+        if msg.role != "assistant" or not msg.tool_calls:
+            continue
+        if (msg.metadata or {}).get("sse_event") != "assistant_tool_request":
+            continue
+        for tool_call in msg.tool_calls:
+            normalized_name = _normalize_tool_name(tool_call.name)
+            if not _is_harness_mcp_tool_name(normalized_name):
+                continue
+            calls.append(
+                ToolCall(
+                    name=normalized_name,
+                    input=tool_call.input,
+                    output=tool_call.output,
+                )
+            )
+    return calls
+
+
+def _is_harness_mcp_tool_name(name: str) -> bool:
+    """True for Harness MCP tools; excludes agent utilities like Skill, Grep, Read."""
+    if not name or name in _NON_HARNESS_AGENT_TOOLS:
+        return False
+    lowered = name.lower()
+    return (
+        name.startswith("harness_")
+        or name.startswith("validate_")
+        or "hql" in lowered
+    )
+
+
+_NON_HARNESS_AGENT_TOOLS = frozenset(
+    {
+        "AskUserQuestion",
+        "Read",
+        "Write",
+        "Grep",
+        "Glob",
+        "Bash",
+        "Task",
+        "WebFetch",
+        "WebSearch",
+        "Skill",
+    }
+)
+
+
+def _normalize_tool_name(name: str) -> str:
+    """Strip MCP namespace prefixes so goldens can use short Harness tool names."""
+    if "__" in name:
+        return name.rsplit("__", 1)[-1]
+    return name
+
+
 def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolCall]:
     """Normalize Harness ``assistant_tool_*`` payloads into ``ToolCall`` values."""
     raw_entries = payload.get("v") if isinstance(payload, dict) and "v" in payload else payload
@@ -878,7 +942,7 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolC
         name = str(entry["name"])
         if result:
             output = entry.get("result") if "result" in entry else entry.get("output")
-            tool_calls.append(ToolCall(name=name, output=output))
+            tool_calls.append(ToolCall(name=_normalize_tool_name(name), output=output))
         else:
             arguments = entry.get("arguments") if "arguments" in entry else entry.get("input")
             if isinstance(arguments, str):
@@ -889,7 +953,7 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolC
                     arguments = {"value": arguments}
             tool_calls.append(
                 ToolCall(
-                    name=name,
+                    name=_normalize_tool_name(name),
                     input=arguments if isinstance(arguments, dict) else None,
                 )
             )

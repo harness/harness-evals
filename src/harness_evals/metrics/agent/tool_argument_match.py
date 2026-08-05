@@ -8,6 +8,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.core.types import ToolCall
+from harness_evals.metrics.agent.tool_correctness import _tool_names_match
 
 
 class ToolArgumentMatchMetric(BaseMetric):
@@ -25,6 +26,10 @@ class ToolArgumentMatchMetric(BaseMetric):
       ``max(len(actual), len(expected))`` so extra/missing calls are penalised.
     - **subset**: order-independent multiset pairing on tool ``name``.
       Denominator is ``len(expected)``. Greedy FIFO assignment for v1.
+    - **subsequence**: Expected calls must appear in order within the actual
+      trace; extra calls between milestones are allowed. Name matching accepts
+      Harness MCP prefixes (``mcp__harness__harness_list`` matches
+      ``harness_list``). Denominator is ``len(expected)``.
 
     Argument matching strategies (``arg_match``):
 
@@ -47,6 +52,7 @@ class ToolArgumentMatchMetric(BaseMetric):
         arg_match: str = "exact",
         ignore_keys: set[str] | None = None,
         wildcard_value: object = "*",
+        skip_when_missing: bool = False,
         threshold: float = 1.0,
         **kwargs: object,
     ) -> None:
@@ -56,19 +62,28 @@ class ToolArgumentMatchMetric(BaseMetric):
             threshold=threshold,
             **kwargs,
         )
-        if pair not in ("exact", "subset"):
-            raise ValueError(f"pair must be 'exact' or 'subset', got '{pair}'")
+        if pair not in ("exact", "subset", "subsequence"):
+            raise ValueError(f"pair must be 'exact', 'subset', or 'subsequence', got '{pair}'")
         if arg_match not in ("exact", "subset"):
             raise ValueError(f"arg_match must be 'exact' or 'subset', got '{arg_match}'")
         self.pair = pair
         self.arg_match = arg_match
         self.ignore_keys: set[str] = set(ignore_keys) if ignore_keys else set()
         self.wildcard_value = wildcard_value
+        self.skip_when_missing = skip_when_missing
 
     def measure(self, eval_case: EvalCase) -> Score:
         expected_calls = eval_case.expected_tool_calls
 
         if expected_calls is None:
+            if self.skip_when_missing:
+                return Score(
+                    name=self.name,
+                    value=1.0,
+                    threshold=self.threshold,
+                    reason="Skipped — no expected_tool_calls on this golden",
+                    metadata={"skipped": True},
+                )
             return Score(
                 name=self.name,
                 value=0.0,
@@ -109,6 +124,8 @@ class ToolArgumentMatchMetric(BaseMetric):
 
         if self.pair == "exact":
             return self._measure_exact(actual_calls, expected_calls)
+        if self.pair == "subsequence":
+            return self._measure_subsequence(actual_calls, expected_calls)
         return self._measure_subset(actual_calls, expected_calls)
 
     # ------------------------------------------------------------------
@@ -138,6 +155,42 @@ class ToolArgumentMatchMetric(BaseMetric):
                 "arg_match": self.arg_match,
                 "n_pairs": denominator,
                 "matches": matches,
+                "details": details,
+            },
+        )
+
+    def _measure_subsequence(self, actual: list[ToolCall], expected: list[ToolCall]) -> Score:
+        details: list[dict[str, Any]] = []
+        matched = 0
+        index = 0
+        for call in actual:
+            if index >= len(expected):
+                break
+            detail = self._compare_pair(call, expected[index], fuzzy_name=True)
+            if detail["matched"]:
+                details.append(detail)
+                matched += 1
+                index += 1
+
+        if index < len(expected):
+            for missing in expected[index:]:
+                details.append(self._compare_pair(None, missing, fuzzy_name=True))
+
+        denominator = len(expected)
+        value = matched / denominator
+        return Score(
+            name=self.name,
+            value=value,
+            threshold=self.threshold,
+            reason=(
+                f"{matched} of {denominator} expected Harness tool calls matched in order "
+                f"({matched}/{denominator}, subsequence pairing, {self.arg_match} args)"
+            ),
+            metadata={
+                "pair": "subsequence",
+                "arg_match": self.arg_match,
+                "n_pairs": denominator,
+                "matches": matched,
                 "details": details,
             },
         )
@@ -194,7 +247,13 @@ class ToolArgumentMatchMetric(BaseMetric):
     # Per-pair argument comparison
     # ------------------------------------------------------------------
 
-    def _compare_pair(self, actual: ToolCall | None, expected: ToolCall | None) -> dict[str, Any]:
+    def _compare_pair(
+        self,
+        actual: ToolCall | None,
+        expected: ToolCall | None,
+        *,
+        fuzzy_name: bool = False,
+    ) -> dict[str, Any]:
         """Compare a single (actual, expected) pair. Returns a structured detail dict.
 
         Either side may be ``None`` (extra actual call or missing expected call).
@@ -217,7 +276,9 @@ class ToolArgumentMatchMetric(BaseMetric):
                 "name_match": False,
             }
 
-        name_match = actual.name == expected.name
+        name_match = (
+            _tool_names_match(actual.name, expected.name) if fuzzy_name else actual.name == expected.name
+        )
         if not name_match:
             return {
                 "matched": False,

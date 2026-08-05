@@ -225,6 +225,95 @@ def _tool_names(conversation: dict[str, Any]) -> list[str]:
     return names
 
 
+def _normalize_tool_name_for_golden(name: str) -> str:
+    """Normalize production MCP tool names to short golden form (harness_list, Skill, …)."""
+    return name.rsplit("__", 1)[-1] if "__" in name else name
+
+
+def _trackable_harness_tool_name(name_fragment: str) -> str | None:
+    """Return short Harness MCP tool name for trajectory expectations, or None to skip."""
+    if not name_fragment or name_fragment in _NON_HARNESS_TOOLS or name_fragment == "Skill":
+        return None
+    if name_fragment.startswith("harness_") or name_fragment.startswith("validate_"):
+        return name_fragment
+    if "hql" in name_fragment.lower():
+        return name_fragment
+    return _normalize_harness_tool_name(name_fragment)
+
+
+def _expected_tool_calls_from_conversation(conversation: dict[str, Any]) -> list[dict[str, Any]]:
+    """Ordered Harness MCP tool calls from the source conversation trace."""
+    calls: list[dict[str, Any]] = []
+    for call in conversation.get("tool_calls") or []:
+        if not isinstance(call, dict) or not call.get("name"):
+            continue
+        tool_name = _trackable_harness_tool_name(_normalize_tool_name_for_golden(str(call["name"])))
+        if not tool_name:
+            continue
+        args = call.get("input") if isinstance(call.get("input"), dict) else call.get("arguments")
+        input_args = _resource_type_input(args)
+        payload: dict[str, Any] = {"name": tool_name}
+        if input_args:
+            payload["input"] = input_args
+        calls.append(payload)
+    return calls
+
+
+def _resource_type_input(args: object) -> dict[str, Any] | None:
+    if not isinstance(args, dict):
+        return None
+    resource_type = args.get("resource_type")
+    if resource_type is None:
+        return None
+    return {"resource_type": resource_type}
+
+
+def _expected_tool_calls_from_sse_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Derive ordered Harness MCP tool calls from assistant_tool_request checks."""
+    calls: list[dict[str, Any]] = []
+    for check in checks:
+        if not isinstance(check, dict) or check.get("event") != "assistant_tool_request":
+            continue
+        name_fragment: str | None = None
+        resource_type: object = None
+        for match in check.get("match") or []:
+            if not isinstance(match, dict):
+                continue
+            path = str(match.get("path") or "")
+            if "name" in path:
+                if "contains" in match:
+                    name_fragment = str(match["contains"])
+                elif "equals" in match:
+                    name_fragment = str(match["equals"])
+            if "resource_type" in path and "equals" in match:
+                resource_type = match["equals"]
+        if not name_fragment:
+            continue
+        tool_name = _trackable_harness_tool_name(name_fragment)
+        if not tool_name:
+            continue
+        payload: dict[str, Any] = {"name": tool_name}
+        input_args = _resource_type_input({"resource_type": resource_type}) if resource_type is not None else None
+        if input_args:
+            payload["input"] = input_args
+        calls.append(payload)
+    return calls
+
+
+def _expected_tool_calls_for(
+    conversation: dict[str, Any],
+    checks: list[dict[str, Any]],
+    override: dict[str, Any] | None = None,
+) -> list[dict[str, Any]] | None:
+    if override and override.get("expected_tool_calls"):
+        return list(override["expected_tool_calls"])
+    from_checks = _expected_tool_calls_from_sse_checks(checks)
+    if from_checks:
+        return from_checks
+    from_conversation = _expected_tool_calls_from_conversation(conversation)
+    return from_conversation or None
+
+
 # Non-Harness agent tools we ignore when inferring trajectory expectations.
 _NON_HARNESS_TOOLS = frozenset(
     {
@@ -568,6 +657,9 @@ def _assemble_golden(
     golden["elicitation_hints"] = {"llm_on_miss": True}
     if scenario_type == "write":
         golden["elicitation_hints"]["yaml"] = {"default_action": "accept"}
+    expected_tool_calls = _expected_tool_calls_for(conversation, golden["metadata"]["sse_checks"])
+    if expected_tool_calls:
+        golden["expected_tool_calls"] = expected_tool_calls
     return golden
 
 
@@ -612,6 +704,13 @@ def _golden_from_override(
     if "improve_later" in override:
         # Review (AIPLAT-952): Human notes for goldens that need env seeding (e.g. OPA policy).
         golden["metadata"]["improve_later"] = override["improve_later"]
+    expected_tool_calls = _expected_tool_calls_for(
+        conversation,
+        golden["metadata"]["sse_checks"],
+        override,
+    )
+    if expected_tool_calls:
+        golden["expected_tool_calls"] = expected_tool_calls
     return _finalize(golden, manifest, "override", scenario_type)
 
 
@@ -623,7 +722,15 @@ def _finalize(
 ) -> tuple[dict[str, Any] | None, ManifestRecord]:
     # Secret / PII scan over emitted fields.
     findings: list[str] = []
-    for key in ("scenario", "expected_outcome", "initial_prompt", "turns", "context", "elicitation_hints"):
+    for key in (
+        "scenario",
+        "expected_outcome",
+        "initial_prompt",
+        "turns",
+        "context",
+        "elicitation_hints",
+        "expected_tool_calls",
+    ):
         if key in golden:
             _scan_for_secrets(golden[key], key, findings)
     if findings:

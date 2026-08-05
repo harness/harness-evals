@@ -12,7 +12,7 @@ from harness_evals.core.score import Score
 class ToolCorrectnessMetric(BaseMetric):
     """Compare ``eval_case.tool_calls`` names against ``eval_case.expected_tools``.
 
-    Supports two modes:
+    Supports three modes:
 
     - **exact** (default): Order and count must match exactly.
       Score is the fraction of positions where the called tool matches
@@ -23,6 +23,10 @@ class ToolCorrectnessMetric(BaseMetric):
       order-independent but count-sensitive (duplicates in expected
       require matching duplicates in called). Score is the fraction of
       expected tool occurrences found.
+    - **subsequence**: Expected tools must appear in order within
+      ``tool_calls``; extra calls between or after expected milestones
+      are allowed. Score is the fraction of expected tools matched in
+      order (``matched / len(expected)``).
     """
 
     def __init__(
@@ -32,8 +36,8 @@ class ToolCorrectnessMetric(BaseMetric):
         **kwargs: object,
     ) -> None:
         super().__init__(name="tool_correctness", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)
-        if mode not in ("exact", "subset"):
-            raise ValueError(f"mode must be 'exact' or 'subset', got '{mode}'")
+        if mode not in ("exact", "subset", "subsequence"):
+            raise ValueError(f"mode must be 'exact', 'subset', or 'subsequence', got '{mode}'")
         self.mode = mode
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -73,6 +77,8 @@ class ToolCorrectnessMetric(BaseMetric):
 
         if self.mode == "exact":
             return self._measure_exact(tools_called, expected_tools)
+        if self.mode == "subsequence":
+            return self._measure_subsequence(tools_called, expected_tools)
         return self._measure_subset(tools_called, expected_tools)
 
     def _measure_exact(self, called: list[str], expected: list[str]) -> Score:
@@ -90,6 +96,33 @@ class ToolCorrectnessMetric(BaseMetric):
                 "tools_called": called,
                 "expected_tools": expected,
                 "matches": matches,
+            },
+        )
+
+    def _measure_subsequence(self, called: list[str], expected: list[str]) -> Score:
+        matched = 0
+        index = 0
+        for tool in called:
+            if index >= len(expected):
+                break
+            if _tool_names_match(tool, expected[index]):
+                matched += 1
+                index += 1
+
+        value = matched / len(expected)
+        return Score(
+            name=self.name,
+            value=value,
+            threshold=self.threshold,
+            reason=(
+                f"{matched} of {len(expected)} expected tools matched in order "
+                f"({matched}/{len(expected)}, subsequence mode)"
+            ),
+            metadata={
+                "mode": "subsequence",
+                "tools_called": called,
+                "expected_tools": expected,
+                "matched": matched,
             },
         )
 
@@ -119,3 +152,12 @@ class ToolCorrectnessMetric(BaseMetric):
                 "missing": missing,
             },
         )
+
+
+def _tool_names_match(called: str, expected: str) -> bool:
+    """Match tool names exactly or by substring (Harness MCP prefixes)."""
+    if called == expected:
+        return True
+    called_lower = called.lower()
+    expected_lower = expected.lower()
+    return expected_lower in called_lower or called_lower in expected_lower

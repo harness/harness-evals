@@ -37,7 +37,8 @@ Thumbs.db
 .harness-evals/
 
 # Example output artifacts
-examples/output/
+examples/output/*
+!examples/output/prod-conversation-readonly-results.jsonl
 examples/prod-conversation.goldens.manifest.jsonl
 
 # Local production-conversation fetches and generated review datasets

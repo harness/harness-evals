@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
-from harness_evals.core.types import Message
+from harness_evals.core.types import Message, ToolCall
 
 
 class ConversationMode(str, Enum):
@@ -46,6 +46,7 @@ class ConversationGolden:
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
+    expected_tool_calls: list[ToolCall] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.mode is None:
@@ -82,6 +83,12 @@ class ConversationGolden:
         ):
             raise TypeError("metadata['sse_checks'] must be a list of dicts when provided")
 
+        if self.expected_tool_calls is not None and (
+            not isinstance(self.expected_tool_calls, list)
+            or not all(isinstance(call, ToolCall) and call.name for call in self.expected_tool_calls)
+        ):
+            raise TypeError("expected_tool_calls must be a list of ToolCall values with non-empty names when provided")
+
     def to_dict(self) -> dict:
         result = {}
         for k, v in asdict(self).items():
@@ -89,6 +96,8 @@ class ConversationGolden:
                 result[k] = v
         if self.mode is not None:
             result["mode"] = self.mode.value
+        if self.expected_tool_calls is not None:
+            result["expected_tool_calls"] = [call.to_dict() for call in self.expected_tool_calls]
         return result
 
     @classmethod
@@ -96,6 +105,11 @@ class ConversationGolden:
         mapped = dict(data)
         if "turns" in mapped and mapped["turns"] is not None:
             mapped["turns"] = [m if isinstance(m, Message) else Message.from_dict(m) for m in mapped["turns"]]
+        if "expected_tool_calls" in mapped and mapped["expected_tool_calls"] is not None:
+            mapped["expected_tool_calls"] = [
+                call if isinstance(call, ToolCall) else ToolCall.from_dict(call)
+                for call in mapped["expected_tool_calls"]
+            ]
         if "mode" in mapped and isinstance(mapped["mode"], str):
             mapped["mode"] = ConversationMode(mapped["mode"])
         known = {f.name for f in cls.__dataclass_fields__.values()}

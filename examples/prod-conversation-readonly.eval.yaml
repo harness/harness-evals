@@ -1,6 +1,6 @@
 # Review (AIPLAT-952): Live eval suite — 3 production conversations with no harness_create/update.
 # Split from prod-conversation-write.goldens.jsonl for safe runs against shared QA projects.
-# Read-only prod conversation eval goldens (3 rows).
+# Read-only prod conversation eval goldens (3 rows from goldens-final.csv).
 # Safe to run against shared eval projects — no create/update expected.
 #
 #   export SSE_ENDPOINT_URL=...
@@ -105,6 +105,13 @@ metrics:
     threshold: 1.0
     params:
       row_checks_key: sse_checks
+  - kind: tool_argument_match
+    threshold: 1.0
+    params:
+      pair: subsequence
+      arg_match: subset
+      ignore_keys: [org_id, project_id, page, size, limit, url, confirmation]
+      skip_when_missing: true
 
 judge_llm: {provider: openai, name: gpt-4o}
 

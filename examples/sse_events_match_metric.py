@@ -173,15 +173,31 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
         if nested_match is not None:
             for item in values:
                 if _matches_all(item, nested_match, eval_case):
-                    return {"passed": True, "label": label, "detail": "matched correlated fields"}
+                    return {
+                        "passed": True,
+                        "label": label,
+                        "detail": f"matched {_describe_check_expectation(check)}",
+                    }
         if expected_substr is not None and any(expected_substr in str(v) for v in values if v is not None):
-            return {"passed": True, "label": label, "detail": f"matched contains={expected_substr!r}"}
+            return {
+                "passed": True,
+                "label": label,
+                "detail": f"matched {_describe_check_expectation(check)}",
+            }
         if equals is not None and any(v == equals for v in values):
-            return {"passed": True, "label": label, "detail": f"matched equals={equals!r}"}
+            return {
+                "passed": True,
+                "label": label,
+                "detail": f"matched {_describe_check_expectation(check)}",
+            }
 
-    if expected_substr is None and equals is None:
+    if expected_substr is None and equals is None and nested_match is None:
         # No value assertion beyond presence -> passes because payloads exist.
-        return {"passed": True, "label": label, "detail": "event present, no value assertion"}
+        return {
+            "passed": True,
+            "label": label,
+            "detail": f"event captured ({_describe_check_expectation(check)})",
+        }
 
     detail = _failure_detail(check, actual_values, eval_case)
     return {"passed": False, "label": label, "detail": detail}
@@ -231,20 +247,54 @@ def _failure_detail(check: dict[str, Any], actual_values: list[Any], eval_case: 
         path_note = f" at path {path!r}" if path else ""
         return f"no payload matched{path_note}; actual={actual_summary} expected equals={check['equals']!r}"
     if "match" in check:
-        return f"no payload matched correlated fields; actual={actual_summary}"
+        return f"no payload matched {_describe_check_expectation(check)}; actual={actual_summary}"
     return f"no payload matched; actual={actual_summary}"
+
+
+def _short_path(path: str | None) -> str:
+    if not path:
+        return "payload"
+    short = str(path)
+    if short.startswith("$."):
+        short = short[2:]
+    return short.replace("[*]", "")
+
+
+def _format_nested_match_clause(check: dict[str, Any]) -> str:
+    field = _short_path(check.get("path"))
+    if check.get("contains_expected"):
+        return f"{field} contains <expected>"
+    if "contains" in check:
+        return f"{field} contains {check['contains']!r}"
+    if "equals" in check:
+        return f"{field} equals {check['equals']!r}"
+    if check.get("path"):
+        return f"{field} present"
+    return "payload present"
+
+
+def _describe_check_expectation(check: dict[str, Any]) -> str:
+    if "exists" in check:
+        return f"exists={check['exists']}"
+    if check.get("contains_expected"):
+        path = _short_path(check.get("path"))
+        return f"{path} contains <expected>"
+    if "contains" in check:
+        path = _short_path(check.get("path"))
+        return f"{path} contains {check['contains']!r}"
+    if "equals" in check:
+        path = _short_path(check.get("path"))
+        return f"{path} equals {check['equals']!r}"
+    if "match" in check:
+        nested = check.get("match")
+        if isinstance(nested, list) and nested:
+            clauses = [_format_nested_match_clause(m) for m in nested if isinstance(m, dict)]
+            if clauses:
+                return "correlated fields: " + "; ".join(clauses)
+        return "correlated fields (unspecified)"
+    return "present (no field assertions)"
 
 
 def _label(check: dict[str, Any]) -> str:
     event = check.get("event", "?")
-    if "exists" in check:
-        return f"{event}.exists={check['exists']}"
-    if check.get("contains_expected"):
-        return f"{event}.contains=<expected>"
-    if "match" in check:
-        return f"{event}.match"
-    if "contains" in check:
-        return f"{event}.contains={check['contains']!r}"
-    if "equals" in check:
-        return f"{event}.equals={check['equals']!r}"
-    return f"{event}.present"
+    return f"{event}.{_describe_check_expectation(check)}"

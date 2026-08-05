@@ -38,18 +38,7 @@ Thumbs.db
 
 # Example output artifacts
 examples/output/*
-!examples/output/prod-conversation-readonly-results.jsonl
 examples/prod-conversation.goldens.manifest.jsonl
-
-# Local production-conversation fetches and generated review datasets
-examples/langfuse-prod-datasets/cache/
-examples/langfuse-prod-datasets/random/
-examples/langfuse-prod-datasets/module-coverage/
-examples/langfuse-prod-datasets/review-batches/
-# Legacy path kept ignored if present locally
-examples/langfuse-prod-datasets/eval-datasets/
-examples/langfuse-prod-datasets/results/
-examples/langfuse-prod-datasets/pilot-sample-*.json
 
 # Local-only example configs/datasets (never committed)
 examples/*.local.*

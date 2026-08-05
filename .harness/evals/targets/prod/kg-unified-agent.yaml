@@ -1,0 +1,56 @@
+# KG-scoped Unified Agent target (PL-71945) — PROD variant.
+# Fully env-var driven: endpoint host, org/project, account, and auth are ALL
+# templated via {{ env.X }} placeholders (converted to SDK ${X} load-time
+# substitution by local-run/build_local_config.py's _platform_env_to_load_time),
+# so this ONE target file is reused across any prod environment (prod0, prod1,
+# ...) purely by setting different env vars before invoking
+# local-run/run_prod.sh <env-name>. Do not hardcode any environment-specific
+# value here — see local-run/run_prod.sh for how the ${PREFIX}_* vars from
+# local-run/.env are mapped onto the generic names this file expects
+# (API_BASE_URL, ACCOUNT_ID, ORG_ID, PROJECT_ID, EVAL_TARGET_API_KEY).
+identifier: kg-unified-agent
+name: KG Unified Agent (Prod)
+type: agent
+description: >-
+  Unified Agent (PROD) entry point for Knowledge Graph evals (PL-71945). Same
+  /v2/chat endpoint shape as the qa-chat Unified Agent target, but every
+  environment-specific value (host, org/project, account, PAT) is env-var
+  parameterized so this target can run against any real prod account/org/
+  project without edits. Auth: Authorization: Bearer (the proven KG path).
+  Local-run only — not registered on any control plane.
+config:
+  method: POST
+  stream: true
+  endpoint: https://{{ env.API_BASE_URL }}/gateway/harness-intelligence/api/v2/chat?orgIdentifier={{ env.ORG_ID }}&projectIdentifier={{ env.PROJECT_ID }}
+  headers:
+    Authorization: 'Bearer {{ env.EVAL_TARGET_API_KEY }}'
+    Content-Type: application/json
+    harness-account: '{{ env.ACCOUNT_ID }}'
+  request_template:
+    prompt: '{{ input.input }}'
+    stream: true
+    mode: standard
+    metadata:
+      action: UNKNOWN
+      module: all
+      timezone: UTC
+  response_path: v
+  # See the QA target (.harness/evals/targets/qa/kg-unified-agent.yaml) for the
+  # full rationale behind these path choices — identical here, just repeated
+  # against a prod endpoint. tool_calls_path/token_count_path/cost_path stay
+  # inert (weight 0 in the prod metric-sets) for the same SDK limitation
+  # documented there (single-final-payload extraction model).
+  tool_calls_path: v
+  token_count_path: total_tokens
+  cost_path: total_cost_usd
+  timeout_ms: 300000
+  # Pins the SDK's final_payload selection to the last `assistant_message` SSE
+  # event, avoiding a scan landing on a trailing `assistant_tool_request`
+  # event instead (see QA target's comment for the full explanation).
+  output_event: assistant_message
+env_secrets:
+  # Prod PAT, sourced from local-run/.env's ${PREFIX}_UNIFIED_ACCOUNT_PAT
+  # (e.g. PROD0_UNIFIED_ACCOUNT_PAT) and exported as EVAL_TARGET_API_KEY by
+  # local-run/run_prod.sh before invoking the SDK — no control-plane secret
+  # registration needed since this target is local-run only.
+  EVAL_TARGET_API_KEY: unified_agent_prod_pat

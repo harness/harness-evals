@@ -1,0 +1,108 @@
+identifier: kg-prod-build-deploy-failure-analysis
+name: kg-prod-build-deploy-failure-analysis Metrics
+description: >-
+  KG build/deploy failure analysis — PROD counterpart to kg-p1-build-deploy-failure-analysis,
+  run against a real customer account instead of the akshay_kg_test fixture. Local-run only.
+  TWO GEval axes only: (1) groundedness/HQL-traversal + classification-grounding correctness,
+  weighted higher, and (2) autonomous skill-invocation self-report, weighted lower. Judge via
+  Harness LLM connector (connector_OpenAI_dd19).
+tags: [kg, prod]
+judge_model_id: null
+judge_llm_connector_ref: connector_OpenAI_dd19
+entries:
+- metric:
+    name: GEvalMetric
+    kind: geval
+    type: llm
+    dimension: correctness
+    description: Build/deploy failure analysis rubric - diagnosis spine validity, code-change lineage honesty, code/infra/config classification grounding, and vulnerability-correlation hedging, generalized away from any single account's fixture facts.
+  threshold: 0.7
+  weight: 0.8
+  position: 0
+  config:
+    criteria: >-
+      Judge a build/deploy failure analysis answer on four axes. AXIS A (diagnosis spine
+      validity): the traversal must be grounded in real failure_code/failure_message data
+      reached via EITHER (a) pipeline:pipeline_execution -> pipeline:stage_execution /
+      ci:stage_execution / cd:stage_execution on plan_execution_id = plan_execution_id ->
+      pipeline:step_execution on stage_execution_id = stage_execution_id, OR (b) a direct filter
+      on pipeline:pipeline_execution's own failure_code/failure_message fields when those fields
+      are populated and sufficient to correctly and concretely diagnose the failure — both are
+      valid diagnosis spines; do not penalize the simpler direct query when the resulting
+      diagnosis is fully correct and grounded.       Reject the deprecated
+      ci:pipeline_execution_summary / cd:pipeline_execution as the spine and reject any direct
+      ci:stage_execution -> cd:stage_execution join. Also on this axis, SCOPE ADHERENCE: the agent
+      must query at the scope the question asks for and that this case's reference expected_output
+      specifies (which may be project-level, org-level, or account-level depending on the case) — do
+      not penalize or require any one specific scope as a blanket rule; instead, check the reference
+      expected_output for this specific case to determine the correct scope, and score down only when
+      the agent's actual query/answer scope doesn't match what that case's expected_output calls for
+      (e.g. reporting an empty result at the wrong scope instead of the scope the case actually
+      requires). AXIS B (code-change lineage honesty): for
+      questions about which code change caused a failure, the correct lineage is
+      cd:stage_execution -(digest)-> ci:artifact -(stage_execution_id)-> ci:stage_execution
+      -(commit_sha)-> ci:commit -(commit_sha)-> ci:pr; when the failure occurs before any real
+      commit/artifact link is established, the agent must explicitly state no causal code change
+      was found and must NOT fabricate a ci:commit or ci:pr — score 0 on this axis for any
+      invented commit/PR. AXIS C (code/infra/config classification): the KG has no single
+      formal classification field, so award credit when the agent classifies each failure using
+      real failure_code (and/or failure_message) values with real counts as evidence; citing
+      CI-vs-CD stage type alongside this is a nice-to-have, not required; penalize an
+      unexplained/arbitrary label or a claim that the KG exposes a formal single classification
+      field. AXIS D (vulnerability-correlation hedging): when asked whether a build/deploy
+      failure is related to security scan findings, the agent must attempt the sto:scan ->
+      pipeline:pipeline_execution join on plan_execution_id and, when it returns no rows, must
+      report that scans are configured on the pipeline but could not be correlated to the
+      specific failed execution — it must NOT assert a fabricated vulnerability-to-failure link.
+      Score 1.0 only when all applicable axes for the item are satisfied AND no entity/value is
+      fabricated; 0.0 for any fabricated commit/PR/vulnerability link, an invalid/deprecated
+      join, or an unhedged classification/correlation claim not backed by real data; partial
+      otherwise.
+    options:
+      evaluation_steps:
+      - Extract the HQL query(ies) the agent reports it used from the answer.
+      - Verify the diagnosis spine is grounded in real failure_code/failure_message data, either via the full pipeline:pipeline_execution -> pipeline:stage_execution/ci:stage_execution/cd:stage_execution (plan_execution_id=plan_execution_id) -> pipeline:step_execution (stage_execution_id=stage_execution_id) chain, OR a direct filter on pipeline:pipeline_execution's own failure_code/failure_message fields when that alone correctly diagnoses the failure; reject the deprecated ci:pipeline_execution_summary/cd:pipeline_execution spine or a direct ci:stage_execution->cd:stage_execution join.
+      - Check this case's reference expected_output to determine the correct scope (project/org/account) it specifies, then confirm the agent's query/answer actually operated at that scope, and did not present an empty result at the wrong scope as if it were a genuine no-data finding — do not apply any fixed org/account/project assumption across all cases.
+      - For code-change-lineage questions, confirm the agent either cites a real cd:stage_execution->ci:artifact->ci:stage_execution->ci:commit->ci:pr chain or explicitly states no causal code change/commit/PR was found; penalize any fabricated commit or PR.
+      - For code/infra/config classification questions, confirm each classification is backed by real failure_code and/or failure_message values with real counts, correctly reasoned into code/infra/config; do not require an explicit CI-vs-CD stage-type label alongside a solid failure_code-based classification.
+      - For vulnerability-correlation questions, confirm the agent attempts the sto:scan -> pipeline:pipeline_execution plan_execution_id join and, if it returns no rows, explicitly reports the correlation could not be established rather than asserting a link.
+      - Compare all cited pipeline/stage/step/service/scan facts to the reference expected_output's described expectations and penalize any fabricated entity, failure message, or numeric value.
+      - Confirm remediation (where asked) is concrete and tied to the specific retrieved failing step/error, not generic advice.
+- metric:
+    name: GEvalMetric
+    kind: geval
+    type: llm
+    dimension: correctness
+    description: Autonomous skill-invocation rubric — self-report cross-checked against grounded evidence of real KG querying.
+  threshold: 0.7
+  weight: 0.2
+  position: 1
+  config:
+    criteria: >-
+      Judge whether the agent's answer to this analytics question shows evidence of genuinely
+      engaging with the Knowledge Graph, and whether its self-report (the closing "which skills
+      did you use" response) accurately reflects that. Evaluate in this order: (1) SELF-REPORT:
+      check whether the part of the answer responding to the "list which skills you loaded/used"
+      instruction explicitly names the Knowledge Graph / kg_analysis skill as having been
+      loaded/used (mentioning hql_reference too is a good additional signal but not required on
+      its own). (2) GROUNDED CROSS-CHECK: cross-check that self-report against the substance of
+      the rest of the answer — does it show real, concrete evidence of KG querying (actual HQL
+      syntax, real entity/field names, real retrieved values/counts) versus just a bare,
+      unsupported claim of "I used the KG skill" with no real querying behind it? (3) SCORING:
+      score 0 (fail) if the agent shows NO evidence of engaging with the KG at all — e.g. it
+      answers generically from reasoning/prior knowledge, declines to answer, or fabricates
+      plausible-sounding facts without any real querying; this is the PRIMARY signal being
+      tested. Score partial (~0.5) if the agent clearly performed real, grounded KG
+      querying/HQL work but its self-report is incomplete, vague, or doesn't explicitly name the
+      skill — this distinguishes "skill worked, just under-reported" from "skill never invoked."
+      Score 1.0 only when the agent BOTH genuinely performed grounded KG querying AND explicitly
+      self-reports having used the Knowledge Graph/kg_analysis skill.
+    options:
+      evaluation_steps:
+      - Locate the part of the answer responding to the "explicitly list which skills you loaded/used" instruction.
+      - Check whether that self-report explicitly names the Knowledge Graph / kg_analysis skill (bonus if hql_reference is also named).
+      - Independently inspect the rest of the answer for concrete evidence of real KG querying — actual HQL syntax, real entity/field names, real retrieved values/counts.
+      - If there is NO evidence of real KG querying anywhere in the answer (generic reasoning-based answer, a decline, or fabricated facts), score 0 regardless of what the self-report claims.
+      - If there IS real, grounded KG querying evidence but the self-report omits or is vague about naming the skill, score ~0.5.
+      - If there IS real, grounded KG querying evidence AND the self-report explicitly names the Knowledge Graph/kg_analysis skill, score 1.0.
+      - Do not reward a bare unsupported claim of skill usage that isn't backed by real querying evidence in the answer.

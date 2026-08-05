@@ -1,0 +1,11 @@
+identifier: aiplat-ua-conversation
+name: aiplat-ua-conversation
+description: >-
+  Trace-derived Unified Agent conversation evals (readonly + write splits).
+  Phase 2: datasets live under .harness/evals/datasets/aiplat-ua/conversation/.
+  Execution uses harness-evals CLI via local-run/aiplat-ua/ (gitignored) — not
+  AI Evals control-plane eval entities yet.
+purpose: custom
+pass_strategy: all_must_pass
+is_blocking: false
+evals: []

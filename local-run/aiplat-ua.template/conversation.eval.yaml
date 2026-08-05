@@ -1,0 +1,108 @@
+# AI Platform UA — combined conversation goldens.
+#
+#   poetry run harness-evals run local-run/aiplat-ua/conversation.eval.yaml
+
+name: aiplat-ua-conversation
+concurrency: 1
+
+plugins:
+  - plugins.sse_events_match_metric
+  - plugins.harness_sse_elicitation_adapter
+  - plugins.outcome_goal_metric
+
+conversation:
+  simulator_llm: {provider: openai, name: gpt-4o}
+  elicitation_adapter: harness_sse
+
+dataset: ../../.harness/evals/datasets/aiplat-ua/conversation/conversation.jsonl
+
+target:
+  type: conversational_streaming_http
+  url: "${SSE_ENDPOINT_URL}"
+  headers:
+    Content-Type: application/json
+    Harness-account: "${HARNESS_ACCOUNT}"
+    Authorization: "Bearer ${TOKEN}"
+
+  user_body_template:
+    prompt: "{{last_user_content}}"
+    mode: standard
+    stream: true
+    context:
+      is_v2: true
+    harness_context:
+      account_id: "${HARNESS_ACCOUNT}"
+      org_id: "${HARNESS_ORG}"
+      project_id: "${HARNESS_PROJECT}"
+
+  continue_body_template:
+    prompt: "{{last_user_content}}"
+    conversation_id: "{{conversation_id}}"
+    session_id: "{{session_id}}"
+    mode: standard
+    stream: true
+    context:
+      is_v2: true
+    harness_context:
+      account_id: "${HARNESS_ACCOUNT}"
+      org_id: "${HARNESS_ORG}"
+      project_id: "${HARNESS_PROJECT}"
+
+  human_input_body_template:
+    system_event: "{{human_input}}"
+    conversation_id: "{{conversation_id}}"
+    session_id: "{{session_id}}"
+    mode: standard
+    stream: true
+    context:
+      is_v2: true
+    harness_context:
+      account_id: "${HARNESS_ACCOUNT}"
+      org_id: "${HARNESS_ORG}"
+      project_id: "${HARNESS_PROJECT}"
+
+  human_input_events:
+    - elicitation_form
+    - elicitation_free_text
+    - elicitation_select
+    - elicitation_multi_select
+    - elicitation_yaml
+  completion_events:
+    - assistant_message
+  session_metadata_event: stream_metadata
+  session_fields:
+    conversation_id: conversation_id
+    session_id: session_id
+  correlation_id_field: review_id
+
+  output_event: assistant_message
+  output_path: $.v
+  capture_events:
+    - stream_metadata
+    - assistant_tool_request
+    - assistant_tool_result
+    - elicitation_form
+    - elicitation_free_text
+    - elicitation_select
+    - elicitation_multi_select
+    - elicitation_yaml
+    - entity_mutation
+    - assistant_message
+    - model_usage
+
+metrics:
+  - {kind: outcome_goal_accuracy, threshold: 0.7}
+  - kind: sse_events_match
+    threshold: 1.0
+    params:
+      row_checks_key: sse_checks
+
+judge_llm: {provider: openai, name: gpt-4o}
+
+sinks:
+  - stdout
+  - type: json
+    path: ./output/conversation-results.jsonl
+    include_eval_case: true
+    omit_messages: false
+    overwrite: true

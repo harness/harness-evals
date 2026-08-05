@@ -55,10 +55,13 @@ Check keys:
     contains         substring that must appear in the extracted value.
     contains_expected  bool — use the golden's ``expected`` as the substring.
     equals           value the extracted value must equal.
+    skill_equals     skill name on ``$.arguments.skill`` (hyphen/underscore equivalent).
     match            list of nested checks that must all pass on the same selected
                      payload/item. Useful when correlating fields from one tool
                      call (e.g. name + arguments.resource_type) instead of
                      allowing separate checks to match different tool calls.
+    match_any        list of ``match`` lists; pass if any alternative matches the
+                     same payload/item (OR semantics for acceptable skill names).
     occurrence       which captured payload(s) of the event to test:
                      ``any`` (default), ``first``, or ``last``.
 
@@ -78,6 +81,8 @@ from harness_evals.core.score import Score
 from harness_evals.logging_config import compact_json
 from harness_evals.plugins import register_metric
 from harness_evals.utils.path import extract_path
+
+from examples.skill_sse_checks import skill_names_equivalent
 
 _logger = logging.getLogger(__name__)
 
@@ -164,12 +169,23 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
     equals = check.get("equals")
     path = check.get("path")
     nested_match = check.get("match")
+    match_any = check.get("match_any")
     actual_values: list[Any] = []
 
     for payload in candidates:
         value = extract_path(payload, path) if path else payload
         values = value if isinstance(value, list) else [value]
         actual_values.extend(values)
+        if match_any is not None:
+            for item in values:
+                if isinstance(match_any, list):
+                    for alternative in match_any:
+                        if _matches_all(item, alternative, eval_case):
+                            return {
+                                "passed": True,
+                                "label": label,
+                                "detail": f"matched {_describe_check_expectation(check)}",
+                            }
         if nested_match is not None:
             for item in values:
                 if _matches_all(item, nested_match, eval_case):
@@ -191,7 +207,7 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
                 "detail": f"matched {_describe_check_expectation(check)}",
             }
 
-    if expected_substr is None and equals is None and nested_match is None:
+    if expected_substr is None and equals is None and nested_match is None and match_any is None:
         # No value assertion beyond presence -> passes because payloads exist.
         return {
             "passed": True,
@@ -221,6 +237,20 @@ def _matches_one(item: Any, check: dict[str, Any], eval_case: EvalCase) -> bool:
     if "equals" in check:
         return any(v == check["equals"] for v in values)
 
+    if "skill_equals" in check:
+        expected = str(check["skill_equals"])
+        for value in values:
+            if value is None:
+                continue
+            if skill_names_equivalent(str(value), expected):
+                return True
+            if isinstance(value, dict):
+                for key in ("skill", "skill_name", "name"):
+                    nested = value.get(key)
+                    if nested is not None and skill_names_equivalent(str(nested), expected):
+                        return True
+        return False
+
     # Presence-only nested check: the path resolved to at least one non-null value.
     return any(v is not None for v in values)
 
@@ -248,6 +278,8 @@ def _failure_detail(check: dict[str, Any], actual_values: list[Any], eval_case: 
         return f"no payload matched{path_note}; actual={actual_summary} expected equals={check['equals']!r}"
     if "match" in check:
         return f"no payload matched {_describe_check_expectation(check)}; actual={actual_summary}"
+    if "match_any" in check:
+        return f"no payload matched {_describe_check_expectation(check)}; actual={actual_summary}"
     return f"no payload matched; actual={actual_summary}"
 
 
@@ -268,6 +300,8 @@ def _format_nested_match_clause(check: dict[str, Any]) -> str:
         return f"{field} contains {check['contains']!r}"
     if "equals" in check:
         return f"{field} equals {check['equals']!r}"
+    if "skill_equals" in check:
+        return f"{field} skill_equals {check['skill_equals']!r}"
     if check.get("path"):
         return f"{field} present"
     return "payload present"
@@ -292,6 +326,19 @@ def _describe_check_expectation(check: dict[str, Any]) -> str:
             if clauses:
                 return "correlated fields: " + "; ".join(clauses)
         return "correlated fields (unspecified)"
+    if "match_any" in check:
+        alternatives = check.get("match_any")
+        if isinstance(alternatives, list) and alternatives:
+            rendered: list[str] = []
+            for alternative in alternatives:
+                if not isinstance(alternative, list):
+                    continue
+                clauses = [_format_nested_match_clause(m) for m in alternative if isinstance(m, dict)]
+                if clauses:
+                    rendered.append("(" + "; ".join(clauses) + ")")
+            if rendered:
+                return "any of: " + " OR ".join(rendered)
+        return "any correlated fields (unspecified)"
     return "present (no field assertions)"
 
 

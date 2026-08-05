@@ -1,5 +1,5 @@
 {
-  "_comment": "Review (AIPLAT-952): Curated portability overrides for goldens-final.csv → prod-conversation-*.goldens.jsonl. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'expected_tool_calls' (ordered Harness MCP milestones with optional resource_type; auto-derived from sse_checks when omitted), 'elicitation_hints'. scenario_type here is for golden builder only (not LLM scoring). Never put concrete identifiers in 'elicitation_hints'.",
+  "_comment": "Review (AIPLAT-952): Curated portability overrides for goldens-final.csv \u2192 prod-conversation-*.goldens.jsonl. Write/mutation rows that reference a production-specific resource REQUIRE an entry here; without one they fail closed. Oversized conversations also require an entry. 'exclude': true drops the row with 'reason'. Otherwise provide portable 'scenario', 'expected_outcome', and either 'turns' (list of user strings) or 'initial_prompt'. Optional: 'max_elicitation_rounds', 'context', 'user_persona', 'sse_checks', 'expected_tool_calls' (ordered Harness MCP milestones with optional resource_type; auto-derived from sse_checks when omitted), 'elicitation_hints'. scenario_type here is for golden builder only (not LLM scoring). Never put concrete identifiers in 'elicitation_hints'.",
   "overrides": {
     "a57229e8-7688-4947-bdf3-7674387fbd5d": {
       "scenario_type": "write",
@@ -738,6 +738,10 @@
             {
               "path": "$.name",
               "equals": "Skill"
+            },
+            {
+              "path": "$.arguments.skill",
+              "skill_equals": "ccm-cost-categories"
             }
           ]
         },
@@ -752,7 +756,10 @@
           ]
         }
       ],
-      "reason": "Prod flow used tru-portfolio tag values; rewritten with portable eval_portfolio_tag"
+      "reason": "Prod flow used tru-portfolio tag values; rewritten with portable eval_portfolio_tag",
+      "expected_skills": [
+        "ccm-cost-categories"
+      ]
     },
     "dd7b1ac5-0742-4426-bbcf-1a92ad1a3e22": {
       "scenario_type": "write",
@@ -853,6 +860,10 @@
             {
               "path": "$.name",
               "equals": "Skill"
+            },
+            {
+              "path": "$.arguments.skill",
+              "skill_equals": "harness-documentation"
             }
           ]
         },
@@ -871,7 +882,10 @@
           "exists": true
         }
       ],
-      "reason": "Create-then-update for pipeline chaining; prod Polish session rewritten as portable parent/child chain with inline save"
+      "reason": "Create-then-update for pipeline chaining; prod Polish session rewritten as portable parent/child chain with inline save",
+      "expected_skills": [
+        "harness-documentation"
+      ]
     },
     "321afdfe-5f42-496b-85d6-7f68b942546c": {
       "scenario_type": "write",
@@ -973,6 +987,10 @@
             {
               "path": "$.name",
               "equals": "Skill"
+            },
+            {
+              "path": "$.arguments.skill",
+              "skill_equals": "harness-documentation"
             }
           ]
         },
@@ -991,7 +1009,10 @@
           "exists": true
         }
       ],
-      "reason": "Prod maxConcurrency multi-service update on Billpaydev release_prep_pipeline; rewritten as portable create-then-update write flow"
+      "reason": "Prod maxConcurrency multi-service update on Billpaydev release_prep_pipeline; rewritten as portable create-then-update write flow",
+      "expected_skills": [
+        "harness-documentation"
+      ]
     },
     "83d5419d-3638-41ea-8954-9d4580b921c4": {
       "scenario_type": "write",
@@ -1162,26 +1183,6 @@
           "match": [
             {
               "path": "$.name",
-              "equals": "Skill"
-            }
-          ]
-        },
-        {
-          "event": "assistant_tool_result",
-          "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
-          ]
-        },
-        {
-          "event": "assistant_tool_request",
-          "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
               "equals": "Read"
             }
           ]
@@ -1211,12 +1212,39 @@
           "exists": true
         },
         {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "equals": "Skill"
+            },
+            {
+              "path": "$.arguments.skill",
+              "skill_equals": "harness-platform-conventions"
+            }
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "equals": "Skill"
+            }
+          ]
+        },
+        {
           "event": "assistant_message",
           "exists": true
         }
       ],
       "reason": "Prod GMO EC2/Terraform flow: skill load errors (platform_conventions), inline harness_create OPA/template failure, no new template creation",
-      "improve_later": "EVAL FIDELITY \u2014 keep one shared ${HARNESS_PROJECT} (no separate policy project). Prod GMO hit PACIH004 (IACM stage needs pipeline template), PACIH006 (mandatory account.Service_Step_GenerateVersionTxt step template), and PACIH206 (inline save blocked) on harness_create. Turn 2 currently forbids templateRef and forces inline, which diverges from prod (user picked account.TFEPlanApplyDestroyRefreshPipeline after OPA failure). Clean eval accounts without similar policies may not reproduce the failure. Improve later: (1) one-time seed IACM-scoped onsave OPA policies via harness_create policy + policy_set (type=pipeline, action=onsave) \u2014 Rego should match only pipelines with stage.type==IACM so inline CI/CD goldens #1/#3/#4 on the same project still succeed; (2) replace turn 2 with prod flow \u2014 when agent offers templates after policy failure, pick the first suitable existing template; (3) update expected_outcome accordingly \u2014 success is honest policy reporting plus pipeline YAML and main.tf, not necessarily harness_create success; (4) add scripts/seed-eval-iacm-policies.sh documenting the Rego; (5) skip PACIH006 mimic unless Service_Step_GenerateVersionTxt exists in eval."
+      "improve_later": "EVAL FIDELITY \u2014 keep one shared ${HARNESS_PROJECT} (no separate policy project). Prod GMO hit PACIH004 (IACM stage needs pipeline template), PACIH006 (mandatory account.Service_Step_GenerateVersionTxt step template), and PACIH206 (inline save blocked) on harness_create. Turn 2 currently forbids templateRef and forces inline, which diverges from prod (user picked account.TFEPlanApplyDestroyRefreshPipeline after OPA failure). Clean eval accounts without similar policies may not reproduce the failure. Improve later: (1) one-time seed IACM-scoped onsave OPA policies via harness_create policy + policy_set (type=pipeline, action=onsave) \u2014 Rego should match only pipelines with stage.type==IACM so inline CI/CD goldens #1/#3/#4 on the same project still succeed; (2) replace turn 2 with prod flow \u2014 when agent offers templates after policy failure, pick the first suitable existing template; (3) update expected_outcome accordingly \u2014 success is honest policy reporting plus pipeline YAML and main.tf, not necessarily harness_create success; (4) add scripts/seed-eval-iacm-policies.sh documenting the Rego; (5) skip PACIH006 mimic unless Service_Step_GenerateVersionTxt exists in eval.",
+      "expected_skills": [
+        "harness-platform-conventions"
+      ]
     },
     "8a3b7cb0-a66b-48fa-94c4-6f7e53b2cc0b": {
       "scenario_type": "write",
@@ -1366,11 +1394,37 @@
         {
           "event": "assistant_tool_request",
           "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
+          "match_any": [
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "harness-platform-conventions"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "scs-routing"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "scs-workflows"
+              }
+            ]
           ]
         },
         {
@@ -1388,7 +1442,12 @@
           "exists": true
         }
       ],
-      "reason": "Prod SGWS DevSecOps SCS scan pipeline; initial prompt kept verbatim from prod (typos included), org in gh api sample portable via GITHUB_ORG default eval_github_org"
+      "reason": "Prod SGWS DevSecOps SCS scan pipeline; initial prompt kept verbatim from prod (typos included), org in gh api sample portable via GITHUB_ORG default eval_github_org",
+      "expected_skills": [
+        "harness-platform-conventions",
+        "scs-routing",
+        "scs-workflows"
+      ]
     },
     "8710e2d8-ac9a-4355-9d37-558661053812": {
       "scenario_type": "read_only",
@@ -1443,11 +1502,27 @@
         {
           "event": "assistant_tool_request",
           "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
+          "match_any": [
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "hql-reference"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "scs-routing"
+              }
+            ]
           ]
         },
         {
@@ -1465,7 +1540,11 @@
           "exists": true
         }
       ],
-      "reason": "Prod OneTru Platform HQL search; replaced prod project/org names with placeholders"
+      "reason": "Prod OneTru Platform HQL search; replaced prod project/org names with placeholders",
+      "expected_skills": [
+        "hql-reference",
+        "scs-routing"
+      ]
     },
     "8e709798-4459-4560-b0ee-f378d587e858": {
       "scenario_type": "read_only",
@@ -1521,26 +1600,6 @@
         ]
       },
       "sse_checks": [
-        {
-          "event": "assistant_tool_request",
-          "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
-          ]
-        },
-        {
-          "event": "assistant_tool_result",
-          "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
-          ]
-        },
         {
           "event": "assistant_tool_request",
           "path": "$.v[*]",
@@ -1624,11 +1683,51 @@
           ]
         },
         {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match_any": [
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "hql-reference"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "kg-analysis"
+              }
+            ]
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "equals": "Skill"
+            }
+          ]
+        },
+        {
           "event": "assistant_message",
           "exists": true
         }
       ],
-      "reason": "Prod account-level template-usage audit: 1 user turn, ~46 tool calls (KG/HQL + pipeline YAML grep); max_elicitation_rounds raised for long discovery chain"
+      "reason": "Prod account-level template-usage audit: 1 user turn, ~46 tool calls (KG/HQL + pipeline YAML grep); max_elicitation_rounds raised for long discovery chain",
+      "expected_skills": [
+        "hql-reference",
+        "kg-analysis"
+      ]
     },
     "c3a0ef7a-e265-4600-b30f-c9168e7bf213": {
       "scenario_type": "write",
@@ -1732,11 +1831,27 @@
         {
           "event": "assistant_tool_request",
           "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
+          "match_any": [
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "idp-information-retrieval"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "harness-documentation"
+              }
+            ]
           ]
         },
         {
@@ -1754,7 +1869,11 @@
           "exists": true
         }
       ],
-      "reason": "Prod DCP Python Microservice IDP flow; elicitation covers workflow pick + Service Name, Team Name, Description, Migration"
+      "reason": "Prod DCP Python Microservice IDP flow; elicitation covers workflow pick + Service Name, Team Name, Description, Migration",
+      "expected_skills": [
+        "idp-information-retrieval",
+        "harness-documentation"
+      ]
     },
     "05a00448-649b-4feb-9765-dc7943da1976": {
       "scenario_type": "write",
@@ -1798,11 +1917,27 @@
         {
           "event": "assistant_tool_request",
           "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
+          "match_any": [
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "hql-reference"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "dashboard-builder"
+              }
+            ]
           ]
         },
         {
@@ -1820,7 +1955,11 @@
           "exists": true
         }
       ],
-      "reason": "Prod dashboard_builder session with widget 500 retries; portable lead-time widget eval"
+      "reason": "Prod dashboard_builder session with widget 500 retries; portable lead-time widget eval",
+      "expected_skills": [
+        "hql-reference",
+        "dashboard-builder"
+      ]
     },
     "fd6230c7-799e-4489-a286-74305676c26e": {
       "scenario_type": "read_only",
@@ -1833,7 +1972,7 @@
       "user_persona": "IDP or platform engineer investigating failures; provides ${HARNESS_ORG} / ${HARNESS_PROJECT} scope or a representative pipeline when asked",
       "context": [
         "Org: ${HARNESS_ORG}, Project: ${HARNESS_PROJECT}",
-        "Diagnostic task only — do not run destructive actions or mutate resources",
+        "Diagnostic task only \u2014 do not run destructive actions or mutate resources",
         "If no failures are visible in the eval project, the assistant should say so and explain what it checked",
         "Validates skill_loading (debug-pipeline, kg_analysis, hql_reference, idp_information_retrieval) and read-only pipeline failure analysis"
       ],
@@ -1867,26 +2006,6 @@
         ]
       },
       "sse_checks": [
-        {
-          "event": "assistant_tool_request",
-          "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
-          ]
-        },
-        {
-          "event": "assistant_tool_result",
-          "path": "$.v[*]",
-          "match": [
-            {
-              "path": "$.name",
-              "equals": "Skill"
-            }
-          ]
-        },
         {
           "event": "assistant_tool_request",
           "path": "$.v[*]",
@@ -1936,11 +2055,84 @@
           "exists": false
         },
         {
+          "event": "assistant_tool_request",
+          "path": "$.v[*]",
+          "match_any": [
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "debug-pipeline"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "kg-analysis"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "hql-reference"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "idp-information-retrieval"
+              }
+            ],
+            [
+              {
+                "path": "$.name",
+                "equals": "Skill"
+              },
+              {
+                "path": "$.arguments.skill",
+                "skill_equals": "harness-documentation"
+              }
+            ]
+          ]
+        },
+        {
+          "event": "assistant_tool_result",
+          "path": "$.v[*]",
+          "match": [
+            {
+              "path": "$.name",
+              "equals": "Skill"
+            }
+          ]
+        },
+        {
           "event": "assistant_message",
           "exists": true
         }
       ],
-      "reason": "Prod Analyze Pipeline Errors session (goldens-final.csv); portable read-only diagnostic golden with original prompt kept verbatim"
+      "reason": "Prod Analyze Pipeline Errors session (goldens-final.csv); portable read-only diagnostic golden with original prompt kept verbatim",
+      "expected_skills": [
+        "debug-pipeline",
+        "kg-analysis",
+        "hql-reference",
+        "idp-information-retrieval",
+        "harness-documentation"
+      ]
     }
   }
 }

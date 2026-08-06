@@ -9,65 +9,26 @@ the whole captured stream.
 It reads ``EvalCase.metadata["sse_events"]`` (populated by the target; capture
 ALL events by leaving ``capture_events`` unset) and runs a list of per-event
 ``checks``. The score is the fraction of checks that passed, gated by the
-metric's ``threshold`` (e.g. ``threshold: 0.8`` => at least 80% must pass).
+metric's ``threshold`` (e.g. ``threshold: 0.8`` => at least 80% must pass.
 
 Checks come from two places and are merged (global first, then per-row):
 
   * ``params.checks`` in the eval config — GLOBAL, applied to every dataset row.
-    Put input-agnostic policy here (e.g. "a tool request was made", "usage was
-    reported", "the changeset creates a table").
-  * ``golden.metadata["sse_checks"]`` — PER-ROW, one set per dataset line. Put
-    input-specific expectations here (this row's table name, schema id, columns)
-    so a dataset with many rows keeps its expectations in the data, not the
-    config. The metadata key is configurable via ``params.row_checks_key``.
-
-The check schema is identical in both places, so the metric stays generic — it
-never hardcodes any event name or value.
-
-Config (note the ``params:`` wrapper — that's how the runner forwards kwargs):
-
-    plugins:
-      - examples.sse_events_match_metric
-    metrics:
-      - kind: sse_events_match
-        threshold: 0.8
-        params:
-          checks:
-            # assert the changeset YAML contains a substring
-            - {event: elicitation_yaml, path: $.content.yaml, contains: createTable, occurrence: last}
-            # assert a substring equal to the golden's `expected`
-            - {event: elicitation_yaml, path: $.content.yaml, contains_expected: true}
-            # assert several fields on the same selected payload/item
-            - event: assistant_tool_request
-              path: $.v[*]
-              match:
-                - {path: $.name, contains: mcp__harness__harness_get}
-                - {path: $.arguments.resource_type, equals: database_schema}
-            # assert an event was emitted at all
-            - {event: assistant_tool_request, exists: true}
-            - {event: model_usage, exists: true}
+  * ``golden.metadata["sse_checks"]`` — PER-ROW, one set per dataset line.
 
 Check keys:
-    event            (required) SSE event name to look at.
-    exists           bool — pass if the event was (not) captured. Standalone check.
-    path             JSONPath applied to each payload before matching (optional;
-                     when omitted the whole payload is matched).
-    contains         substring that must appear in the extracted value.
+    event              (required) SSE event name to look at.
+    exists             bool — pass if the event was (not) captured.
+    path               JSONPath applied to each payload before matching.
+    contains           substring that must appear in the extracted value.
     contains_expected  bool — use the golden's ``expected`` as the substring.
-    equals           value the extracted value must equal.
-    skill_equals     skill name on ``$.arguments.skill`` (hyphen/underscore equivalent).
-    match            list of nested checks that must all pass on the same selected
-                     payload/item. Useful when correlating fields from one tool
-                     call (e.g. name + arguments.resource_type) instead of
-                     allowing separate checks to match different tool calls.
-    match_any        list of ``match`` lists; pass if any alternative matches the
-                     same payload/item (OR semantics for acceptable skill names).
-    occurrence       which captured payload(s) of the event to test:
-                     ``any`` (default), ``first``, or ``last``.
-
-Run from the repo root so ``examples`` is importable:
-
-    PYTHONPATH=. poetry run harness-evals run examples/streaming-http.harness.local.eval.yaml
+    not_contains       nested only — none of the resolved values may contain this substring.
+    forbidden_contains top-level — fail if *any* resolved value contains this substring.
+    equals             value the extracted value must equal.
+    skill_equals       skill name on ``$.arguments.skill`` (hyphen/underscore equivalent).
+    match              nested checks that must all pass on the same payload/item.
+    match_any          list of ``match`` lists; OR semantics on the same item.
+    occurrence           ``any`` (default), ``first``, or ``last``.
 """
 
 from __future__ import annotations
@@ -75,14 +36,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from examples.skill_sse_checks import skill_names_equivalent
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.logging_config import compact_json
 from harness_evals.plugins import register_metric
 from harness_evals.utils.path import extract_path
-
-from examples.skill_sse_checks import skill_names_equivalent
 
 _logger = logging.getLogger(__name__)
 
@@ -99,10 +59,7 @@ class SseEventsMatchMetric(BaseMetric):
         **kwargs: object,
     ) -> None:
         super().__init__(name="sse_events_match", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)
-        # Global checks from the eval config — applied to every row.
         self.checks = checks or []
-        # Golden metadata key holding per-row checks (input-specific expectations
-        # that vary per dataset row). Merged on top of the global checks.
         self.row_checks_key = row_checks_key
 
     def measure(self, eval_case: EvalCase) -> Score:
@@ -154,7 +111,6 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
 
     payloads = sse_events.get(event, [])
 
-    # Presence-only check.
     if "exists" in check:
         want = bool(check["exists"])
         present = len(payloads) > 0
@@ -164,10 +120,14 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
         return {"passed": False, "label": label, "detail": "event not captured"}
 
     candidates = _select(payloads, check.get("occurrence", "any"))
+    path = check.get("path")
+
+    forbidden = check.get("forbidden_contains")
+    if forbidden is not None:
+        return _check_forbidden_contains(label, candidates, path, str(forbidden))
 
     expected_substr = str(eval_case.expected) if check.get("contains_expected") else check.get("contains")
     equals = check.get("equals")
-    path = check.get("path")
     nested_match = check.get("match")
     match_any = check.get("match_any")
     actual_values: list[Any] = []
@@ -208,7 +168,6 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
             }
 
     if expected_substr is None and equals is None and nested_match is None and match_any is None:
-        # No value assertion beyond presence -> passes because payloads exist.
         return {
             "passed": True,
             "label": label,
@@ -217,6 +176,35 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
 
     detail = _failure_detail(check, actual_values, eval_case)
     return {"passed": False, "label": label, "detail": detail}
+
+
+def _check_forbidden_contains(
+    label: str,
+    candidates: list[Any],
+    path: str | None,
+    forbidden: str,
+) -> dict[str, Any]:
+    violations: list[Any] = []
+    for payload in candidates:
+        value = extract_path(payload, path) if path else payload
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if item is not None and forbidden in str(item):
+                violations.append(item)
+    if violations:
+        return {
+            "passed": False,
+            "label": label,
+            "detail": (
+                f"forbidden substring {forbidden!r} found in "
+                f"{compact_json(violations[:3])}"
+            ),
+        }
+    return {
+        "passed": True,
+        "label": label,
+        "detail": f"no payload contains forbidden {forbidden!r}",
+    }
 
 
 def _matches_all(item: Any, checks: Any, eval_case: EvalCase) -> bool:
@@ -233,6 +221,13 @@ def _matches_one(item: Any, check: dict[str, Any], eval_case: EvalCase) -> bool:
     expected_substr = str(eval_case.expected) if check.get("contains_expected") else check.get("contains")
     if expected_substr is not None:
         return any(expected_substr in str(v) for v in values if v is not None)
+
+    if "not_contains" in check:
+        forbidden = str(check["not_contains"])
+        checked = [v for v in values if v is not None]
+        if not checked:
+            return False
+        return all(forbidden not in str(v) for v in checked)
 
     if "equals" in check:
         return any(v == check["equals"] for v in values)
@@ -251,7 +246,6 @@ def _matches_one(item: Any, check: dict[str, Any], eval_case: EvalCase) -> bool:
                         return True
         return False
 
-    # Presence-only nested check: the path resolved to at least one non-null value.
     return any(v is not None for v in values)
 
 
@@ -260,7 +254,7 @@ def _select(payloads: list[Any], occurrence: str) -> list[Any]:
         return [payloads[0]]
     if occurrence == "last":
         return [payloads[-1]]
-    return payloads  # "any"
+    return payloads
 
 
 def _failure_detail(check: dict[str, Any], actual_values: list[Any], eval_case: EvalCase) -> str:
@@ -298,6 +292,8 @@ def _format_nested_match_clause(check: dict[str, Any]) -> str:
         return f"{field} contains <expected>"
     if "contains" in check:
         return f"{field} contains {check['contains']!r}"
+    if "not_contains" in check:
+        return f"{field} not_contains {check['not_contains']!r}"
     if "equals" in check:
         return f"{field} equals {check['equals']!r}"
     if "skill_equals" in check:
@@ -310,6 +306,8 @@ def _format_nested_match_clause(check: dict[str, Any]) -> str:
 def _describe_check_expectation(check: dict[str, Any]) -> str:
     if "exists" in check:
         return f"exists={check['exists']}"
+    if "forbidden_contains" in check:
+        return f"forbidden_contains={check['forbidden_contains']!r}"
     if check.get("contains_expected"):
         path = _short_path(check.get("path"))
         return f"{path} contains <expected>"

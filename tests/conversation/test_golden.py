@@ -120,6 +120,18 @@ class TestConversationGolden:
         assert restored.elicitation_hints == original.elicitation_hints
         assert restored.metadata == original.metadata
 
+    def test_from_dict_expected_tool_calls(self):
+        data = {
+            "scenario": "Tool trajectory",
+            "expected_outcome": "Uses search",
+            "expected_tool_calls": [{"name": "mcp__harness__harness_list", "input": {"resource_type": "pipeline"}}],
+        }
+        golden = ConversationGolden.from_dict(data)
+        assert golden.expected_tool_calls is not None
+        assert len(golden.expected_tool_calls) == 1
+        assert golden.expected_tool_calls[0].name == "mcp__harness__harness_list"
+        assert golden.expected_tool_calls[0].input == {"resource_type": "pipeline"}
+
     def test_rejects_invalid_max_turns(self):
         with pytest.raises(ValueError, match="max_turns"):
             ConversationGolden(scenario="S", expected_outcome="O", max_turns=0)

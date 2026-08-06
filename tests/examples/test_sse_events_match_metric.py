@@ -32,35 +32,161 @@ def test_sse_events_match_failure_includes_actual_values() -> None:
 
 
 @pytest.mark.unit
-def test_sse_events_match_labels_and_details_describe_assertions() -> None:
+def test_sse_events_match_nested_not_contains_passes() -> None:
     metric = SseEventsMatchMetric(
         checks=[
-            {"event": "assistant_tool_request", "path": "$.v[*]", "match": [{"path": "$.name", "contains": "harness_list"}]},
-            {"event": "assistant_tool_request", "exists": True},
-            {"event": "assistant_message", "exists": True},
+            {
+                "event": "assistant_tool_result",
+                "path": "$.v[*]",
+                "match": [
+                    {"path": "$.name", "equals": "Skill"},
+                    {"path": "$.result", "not_contains": "error"},
+                ],
+            }
         ],
-        threshold=1.0,
     )
     eval_case = EvalCase(
-        input="list pipelines",
+        input="load skill",
         output="done",
         metadata={
             "sse_events": {
-                "assistant_tool_request": [{"v": [{"name": "mcp__harness__harness_list", "arguments": {}}]}],
-                "assistant_message": [{"text": "here you go"}],
+                "assistant_tool_result": [
+                    {"v": [{"name": "Skill", "result": "loaded hql-reference skill"}]},
+                ]
             }
         },
     )
 
     score = metric.measure(eval_case)
-
     assert score.passed
-    checks = score.metadata["checks"]
-    match_check = checks[0]
-    assert "correlated fields" in match_check["label"]
-    assert "name contains 'harness_list'" in match_check["label"]
-    assert "matched correlated fields: name contains 'harness_list'" in match_check["detail"]
+    assert score.value == 1.0
 
-    exists_check = checks[1]
-    assert exists_check["label"] == "assistant_tool_request.exists=True"
-    assert exists_check["detail"] == "present=True want=True"
+
+@pytest.mark.unit
+def test_sse_events_match_nested_not_contains_fails_on_error() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "assistant_tool_result",
+                "path": "$.v[*]",
+                "match": [
+                    {"path": "$.name", "equals": "Skill"},
+                    {"path": "$.result", "not_contains": "error"},
+                ],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="load skill",
+        output="done",
+        metadata={
+            "sse_events": {
+                "assistant_tool_result": [
+                    {"v": [{"name": "Skill", "result": "skill load error: not found"}]},
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert not score.passed
+    assert score.value == 0.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_forbidden_contains_fails_on_mcp_error() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "assistant_tool_result",
+                "path": "$.v[*]",
+                "forbidden_contains": "MCP error",
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="list resources",
+        output="done",
+        metadata={
+            "sse_events": {
+                "assistant_tool_result": [
+                    {
+                        "v": [
+                            {
+                                "name": "mcp__harness__harness_list",
+                                "result": "MCP error -32603: Internal Server Error",
+                            }
+                        ]
+                    },
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert not score.passed
+    assert score.value == 0.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_forbidden_contains_passes_when_clean() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "assistant_tool_result",
+                "path": "$.v[*]",
+                "forbidden_contains": "MCP error",
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="list resources",
+        output="done",
+        metadata={
+            "sse_events": {
+                "assistant_tool_result": [
+                    {"v": [{"name": "mcp__harness__harness_list", "result": '{"items": []}'}]},
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_skill_equals_in_match_any() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "assistant_tool_request",
+                "path": "$.v[*]",
+                "match_any": [
+                    [
+                        {"path": "$.name", "equals": "Skill"},
+                        {"path": "$.arguments.skill", "skill_equals": "hql-reference"},
+                    ],
+                    [
+                        {"path": "$.name", "equals": "Skill"},
+                        {"path": "$.arguments.skill", "skill_equals": "scs-routing"},
+                    ],
+                ],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="scs",
+        output="done",
+        metadata={
+            "sse_events": {
+                "assistant_tool_request": [
+                    {"v": [{"name": "Skill", "arguments": {"skill": "scs_routing"}}]},
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert score.passed

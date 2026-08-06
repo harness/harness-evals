@@ -139,7 +139,7 @@ class TestBuildMetric:
             score_name="custom_judge",
         )
         assert m.name == "custom_judge"
-    
+
     def test_llm_hardcoded_dimension_conflict_caught_at_runtime(self):
         with pytest.raises(TypeError, match="conflict with factory-supplied arguments: dimension"):
             build_metric(

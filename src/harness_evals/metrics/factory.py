@@ -191,7 +191,10 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
     api_key = metadata.get("api_key")
     base_url = metadata.get("base_url")
     temperature = float(metadata["temperature"]) if metadata.get("temperature") is not None else None
-    max_tokens = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else 4096
+    # None means "not set" — each provider's own constructor default wins. Only pass max_tokens
+    # when explicitly configured so e.g. BedrockOpenAILLM's 8192 default applies for gpt-oss judges.
+    max_tokens: int | None = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else None
+    token_kwargs: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
 
     # Harness-managed connectors route through the OpenAI-compatible LLM
     # gateway (see harness_evals.llm.harness_ai). Only fires when base_url is
@@ -219,7 +222,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             api_key=api_key,
             aws_region=metadata.get("region"),
             temperature=temperature,
-            max_tokens=max_tokens,
+            **token_kwargs,
         )
 
     if provider == "anthropic":
@@ -229,7 +232,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             model=model,
             api_key=api_key,
             temperature=temperature,
-            max_tokens=max_tokens,
+            **token_kwargs,
         )
 
     if provider == "openai" and metadata.get("bedrock"):
@@ -240,7 +243,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             api_key=api_key,
             aws_region=metadata.get("region"),
             temperature=temperature,
-            max_tokens=max_tokens,
+            **token_kwargs,
         )
 
     if OpenAILLM is None:
@@ -249,7 +252,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
         "model": model,
         "api_key": api_key,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        **token_kwargs,
     }
     if base_url:
         kwargs["base_url"] = base_url

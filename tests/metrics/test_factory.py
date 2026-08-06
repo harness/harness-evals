@@ -139,7 +139,7 @@ class TestBuildMetric:
             score_name="custom_judge",
         )
         assert m.name == "custom_judge"
-    
+
     def test_llm_hardcoded_dimension_conflict_caught_at_runtime(self):
         with pytest.raises(TypeError, match="conflict with factory-supplied arguments: dimension"):
             build_metric(
@@ -150,3 +150,56 @@ class TestBuildMetric:
                     "metadata": {"llm": object()},
                 },
             )
+
+
+class TestBuildLLMProviderMaxTokens:
+    """build_llm_provider should let each provider's own default win when max_tokens is absent."""
+
+    def test_bedrock_openai_no_max_tokens_uses_provider_default(self, monkeypatch):
+        # When config has no max_tokens, BedrockOpenAILLM should receive its own 8192 default.
+        import sys
+        from unittest.mock import MagicMock
+
+        mock_openai = MagicMock()
+        captured = {}
+
+        def fake_ctor(**kwargs):
+            captured.update(kwargs)
+            client = MagicMock()
+            client.chat.completions.create = MagicMock()
+            return client
+
+        mock_openai.AsyncOpenAI.side_effect = fake_ctor
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer")
+
+        from harness_evals.metrics.factory import build_llm_provider
+
+        llm = build_llm_provider(
+            {"metadata": {"provider": "openai", "bedrock": True, "model": "openai.gpt-oss-120b-1:0"}}
+        )
+        assert llm.max_tokens == 8192
+
+    def test_bedrock_openai_explicit_max_tokens_is_honored(self, monkeypatch):
+        # When config sets max_tokens explicitly, it overrides the provider default.
+        import sys
+        from unittest.mock import MagicMock
+
+        mock_openai = MagicMock()
+        mock_openai.AsyncOpenAI.side_effect = lambda **kw: MagicMock()
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer")
+
+        from harness_evals.metrics.factory import build_llm_provider
+
+        llm = build_llm_provider(
+            {
+                "metadata": {
+                    "provider": "openai",
+                    "bedrock": True,
+                    "model": "openai.gpt-oss-120b-1:0",
+                    "max_tokens": 16384,
+                }
+            }
+        )
+        assert llm.max_tokens == 16384

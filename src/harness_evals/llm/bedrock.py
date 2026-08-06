@@ -19,7 +19,7 @@ import os
 import re
 
 from harness_evals.llm.anthropic import AnthropicLLM
-from harness_evals.llm.openai import OpenAILLM
+from harness_evals.llm.openai import OpenAILLM, _record_openai_usage
 
 
 class BedrockAnthropicLLM(AnthropicLLM):
@@ -131,6 +131,12 @@ class BedrockOpenAILLM(OpenAILLM):
     Reuses :class:`OpenAILLM`'s ``generate`` (chat completions) and token-usage recording;
     overrides only the client construction (Bedrock base URL + bearer auth) and ``generate_json``
     (prompt-appended schema + robust extraction, since Bedrock doesn't enforce json_schema).
+
+    gpt-oss models on Bedrock externalize reasoning in ``<reasoning>...</reasoning>`` tags
+    inside the visible response. The default ``max_tokens`` is set to 8192 so the model has
+    enough budget to complete its reasoning block **and** emit the JSON output. At 4096 the
+    reasoning block often completes but the JSON is cut off, leaving nothing parseable after
+    tag-stripping and producing "No JSON object found" errors.
     """
 
     def __init__(
@@ -138,7 +144,7 @@ class BedrockOpenAILLM(OpenAILLM):
         model: str = "openai.gpt-oss-120b-1:0",
         api_key: str | None = None,
         temperature: float | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 8192,
         *,
         aws_region: str | None = None,
         top_p: float | None = None,
@@ -173,5 +179,23 @@ class BedrockOpenAILLM(OpenAILLM):
             f"{prompt}\n\nRespond with ONLY a single JSON object matching this schema "
             f"(no markdown, no commentary, no <reasoning> tags):\n{json.dumps(schema)}"
         )
-        text = await self.generate(instruction, **kwargs)
-        return _extract_json_object(text)
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=self._messages(instruction, kwargs.get("system_prompt")),
+            max_completion_tokens=self.max_tokens,
+            **self._optional_params(),
+        )
+        _record_openai_usage(response)
+        text = response.choices[0].message.content or ""
+        finish_reason = response.choices[0].finish_reason
+        try:
+            return _extract_json_object(text)
+        except json.JSONDecodeError as exc:
+            if finish_reason == "length":
+                raise json.JSONDecodeError(
+                    f"Bedrock OpenAI response hit token limit (finish_reason=length) before "
+                    f"emitting JSON — increase max_tokens (current: {self.max_tokens})",
+                    text,
+                    0,
+                ) from exc
+            raise

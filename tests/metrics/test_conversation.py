@@ -35,6 +35,64 @@ INCOHERENT_MESSAGES = [
 ]
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "metric_cls",
+    [GoalAccuracyMetric, ConversationResolutionMetric, ConversationCompletenessMetric],
+)
+async def test_success_metrics_include_expected_outcome_when_metadata_present(metric_cls):
+    llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+    metric = metric_cls(llm=llm)
+    expected_outcome = "Agent answers both the capital and population questions."
+    ec = EvalCase(
+        input="q",
+        output="a",
+        messages=COHERENT_MESSAGES,
+        metadata={"expected_outcome": expected_outcome},
+    )
+
+    await metric.a_measure(ec)
+
+    prompt = llm.prompts[0]
+    assert ec.expected is None
+    assert "**Expected outcome:**" in prompt
+    assert expected_outcome in prompt
+    assert "Judge the conversation against this expected outcome when scoring." in prompt
+    assert prompt.index("**Expected outcome:**") < prompt.index("**Conversation:**")
+    assert prompt.index("Judge the conversation against this expected outcome when scoring.") < prompt.index(
+        "**Conversation:**"
+    )
+    assert "**Conversation:**\n[user]: What is the capital of France?" in prompt
+
+
+@pytest.mark.unit
+async def test_success_metrics_omit_expected_outcome_when_metadata_missing():
+    llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+    metric = GoalAccuracyMetric(llm=llm)
+    ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
+
+    await metric.a_measure(ec)
+
+    assert "**Expected outcome:**" not in llm.prompts[0]
+
+
+@pytest.mark.unit
+async def test_metric_with_expected_outcome_disabled_ignores_metadata():
+    llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+    metric = GoalAccuracyMetric(llm=llm)
+    metric._use_expected_outcome = False
+    ec = EvalCase(
+        input="q",
+        output="a",
+        messages=COHERENT_MESSAGES,
+        metadata={"expected_outcome": "Agent answers both questions."},
+    )
+
+    await metric.a_measure(ec)
+
+    assert "**Expected outcome:**" not in llm.prompts[0]
+
+
 # ---------------------------------------------------------------------------
 # ConversationCoherenceMetric
 # ---------------------------------------------------------------------------

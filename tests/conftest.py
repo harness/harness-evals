@@ -32,11 +32,14 @@ class MockLLM(BaseLLM):
         self._responses = list(responses) if responses else []
         self._default = default or {}
         self._call_idx = 0
+        self.prompts: list[str] = []
 
     async def generate(self, prompt: str, **kwargs) -> str:
+        self.prompts.append(prompt)
         return ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
+        self.prompts.append(prompt)
         if self._call_idx < len(self._responses):
             result = self._responses[self._call_idx]
             self._call_idx += 1

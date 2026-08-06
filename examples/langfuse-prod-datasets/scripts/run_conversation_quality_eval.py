@@ -39,6 +39,7 @@ from conversation_quality import (  # noqa: E402
     PROMPT_VERSION,
     HarnessConversationQualityMetric,
 )
+
 from harness_evals.config.runner import build_llm  # noqa: E402
 from harness_evals.config.schema import ModelSpec  # noqa: E402
 from harness_evals.core.eval_case import EvalCase  # noqa: E402

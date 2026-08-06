@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import csv
 import json
 import os
@@ -736,10 +737,8 @@ def clear_legacy_root_outputs() -> None:
     for pattern in ("*.md", "*.tools.json", "*.conversation.json", "labels.csv"):
         for old in LEGACY_OUT_DIR.glob(pattern):
             old.unlink()
-    try:
+    with contextlib.suppress(OSError):
         LEGACY_OUT_DIR.rmdir()
-    except OSError:
-        pass
 
 
 def write_labels_csv(rows: list[dict[str, Any]], out_dir: Path) -> Path | None:

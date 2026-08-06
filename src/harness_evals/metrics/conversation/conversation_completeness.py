@@ -10,6 +10,7 @@ from harness_evals.metrics.conversation.llm_conversation_metric import (
 
 _PROMPT_TEMPLATE = """You are an expert evaluator assessing whether a multi-turn conversation addressed all user intents.
 
+{expected_outcome_section}\
 **Conversation:**
 {conversation_text}
 
@@ -33,6 +34,7 @@ class ConversationCompletenessMetric(LLMConversationMetric):
     """
 
     _prompt_template = _PROMPT_TEMPLATE
+    _use_expected_outcome = True
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(

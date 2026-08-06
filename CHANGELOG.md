@@ -5,6 +5,21 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0]
+
+### Added
+
+- **Hallucination message references**: `HallucinationMetric` now supports
+  `include_messages_as_reference=True` to use non-assistant conversation
+  messages as reference material alongside `context` and `expected`.
+
+### Fixed
+
+- **Conversation expected outcomes in judge prompts**: goal accuracy, resolution,
+  and completeness judge prompts now include `metadata["expected_outcome"]` when
+  present, so they evaluate against authored conversation outcomes instead of
+  transcript-only inference.
+
 ## [0.16.3]
 
 ### Fixed

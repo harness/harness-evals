@@ -419,6 +419,9 @@ class TestBedrockOpenAILLM:
         # content and finish_reason are set per-test
         self.content = "pong"
         self.finish_reason = "stop"
+        # Set to ints in tests that need to assert token-usage recording.
+        self.prompt_tokens: int | None = None
+        self.completion_tokens: int | None = None
 
         async def fake_create(**kwargs):
             self.mock_create(**kwargs)
@@ -429,7 +432,13 @@ class TestBedrockOpenAILLM:
             choice.finish_reason = self.finish_reason
             resp = MagicMock()
             resp.choices = [choice]
-            resp.usage = None
+            if self.prompt_tokens is not None or self.completion_tokens is not None:
+                usage = MagicMock()
+                usage.prompt_tokens = self.prompt_tokens
+                usage.completion_tokens = self.completion_tokens
+                resp.usage = usage
+            else:
+                resp.usage = None
             return resp
 
         def fake_ctor(**kwargs):
@@ -532,6 +541,20 @@ class TestBedrockOpenAILLM:
 
         with pytest.raises(json.JSONDecodeError, match="finish_reason=length"):
             await llm.generate_json("evaluate", {"type": "object"})
+
+    async def test_generate_json_records_token_usage(self):
+        # generate_json makes the API call directly (not via inherited generate), so
+        # _record_openai_usage must be called inside it. Verify via collect_token_usage().
+        from harness_evals.llm.usage import collect_token_usage
+
+        self.content = '{"score": 1}'
+        self.prompt_tokens = 42
+        self.completion_tokens = 7
+        llm = self._make()
+        with collect_token_usage() as usage:
+            await llm.generate_json("evaluate", {"type": "object"})
+        assert usage.input_tokens == 42
+        assert usage.output_tokens == 7
 
 
 @pytest.mark.unit

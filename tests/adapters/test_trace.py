@@ -188,3 +188,50 @@ class TestEvalCaseParity:
         )
         case, _ = spans_to_eval_case([_semconv_root(), span])
         assert case.output == "hi"
+
+    def test_typed_text_parts_with_content_key(self):
+        root = _span(
+            "root",
+            attrs={
+                "gen_ai.operation.name": "invoke_agent",
+                "gen_ai.input.messages": json.dumps(
+                    [{"role": "user", "parts": [{"type": "text", "content": "create a pipeline"}]}]
+                ),
+            },
+        )
+        llm = _span(
+            "llm",
+            parent="root",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": json.dumps(
+                    [{"role": "assistant", "parts": [{"type": "text", "content": "Pipeline created"}]}]
+                ),
+            },
+        )
+        case, warnings = spans_to_eval_case([root, llm])
+        assert case.input == "create a pipeline"
+        assert case.output == "Pipeline created"
+        assert not any("No LLM output" in warning for warning in warnings)
+
+    def test_typed_text_parts_ignore_non_string_content(self):
+        span = _span(
+            "llm",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": json.dumps(
+                    [
+                        {
+                            "role": "assistant",
+                            "parts": [
+                                {"type": "text", "content": None},
+                                {"type": "text", "content": {"unexpected": True}},
+                                {"type": "text", "content": "valid"},
+                            ],
+                        }
+                    ]
+                ),
+            },
+        )
+        case, _ = spans_to_eval_case([span])
+        assert case.output == "valid"

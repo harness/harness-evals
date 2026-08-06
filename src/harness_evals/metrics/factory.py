@@ -12,6 +12,7 @@ import asyncio
 import functools
 import importlib
 import importlib.util
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -140,6 +141,46 @@ def _embedding_registry() -> dict[str, type[BaseMetric]]:
     return _catalog_registry()[2]
 
 
+def _validate_constructor_options(
+    metric_class: type[BaseMetric],
+    options: dict[str, Any],
+    reserved: set[str] | None = None,
+) -> None:
+    """Reject misspelled metric options before constructors can swallow them."""
+    accepted: set[str] = set()
+    for klass in metric_class.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        for name, parameter in inspect.signature(init).parameters.items():
+            if name != "self" and parameter.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                accepted.add(name)
+
+    declared_by_metric: set[str] = set()
+    for klass in metric_class.__mro__:
+        if klass.__module__ == "harness_evals.core.metric":
+            continue
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        declared_by_metric.update(inspect.signature(init).parameters)
+
+    # name/dimension are BaseMetric-only kwargs unless the metric declares them itself
+    factory_supplied = {"llm", "embedding", "threshold"} | ({"name", "dimension"} - declared_by_metric)
+
+    conflicts = sorted(set(options) & (factory_supplied | (reserved or set())))
+    if conflicts:
+        raise TypeError(
+            f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {', '.join(conflicts)}"
+        )
+    unknown = sorted(set(options) - accepted)
+    if unknown:
+        raise TypeError(f"{metric_class.__name__} received unknown option(s): {', '.join(unknown)}")
+
+
 def build_llm_provider(config: dict[str, Any]) -> Any:
     """Instantiate the correct LLM provider from config metadata."""
     metadata = config.get("metadata", {})
@@ -227,7 +268,7 @@ def _build_llm_metric(
     kind = config.get("kind")
     registry = _llm_metric_registry()
     metric_class = registry.get(kind) if kind else None
-    options = config.get("options", {})
+    options = config.get("options") or {}
 
     if metric_class is not None:
         if metric_class is AnswerCorrectnessMetric:
@@ -235,7 +276,19 @@ def _build_llm_metric(
                 embedding = OpenAIEmbedding()
             except ImportError as err:
                 raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'") from err
-            metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
+            _validate_constructor_options(metric_class, options)
+            try:
+                metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
+            except TypeError as e:
+                if "got multiple values for keyword argument" in str(e):
+                    import re
+                    match = re.search(r"keyword argument '(\w+)'", str(e))
+                    key = match.group(1) if match else "unknown"
+                    raise TypeError(
+                        f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {key}"
+                    ) from None
+                raise
+
         else:
             kind_kwargs: dict[str, Any] = {}
             if "criteria" in config:
@@ -246,10 +299,19 @@ def _build_llm_metric(
                 kind_kwargs["prompt_instructions"] = config["prompt_instructions"]
             if "allowed_topics" in config:
                 kind_kwargs["allowed_topics"] = config["allowed_topics"]
+            _validate_constructor_options(metric_class, options, set(kind_kwargs))
             try:
                 metric = metric_class(llm=llm, threshold=threshold, **kind_kwargs, **options)
-            except TypeError:
-                metric = metric_class(llm=llm, threshold=threshold)
+            except TypeError as e:
+                if "got multiple values for keyword argument" in str(e):
+                    import re
+                    match = re.search(r"keyword argument '(\w+)'", str(e))
+                    key = match.group(1) if match else "unknown"
+                    raise TypeError(
+                        f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {key}"
+                    ) from None
+                raise
+
     else:
         rubric = config.get("rubric")
         if isinstance(rubric, dict):
@@ -288,11 +350,9 @@ def _build_embedding_metric(
     embedding = OpenAIEmbedding(**embed_kwargs)
 
     metric_class = registry[kind]
-    options = config.get("options", {})
-    try:
-        metric = metric_class(embedding=embedding, threshold=threshold, **options)
-    except TypeError:
-        metric = metric_class(embedding=embedding, threshold=threshold)
+    options = config.get("options") or {}
+    _validate_constructor_options(metric_class, options)
+    metric = metric_class(embedding=embedding, threshold=threshold, **options)
 
     metric.name = score_name or kind
     return metric
@@ -330,12 +390,10 @@ def _build_heuristic_metric(
     if kind not in registry:
         raise ValueError(f"Unknown heuristic kind: {kind!r}. Available: {sorted(registry.keys())}")
     metric_class = registry[kind]
-    options = config.get("options", {})
+    options = config.get("options") or {}
 
-    try:
-        metric = metric_class(threshold=threshold, **options)
-    except TypeError:
-        metric = metric_class(threshold=threshold)
+    _validate_constructor_options(metric_class, options)
+    metric = metric_class(threshold=threshold, **options)
 
     metric.name = score_name or kind
     return metric
@@ -397,11 +455,9 @@ def _build_code_metric(
     if not issubclass(metric_class, BaseMetric):
         raise ValueError(f"{metric_class.__name__} must extend BaseMetric, got {metric_class}")
 
-    extra_config = config.get("config", {})
-    try:
-        metric = metric_class(threshold=threshold, **extra_config)
-    except TypeError:
-        metric = metric_class(threshold=threshold)
+    extra_config = config.get("config") or {}
+    _validate_constructor_options(metric_class, extra_config)
+    metric = metric_class(threshold=threshold, **extra_config)
 
     metric.name = score_name or path
     return metric
@@ -427,10 +483,11 @@ def _build_composite_metric(
         ref = ref_config.get("ref")
         if not ref:
             raise ValueError("Composite sub-metric must have 'ref' field")
-        weight = ref_config.get("weight", 1.0)
+        raw_weight = ref_config.get("weight", 1.0)
+        weight = float(raw_weight) if raw_weight is not None else 1.0
 
         sub_type = ref_config.get("type")
-        sub_config = ref_config.get("config", {})
+        sub_config = ref_config.get("config") or {}
         if sub_type:
             sub_metric = build_metric(
                 sub_type, sub_config, score_name=ref, suite_path=suite_path, allow_code_loading=allow_code_loading
@@ -441,6 +498,9 @@ def _build_composite_metric(
         sub_metrics.append(sub_metric)
         weights.append(weight)
 
+    if aggregation == "weighted_average" and sum(weights) == 0:
+        raise ValueError("Composite metric weighted_average has zero total weight")
+
     final_name = score_name or "composite"
 
     class CompositeMetric(BaseMetric):
@@ -450,13 +510,20 @@ def _build_composite_metric(
             self.weights = weights
             self.aggregation = aggregation
 
-        def _build_score(self, sub_scores: list[float], sub_details: list[dict[str, Any]]) -> Score | None:
+        def _build_score(
+            self,
+            sub_scores: list[float],
+            sub_weights: list[float],
+            sub_details: list[dict[str, Any]],
+        ) -> Score | None:
             if not sub_scores:
                 return None
 
             if self.aggregation == "weighted_average":
-                total_w = sum(self.weights[: len(sub_scores)])
-                final = sum(s * w for s, w in zip(sub_scores, self.weights, strict=False)) / total_w
+                total_w = sum(sub_weights)
+                if total_w == 0:
+                    return None
+                final = sum(s * w for s, w in zip(sub_scores, sub_weights, strict=True)) / total_w
             elif self.aggregation == "min":
                 final = min(sub_scores)
             elif self.aggregation == "max":
@@ -475,17 +542,19 @@ def _build_composite_metric(
 
         async def a_measure(self, eval_case: EvalCase) -> Score | None:
             sub_scores: list[float] = []
+            sub_weights: list[float] = []
             sub_details: list[dict[str, Any]] = []
-            for m in self.sub_metrics:
+            for m, weight in zip(self.sub_metrics, self.weights, strict=True):
                 s = await m.a_measure(eval_case)
                 if asyncio.iscoroutine(s):
                     s = await s
                 if s is None:
                     continue
                 sub_scores.append(s.value)
+                sub_weights.append(weight)
                 sub_details.append({"name": m.name, "value": s.value})
 
-            return self._build_score(sub_scores, sub_details)
+            return self._build_score(sub_scores, sub_weights, sub_details)
 
         def measure(self, eval_case: EvalCase) -> Score | None:
             try:
@@ -499,8 +568,9 @@ def _build_composite_metric(
                     self.name,
                 )
                 sub_scores: list[float] = []
+                sub_weights: list[float] = []
                 sub_details: list[dict[str, Any]] = []
-                for m in self.sub_metrics:
+                for m, weight in zip(self.sub_metrics, self.weights, strict=True):
                     s = m.measure(eval_case)
                     if asyncio.iscoroutine(s):
                         s.close()
@@ -508,8 +578,9 @@ def _build_composite_metric(
                     if s is None:
                         continue
                     sub_scores.append(s.value)
+                    sub_weights.append(weight)
                     sub_details.append({"name": m.name, "value": s.value})
-                return self._build_score(sub_scores, sub_details)
+                return self._build_score(sub_scores, sub_weights, sub_details)
             return asyncio.run(self.a_measure(eval_case))
 
     return CompositeMetric()

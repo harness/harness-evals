@@ -416,8 +416,9 @@ class TestBedrockOpenAILLM:
     def _patch_openai(self, monkeypatch):
         self.mock_create = MagicMock()
         self.client_kwargs: dict = {}
-        # content is set per-test via self.content
+        # content and finish_reason are set per-test
         self.content = "pong"
+        self.finish_reason = "stop"
 
         async def fake_create(**kwargs):
             self.mock_create(**kwargs)
@@ -425,6 +426,7 @@ class TestBedrockOpenAILLM:
             msg.content = self.content
             choice = MagicMock()
             choice.message = msg
+            choice.finish_reason = self.finish_reason
             resp = MagicMock()
             resp.choices = [choice]
             resp.usage = None
@@ -494,6 +496,42 @@ class TestBedrockOpenAILLM:
         BedrockOpenAILLM(model="m", api_key="ctor-bearer", aws_region="us-east-2")
         assert self.client_kwargs.get("api_key") == "ctor-bearer"
         assert self.client_kwargs.get("base_url") == "https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1"
+
+    def test_default_max_tokens_is_8192(self):
+        llm = self._make()
+        assert llm.max_tokens == 8192
+
+    async def test_generate_json_length_finish_reason_raises_clear_error(self):
+        # gpt-oss completes <reasoning> block but hits token limit before emitting JSON.
+        # The stripped remainder is empty — must raise a clear budget error, not the
+        # cryptic "No JSON object found" message.
+        self.content = "<reasoning>Some evaluation thinking here.</reasoning>"
+        self.finish_reason = "length"
+        llm = self._make()
+        import json
+
+        with pytest.raises(json.JSONDecodeError, match="finish_reason=length"):
+            await llm.generate_json("evaluate", {"type": "object"})
+
+    async def test_generate_json_stop_with_no_json_raises_original_error(self):
+        # finish_reason=stop but no JSON in response — not a budget issue, pass through.
+        self.content = "I cannot evaluate this."
+        self.finish_reason = "stop"
+        llm = self._make()
+        import json
+
+        with pytest.raises(json.JSONDecodeError, match="No JSON object found"):
+            await llm.generate_json("evaluate", {"type": "object"})
+
+    async def test_generate_json_length_with_truncated_json_raises_clear_error(self):
+        # Reasoning closed but JSON is cut off mid-object.
+        self.content = '<reasoning>done</reasoning>{"score": 0.9, "rea'
+        self.finish_reason = "length"
+        llm = self._make()
+        import json
+
+        with pytest.raises(json.JSONDecodeError, match="finish_reason=length"):
+            await llm.generate_json("evaluate", {"type": "object"})
 
 
 @pytest.mark.unit

@@ -5,6 +5,20 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.4]
+
+### Fixed
+
+- **`BedrockOpenAILLM` default `max_tokens` raised from 4096 to 8192**: gpt-oss models on
+  Bedrock externalize reasoning in `<reasoning>...</reasoning>` tags inside the visible
+  response. At 4096 the reasoning block completes but the JSON is cut off, producing a
+  cryptic "No JSON object found in Bedrock OpenAI response" error on all scored items.
+  8192 gives the model sufficient budget for both reasoning and JSON output.
+- **Clear budget-exhaustion error in `BedrockOpenAILLM.generate_json`**: when
+  `finish_reason=length` causes `_extract_json_object` to fail, the error message now
+  explicitly names the cause and the remedy (`increase max_tokens (current: N)`) instead
+  of surfacing the raw "No JSON object found" `JSONDecodeError`.
+
 ## [0.16.3]
 
 ### Fixed

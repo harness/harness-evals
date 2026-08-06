@@ -5,6 +5,12 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.3]
+
+### Changed
+
+- Re-release of 0.17.2 (publish pipeline re-triggered after lint fixes)
+
 ## [0.17.2]
 
 ### Fixed

@@ -22,8 +22,7 @@ def _truncate_tool_result_items(items: list) -> list:
         if isinstance(result, str) and len(result) > _MAX_TOOL_RESULT_CHARS:
             item = {
                 **item,
-                "result": result[:_MAX_TOOL_RESULT_CHARS]
-                + f"... [truncated, {len(result)} chars total]",
+                "result": result[:_MAX_TOOL_RESULT_CHARS] + f"... [truncated, {len(result)} chars total]",
             }
         new_items.append(item)
     return new_items
@@ -120,9 +119,7 @@ def _eval_case_for_json(
                     drop_keys = {"sse_events", "sse_timeline"}
                     if any(key in msg_meta for key in drop_keys):
                         msg = dict(msg)
-                        msg["metadata"] = {
-                            k: v for k, v in msg_meta.items() if k not in drop_keys
-                        }
+                        msg["metadata"] = {k: v for k, v in msg_meta.items() if k not in drop_keys}
                 cleaned_messages.append(msg)
             data["messages"] = cleaned_messages
     return data

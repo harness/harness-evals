@@ -28,37 +28,49 @@ def _span(span_id, parent="", span_type="", attrs=None, name="", in_toks=None, o
 
 
 def _semconv_root():
-    return _span("root", attrs={
-        "gen_ai.operation.name": "invoke_agent",
-        "gen_ai.input.messages": json.dumps([
-            {"role": "user", "parts": [{"type": "text", "text": "summarize this"}]}
-        ]),
-        "gen_ai.agent.name": "qa-agent",
-        "gen_ai.request.model": "gpt-4o",
-    })
+    return _span(
+        "root",
+        attrs={
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.input.messages": json.dumps(
+                [{"role": "user", "parts": [{"type": "text", "text": "summarize this"}]}]
+            ),
+            "gen_ai.agent.name": "qa-agent",
+            "gen_ai.request.model": "gpt-4o",
+        },
+    )
 
 
 def _semconv_llm(output_text, span_id="llm1", parent="root"):
-    return _span(span_id, parent=parent, attrs={
-        "gen_ai.operation.name": "chat",
-        "gen_ai.output.messages": json.dumps([
-            {"role": "assistant", "parts": [{"type": "text", "text": output_text}]}
-        ]),
-        "gen_ai.usage.input_tokens": 10,
-        "gen_ai.usage.output_tokens": 5,
-    })
+    return _span(
+        span_id,
+        parent=parent,
+        attrs={
+            "gen_ai.operation.name": "chat",
+            "gen_ai.output.messages": json.dumps(
+                [{"role": "assistant", "parts": [{"type": "text", "text": output_text}]}]
+            ),
+            "gen_ai.usage.input_tokens": 10,
+            "gen_ai.usage.output_tokens": 5,
+        },
+    )
 
 
 def _semconv_tool(span_id="tool1", parent="root"):
-    return _span(span_id, parent=parent, name="execute_tool search", attrs={
-        "gen_ai.operation.name": "execute_tool",
-        "gen_ai.input.messages": json.dumps([
-            {"role": "assistant", "parts": [{"type": "tool_call", "name": "search", "arguments": {"q": "x"}}]}
-        ]),
-        "gen_ai.output.messages": json.dumps([
-            {"role": "tool", "parts": [{"type": "tool_call_response", "id": "c1", "result": "42"}]}
-        ]),
-    })
+    return _span(
+        span_id,
+        parent=parent,
+        name="execute_tool search",
+        attrs={
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.input.messages": json.dumps(
+                [{"role": "assistant", "parts": [{"type": "tool_call", "name": "search", "arguments": {"q": "x"}}]}]
+            ),
+            "gen_ai.output.messages": json.dumps(
+                [{"role": "tool", "parts": [{"type": "tool_call_response", "id": "c1", "result": "42"}]}]
+            ),
+        },
+    )
 
 
 class TestClassifyDialects:
@@ -85,10 +97,13 @@ class TestClassifyDialects:
         assert classify_span(_span("c", parent="r")) == SpanType.OTHER
 
     def test_semconv_wins_over_langfuse(self):
-        span = _span("r", attrs={
-            "gen_ai.operation.name": "chat",
-            "langfuse.observation.type": "agent",
-        })
+        span = _span(
+            "r",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "langfuse.observation.type": "agent",
+            },
+        )
         assert classify_span(span) == SpanType.LLM_TURN
 
     def test_dict_attributes_accepted(self):
@@ -100,8 +115,12 @@ class TestClassifyDialects:
 
 class TestEvalCaseParity:
     def test_multi_turn_with_tool_calls(self):
-        spans = [_semconv_root(), _semconv_llm("first answer"), _semconv_tool(),
-                 _semconv_llm("final answer", span_id="llm2")]
+        spans = [
+            _semconv_root(),
+            _semconv_llm("first answer"),
+            _semconv_tool(),
+            _semconv_llm("final answer", span_id="llm2"),
+        ]
         case, warnings = spans_to_eval_case(spans)
         assert case.input == "summarize this"
         assert case.output == "final answer"
@@ -115,19 +134,26 @@ class TestEvalCaseParity:
         assert not any("No LLM output" in w for w in warnings)
 
     def test_langfuse_dialect_trace_adapts(self):
-        root = _span("r", attrs={
-            "langfuse.observation.type": "agent",
-            "gen_ai.input.messages": json.dumps([
-                {"role": "user", "parts": [{"type": "text", "text": "deploy it"}]}
-            ]),
-            "langfuse.observation.name": "harness_agent_run",
-        })
-        gen = _span("g", parent="r", attrs={
-            "langfuse.observation.type": "generation",
-            "gen_ai.output.messages": json.dumps([
-                {"role": "assistant", "parts": [{"type": "text", "text": "done"}]}
-            ]),
-        })
+        root = _span(
+            "r",
+            attrs={
+                "langfuse.observation.type": "agent",
+                "gen_ai.input.messages": json.dumps(
+                    [{"role": "user", "parts": [{"type": "text", "text": "deploy it"}]}]
+                ),
+                "langfuse.observation.name": "harness_agent_run",
+            },
+        )
+        gen = _span(
+            "g",
+            parent="r",
+            attrs={
+                "langfuse.observation.type": "generation",
+                "gen_ai.output.messages": json.dumps(
+                    [{"role": "assistant", "parts": [{"type": "text", "text": "done"}]}]
+                ),
+            },
+        )
         case, _ = spans_to_eval_case([root, gen])
         assert case.input == "deploy it"
         assert case.output == "done"
@@ -146,16 +172,19 @@ class TestEvalCaseParity:
         assert any("No LLM output" in w for w in warnings)
 
     def test_span_scope_subtree(self):
-        spans = [_semconv_root(), _semconv_llm("a"), _semconv_tool(),
-                 _semconv_llm("b", span_id="llm2")]
+        spans = [_semconv_root(), _semconv_llm("a"), _semconv_tool(), _semconv_llm("b", span_id="llm2")]
         case, _ = spans_to_eval_case_for_span(spans, "llm1")
         assert case.output == "a"
         assert case.metadata["span_id"] == "llm1"
 
     def test_python_repr_messages_parsed(self):
-        span = _span("l", parent="root", attrs={
-            "gen_ai.operation.name": "chat",
-            "gen_ai.output.messages": "[{'role': 'assistant', 'parts': [{'type': 'text', 'text': 'hi'}]}]",
-        })
+        span = _span(
+            "l",
+            parent="root",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": "[{'role': 'assistant', 'parts': [{'type': 'text', 'text': 'hi'}]}]",
+            },
+        )
         case, _ = spans_to_eval_case([_semconv_root(), span])
         assert case.output == "hi"

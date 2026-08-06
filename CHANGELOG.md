@@ -5,7 +5,32 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.3]
+
+### Fixed
+
+- **LLM sampling params are now opt-in**: `AnthropicLLM`/`OpenAILLM` (and their Bedrock
+  subclasses) send `temperature` only when it is explicitly configured; otherwise it is omitted
+  so the model applies its own default. Fixes `400: `temperature` is deprecated for this model`
+  raised by newer Claude 4 inference profiles on AWS Bedrock. `max_tokens` is still always sent.
+
+## [0.16.2]
+
+### Fixed
+
+- **CI publish unblocked**: fixed lint (`ruff check` B904 in `metrics/factory.py`, import sort in
+  `tests/config/test_conversation_runner.py`) and formatting (`ruff format` across 7 files) errors
+  introduced in 0.16.0. These failed the `test` job's lint step, which skipped the `publish` job —
+  so 0.16.0 and 0.16.1 never reached PyPI. No runtime behavior change.
+
+## [0.16.1]
+
+### Fixed
+
+- **`BedrockAnthropicLLM.generate_json`**: no longer sends the Anthropic-only `output_config`
+  field, which the AWS Bedrock endpoint rejects with `400: output_config.format: Extra inputs
+  are not permitted`. Now appends the JSON schema to the prompt and extracts the object from
+  the response text (matching `BedrockOpenAILLM`). Plain `generate` is unchanged.
 
 ## [0.14.1]
 

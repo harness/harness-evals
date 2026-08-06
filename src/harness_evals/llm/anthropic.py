@@ -30,7 +30,7 @@ class AnthropicLLM(BaseLLM):
         self,
         model: str = "claude-sonnet-4-20250514",
         api_key: str | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         max_tokens: int = 4096,
         *,
         base_url: str | None = None,
@@ -56,7 +56,12 @@ class AnthropicLLM(BaseLLM):
         self._client = anthropic.AsyncAnthropic(**client_kwargs)
 
     def _optional_params(self) -> dict[str, Any]:
+        # Send only params that are explicitly set; omit the rest so the model applies its
+        # own defaults. Newer Claude models (e.g. Claude 4 extended-thinking on Bedrock) reject
+        # sampling knobs like ``temperature`` outright, so unconditionally sending them 400s.
         params: dict[str, Any] = {}
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
         if self.top_p is not None:
             params["top_p"] = self.top_p
         if self.top_k is not None:
@@ -71,7 +76,6 @@ class AnthropicLLM(BaseLLM):
         response = await self._client.messages.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=self.temperature,
             max_tokens=self.max_tokens,
             **optional_params,
         )
@@ -87,7 +91,6 @@ class AnthropicLLM(BaseLLM):
         response = await self._client.messages.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=self.temperature,
             max_tokens=self.max_tokens,
             **optional_params,
             output_config={

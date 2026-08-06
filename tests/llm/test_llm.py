@@ -129,9 +129,15 @@ class TestOpenAILLMParams:
         llm = self._make()
         await llm.generate("hi")
         call_kwargs = self.mock_create.call_args[1]
+        assert "temperature" not in call_kwargs
         assert "top_p" not in call_kwargs
         assert "frequency_penalty" not in call_kwargs
         assert "presence_penalty" not in call_kwargs
+
+    async def test_temperature_forwarded(self):
+        llm = self._make(temperature=0.7)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["temperature"] == 0.7
 
     async def test_top_p_forwarded(self):
         llm = self._make(top_p=0.9)
@@ -218,8 +224,14 @@ class TestAnthropicLLMParams:
         llm = self._make()
         await llm.generate("hi")
         call_kwargs = self.mock_create.call_args[1]
+        assert "temperature" not in call_kwargs
         assert "top_p" not in call_kwargs
         assert "top_k" not in call_kwargs
+
+    async def test_temperature_forwarded(self):
+        llm = self._make(temperature=0.5)
+        await llm.generate("hi")
+        assert self.mock_create.call_args[1]["temperature"] == 0.5
 
     async def test_top_p_forwarded(self):
         llm = self._make(top_p=0.9)
@@ -276,13 +288,16 @@ class TestBedrockAnthropicLLM:
     def _patch_anthropic(self, monkeypatch):
         self.mock_create = MagicMock()
         self.client_kwargs: dict = {}
+        # content is set per-test via self.content
+        self.content = '{"ok": true}'
 
         async def fake_create(**kwargs):
             self.mock_create(**kwargs)
             block = MagicMock()
-            block.text = '{"ok": true}'
+            block.text = self.content
             resp = MagicMock()
             resp.content = [block]
+            resp.usage = None
             return resp
 
         def fake_bedrock_ctor(**kwargs):
@@ -330,18 +345,47 @@ class TestBedrockAnthropicLLM:
         assert out == '{"ok": true}'
         assert self.mock_create.call_args[1]["model"] == "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
-    async def test_generate_json_uses_output_config(self):
+    async def test_generate_json_does_not_send_output_config(self):
+        # Bedrock rejects output_config with 400; generate_json must append schema to prompt instead.
         llm = self._make()
         result = await llm.generate_json("hi", {"type": "object", "properties": {"ok": {"type": "boolean"}}})
         assert result == {"ok": True}
-        assert "output_config" in self.mock_create.call_args[1]
+        assert "output_config" not in self.mock_create.call_args[1]
+
+    async def test_generate_json_schema_appended_to_prompt(self):
+        schema = {"type": "object", "properties": {"score": {"type": "number"}}}
+        llm = self._make()
+        self.content = '{"score": 0.9}'
+        await llm.generate_json("evaluate this", schema)
+        prompt_sent = self.mock_create.call_args[1]["messages"][0]["content"]
+        assert "evaluate this" in prompt_sent
+        assert '"score"' in prompt_sent
+
+    async def test_generate_json_extracts_reasoning_wrapped_json(self):
+        self.content = '<reasoning>Thinking...</reasoning>**{ "score": 1.0, "reason": "correct" }'
+        llm = self._make()
+        result = await llm.generate_json("score it", {"type": "object", "properties": {"score": {"type": "number"}}})
+        assert result == {"score": 1.0, "reason": "correct"}
+        assert "output_config" not in self.mock_create.call_args[1]
+
+    async def test_generate_json_extracts_fenced_json(self):
+        self.content = 'Sure!\n```json\n{"score": 0.5}\n```'
+        llm = self._make()
+        result = await llm.generate_json("score it", {"type": "object"})
+        assert result == {"score": 0.5}
 
     async def test_sampling_params_forwarded(self):
-        llm = self._make(top_p=0.9, top_k=40)
+        llm = self._make(temperature=0.3, top_p=0.9, top_k=40)
         await llm.generate("hi")
         kw = self.mock_create.call_args[1]
+        assert kw["temperature"] == 0.3
         assert kw["top_p"] == 0.9
         assert kw["top_k"] == 40
+
+    async def test_temperature_omitted_by_default(self):
+        llm = self._make()
+        await llm.generate("hi")
+        assert "temperature" not in self.mock_create.call_args[1]
 
     def test_env_fallback_for_bearer_and_region(self, monkeypatch):
         # With no constructor api_key/aws_region, the SDK client gets the values from env.

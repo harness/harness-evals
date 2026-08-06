@@ -149,7 +149,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
     model = metadata.get("model", "gpt-4o-mini")
     api_key = metadata.get("api_key")
     base_url = metadata.get("base_url")
-    temperature = float(metadata["temperature"]) if metadata.get("temperature") is not None else 0.0
+    temperature = float(metadata["temperature"]) if metadata.get("temperature") is not None else None
     max_tokens = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else 4096
 
     # Harness-managed connectors route through the OpenAI-compatible LLM
@@ -233,8 +233,8 @@ def _build_llm_metric(
         if metric_class is AnswerCorrectnessMetric:
             try:
                 embedding = OpenAIEmbedding()
-            except ImportError:
-                raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'")
+            except ImportError as err:
+                raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'") from err
             metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
         else:
             kind_kwargs: dict[str, Any] = {}
@@ -379,8 +379,7 @@ def _build_code_metric(
         else:
             if suite_path is None:
                 raise ValueError(
-                    f"Code metric path '{path}' is a relative file path but "
-                    "no suite_path was provided to resolve it"
+                    f"Code metric path '{path}' is a relative file path but no suite_path was provided to resolve it"
                 )
             full_path = (suite_path.parent / path).resolve()
             suite_dir = suite_path.parent.resolve()

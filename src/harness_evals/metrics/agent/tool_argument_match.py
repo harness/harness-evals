@@ -48,6 +48,7 @@ class ToolArgumentMatchMetric(BaseMetric):
         ignore_keys: set[str] | None = None,
         wildcard_value: object = "*",
         threshold: float = 1.0,
+        skip_when_missing: bool = False,
         **kwargs: object,
     ) -> None:
         super().__init__(
@@ -64,11 +65,19 @@ class ToolArgumentMatchMetric(BaseMetric):
         self.arg_match = arg_match
         self.ignore_keys: set[str] = set(ignore_keys) if ignore_keys else set()
         self.wildcard_value = wildcard_value
+        self.skip_when_missing = skip_when_missing
 
     def measure(self, eval_case: EvalCase) -> Score:
         expected_calls = eval_case.expected_tool_calls
 
         if expected_calls is None:
+            if self.skip_when_missing:
+                return Score(
+                    name=self.name,
+                    value=1.0,
+                    threshold=self.threshold,
+                    reason="expected_tool_calls not provided, skip_when_missing=true",
+                )
             return Score(
                 name=self.name,
                 value=0.0,
@@ -77,6 +86,13 @@ class ToolArgumentMatchMetric(BaseMetric):
             )
 
         if eval_case.tool_calls is None:
+            if self.skip_when_missing:
+                return Score(
+                    name=self.name,
+                    value=1.0,
+                    threshold=self.threshold,
+                    reason="tool_calls not provided, skip_when_missing=true",
+                )
             return Score(
                 name=self.name,
                 value=0.0,

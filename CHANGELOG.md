@@ -5,6 +5,25 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.7]
+
+### Added
+
+- **`sse_events_match` operators**: `not_contains`, `forbidden_contains`, `match_any`,
+  `skill_equals`, and ordinal `occurrence` values `second`/`third`. New helper module
+  `examples/skill_sse_checks.py`.
+- **`ConversationGolden.expected_tool_calls`**: rehydrated from dataset JSON via
+  `from_dict`; propagated to `EvalCase` by the conversation simulator from SSE
+  `assistant_tool_request` events.
+- **`ToolArgumentMatchMetric.skip_when_missing`**: when true, passes instead of
+  scoring 0.0 when `expected_tool_calls` or actual `tool_calls` are absent.
+- **`HarnessSseElicitationAdapter`**: `elicitation_confirm` support for HITL entity
+  mutation approve cards (e.g. `cost_category`).
+
+### Changed
+
+- Harden `PIIMetric` and `RoleViolationMetric` with additional patterns and tests.
+
 ## [0.17.6]
 
 ### Fixed

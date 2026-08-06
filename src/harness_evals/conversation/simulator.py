@@ -334,10 +334,15 @@ class ConversationSimulator:
         if intent_misses:
             metadata["elicitation_intent_misses"] = intent_misses
 
+        messages = _history_with_chronological_tool_events(history)
+        tool_calls = _tool_calls_from_sse_events(sse_events) if sse_events else []
+
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
-            messages=_history_with_chronological_tool_events(history),
+            messages=messages,
+            tool_calls=tool_calls,
+            expected_tool_calls=golden.expected_tool_calls,
             metadata=metadata,
             tags=golden.tags,
         )
@@ -749,6 +754,14 @@ def _attach_sse_events(message: Message, sse_events: dict[str, list]) -> Message
     metadata["sse_events"] = sse_events
     message.metadata = metadata
     return message
+
+
+def _tool_calls_from_sse_events(sse_events: dict[str, list]) -> list[ToolCall]:
+    """Collect assistant tool requests from captured SSE events."""
+    calls: list[ToolCall] = []
+    for payload in sse_events.get("assistant_tool_request", []):
+        calls.extend(_tool_calls_from_sse_payload(payload, result=False))
+    return calls
 
 
 def _sse_events_from_history(history: list[Message]) -> dict[str, list]:

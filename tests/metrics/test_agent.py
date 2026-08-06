@@ -337,6 +337,17 @@ class TestToolArgumentMatch:
         assert score.value == 0.0
         assert "expected_tool_calls" in score.reason
 
+    def test_skip_when_missing_expected_tool_calls(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            tool_calls=[ToolCall(name="search", input={"q": "cats"})],
+        )
+        score = ToolArgumentMatchMetric(skip_when_missing=True).measure(ec)
+        assert score.value == 1.0
+        assert score.passed
+        assert "skip_when_missing" in score.reason
+
     def test_missing_tool_calls(self):
         ec = EvalCase(
             input="task",

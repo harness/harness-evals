@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
-from harness_evals.core.types import Message
+from harness_evals.core.types import Message, ToolCall
 
 
 class ConversationMode(str, Enum):
@@ -46,6 +46,7 @@ class ConversationGolden:
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
+    expected_tool_calls: list[ToolCall] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.mode is None:
@@ -98,5 +99,9 @@ class ConversationGolden:
             mapped["turns"] = [m if isinstance(m, Message) else Message.from_dict(m) for m in mapped["turns"]]
         if "mode" in mapped and isinstance(mapped["mode"], str):
             mapped["mode"] = ConversationMode(mapped["mode"])
+        if "expected_tool_calls" in mapped and mapped["expected_tool_calls"] is not None:
+            mapped["expected_tool_calls"] = [
+                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc) for tc in mapped["expected_tool_calls"]
+            ]
         known = {f.name for f in cls.__dataclass_fields__.values()}
         return cls(**{k: v for k, v in mapped.items() if k in known})

@@ -149,3 +149,49 @@ class TestConversationSimulator:
 
         assert result.metadata["custom_key"] == "custom_value"
         assert result.tags == {"env": "test"}
+
+
+@pytest.mark.unit
+def test_build_eval_case_propagates_tool_calls() -> None:
+    from harness_evals.conversation.simulator import ConversationSimulator
+    from harness_evals.core.types import ToolCall
+
+    golden = ConversationGolden(
+        scenario="List pipelines",
+        expected_outcome="Lists pipelines",
+        expected_tool_calls=[ToolCall(name="mcp__harness__harness_list", input={"resource_type": "pipeline"})],
+    )
+    history = [
+        Message(
+            role="assistant",
+            content="Checking pipelines",
+            metadata={
+                "sse_events": {
+                    "assistant_tool_request": [
+                        {
+                            "v": [
+                                {
+                                    "name": "mcp__harness__harness_list",
+                                    "arguments": {"resource_type": "pipeline"},
+                                }
+                            ]
+                        }
+                    ],
+                    "assistant_tool_result": [
+                        {"v": [{"name": "mcp__harness__harness_list", "result": '{"items": []}'}]}
+                    ],
+                }
+            },
+        ),
+        Message(role="assistant", content="No pipelines found."),
+    ]
+
+    simulator = ConversationSimulator(simulator_llm=None)
+    eval_case = simulator._build_eval_case(golden, history)
+
+    assert eval_case.expected_tool_calls is not None
+    assert eval_case.expected_tool_calls[0].name == "mcp__harness__harness_list"
+    assert eval_case.tool_calls is not None
+    assert len(eval_case.tool_calls) == 1
+    assert eval_case.tool_calls[0].name == "mcp__harness__harness_list"
+    assert eval_case.tool_calls[0].input == {"resource_type": "pipeline"}

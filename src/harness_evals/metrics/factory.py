@@ -285,6 +285,7 @@ def _build_llm_metric(
             except TypeError as e:
                 if "got multiple values for keyword argument" in str(e):
                     import re
+
                     match = re.search(r"keyword argument '(\w+)'", str(e))
                     key = match.group(1) if match else "unknown"
                     raise TypeError(
@@ -308,6 +309,7 @@ def _build_llm_metric(
             except TypeError as e:
                 if "got multiple values for keyword argument" in str(e):
                     import re
+
                     match = re.search(r"keyword argument '(\w+)'", str(e))
                     key = match.group(1) if match else "unknown"
                     raise TypeError(

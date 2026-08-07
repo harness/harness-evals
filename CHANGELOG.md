@@ -5,6 +5,12 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.5]
+
+### Fixed
+
+- Fix `ruff format` failure on `src/harness_evals/metrics/factory.py` that was blocking the publish CI.
+
 ## [0.17.4]
 
 ### Changed

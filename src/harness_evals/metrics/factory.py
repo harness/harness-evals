@@ -259,6 +259,81 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
     return OpenAILLM(**kwargs)
 
 
+def build_embedding_provider(metadata: dict[str, Any]) -> OpenAIEmbedding:
+    """Instantiate an OpenAIEmbedding routed to the right backend.
+
+    Routing precedence (mirrors build_llm_provider):
+    1. ``embedding_api_key`` in metadata — explicit per-metric override, wins always.
+       Optionally paired with ``embedding_base_url`` and ``embedding_model``.
+    2. ``use_llm_gateway`` — Harness-managed connector; route through the LLM gateway
+       (OpenAI-compatible) using HARNESS_TOKEN + HARNESS_BASE_URL.
+    3. ``provider == "openai"`` + ``bedrock`` — same bearer key, Bedrock OpenAI-compat endpoint.
+    4. ``provider == "openai"`` direct — use the judge key as-is, no base_url.
+    5. ``provider == "anthropic"`` (direct or bedrock) — Anthropic has no embeddings API.
+       Raises a clear error directing the user to set ``embedding_api_key`` on the metric config.
+    """
+    embedding_api_key = metadata.get("embedding_api_key")
+    embedding_model = metadata.get("embedding_model") or "text-embedding-3-small"
+
+    # 1. Explicit per-metric embedding credential — always wins.
+    # Targets platform.openai.com directly; no base_url needed.
+    if embedding_api_key:
+        return OpenAIEmbedding(api_key=embedding_api_key, model=embedding_model)
+
+    provider = metadata.get("provider", "openai")
+
+    # 2. Harness-managed (gateway) — resolve base_url from env, use HARNESS_TOKEN.
+    if metadata.get("use_llm_gateway"):
+        gateway_path = metadata.get("llm_gateway_path", "/llm-gw/v1")
+        harness_base = os.environ.get("HARNESS_BASE_URL", "").rstrip("/")
+        for suffix in ("/ng", "/gateway"):
+            if harness_base.endswith(suffix):
+                harness_base = harness_base[: -len(suffix)]
+                break
+        base_url = f"{harness_base}{gateway_path}" if harness_base else None
+        api_key = os.environ.get("HARNESS_TOKEN", "")
+        if not base_url or not api_key:
+            raise ValueError(
+                "Harness-managed connector requires HARNESS_BASE_URL and HARNESS_TOKEN env vars "
+                "to route embeddings through the gateway"
+            )
+        return OpenAIEmbedding(api_key=api_key, base_url=base_url, model=embedding_model)
+
+    # 3. OpenAI via Bedrock — same bearer, Bedrock OpenAI-compat endpoint.
+    if provider == "openai" and metadata.get("bedrock"):
+        region = metadata.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
+        base_url = f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
+        api_key = metadata.get("api_key")
+        if not api_key:
+            raise ValueError(
+                "Bedrock OpenAI embedding requires an API key (the Bedrock bearer token). "
+                "Ensure the judge connector key is decrypted and available in metric metadata."
+            )
+        return OpenAIEmbedding(api_key=api_key, base_url=base_url, model=embedding_model)
+
+    # 4. Direct OpenAI — use the judge key.
+    if provider == "openai":
+        api_key = metadata.get("api_key")
+        kwargs = {"model": embedding_model}
+        if api_key:
+            kwargs["api_key"] = api_key
+        try:
+            return OpenAIEmbedding(**kwargs)
+        except ValueError as err:
+            raise ValueError(
+                "Embedding-based metric requires an OpenAI API key. "
+                "Set it via 'embedding_api_key' in the metric config, or set OPENAI_API_KEY."
+            ) from err
+
+    # 5. Anthropic (direct or Bedrock) — no embeddings API exists.
+    raise ValueError(
+        f"The judge connector uses provider '{provider}', which has no embeddings API. "
+        "Embedding-based metrics (answer_correctness, answer_similarity, embedding_similarity) "
+        "require an OpenAI-compatible embedding backend. "
+        "Set 'embedding_api_key' in the metric config with a valid OpenAI key."
+    )
+
+
 def _build_llm_metric(
     config: dict[str, Any],
     score_name: str | None,
@@ -275,10 +350,7 @@ def _build_llm_metric(
 
     if metric_class is not None:
         if metric_class is AnswerCorrectnessMetric:
-            try:
-                embedding = OpenAIEmbedding()
-            except ImportError as err:
-                raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'") from err
+            embedding = build_embedding_provider(config.get("metadata", {}))
             _validate_constructor_options(metric_class, options)
             try:
                 metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
@@ -344,15 +416,7 @@ def _build_embedding_metric(
         raise ValueError(f"Unknown embedding kind: {kind!r}. Available: {sorted(registry.keys())}")
 
     metadata = config.get("metadata", {})
-    api_key = metadata.get("api_key")
-    embedding_model = metadata.get("embedding_model")
-
-    embed_kwargs: dict[str, Any] = {}
-    if api_key:
-        embed_kwargs["api_key"] = api_key
-    if embedding_model:
-        embed_kwargs["model"] = embedding_model
-    embedding = OpenAIEmbedding(**embed_kwargs)
+    embedding = build_embedding_provider(metadata)
 
     metric_class = registry[kind]
     options = config.get("options") or {}

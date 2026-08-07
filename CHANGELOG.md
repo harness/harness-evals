@@ -5,6 +5,19 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.6]
+
+### Fixed
+
+- Route `OpenAIEmbedding` through the correct backend for each judge connector type
+  (`answer_correctness`, `answer_similarity`, `embedding_similarity`): OpenAI direct reuses
+  the judge key; OpenAI-Bedrock uses the Bedrock `/openai/v1` endpoint with the bearer;
+  Harness-managed connectors route through the LLM gateway; Anthropic judges (no embeddings
+  API) require `embedding_api_key` set on the metric config and raise a clear error otherwise.
+- Add `base_url` param to `OpenAIEmbedding` so it can target any OpenAI-compatible endpoint.
+- Add `build_embedding_provider(metadata)` to `metrics/factory.py` — single routing path
+  for all embedding construction, replacing bare `OpenAIEmbedding()` calls.
+
 ## [0.17.5]
 
 ### Fixed

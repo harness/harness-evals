@@ -5,6 +5,13 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`schema_validation`**: tolerate markdown-fenced JSON (and common surrounding prose) when
+  parsing string outputs, matching typical LLM structured responses.
+
 ## [0.17.6]
 
 ### Fixed

@@ -54,3 +54,21 @@ class TestSchemaValidation:
         score = SchemaValidationMetric(schema=schema).measure(ec)
         assert not score.passed
         assert "Validation failed" in score.reason
+
+    def test_markdown_fenced_json_object(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        ec = EvalCase(
+            input="q",
+            output='```json\n{"name": "test"}\n```',
+        )
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert score.passed
+
+    def test_markdown_fenced_json_array(self):
+        schema = {
+            "type": "array",
+            "items": {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]},
+        }
+        ec = EvalCase(input="q", output='```json\n[{"title": "a"}]\n```')
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert score.passed

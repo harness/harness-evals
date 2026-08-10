@@ -28,7 +28,8 @@ Check keys:
     skill_equals       skill name on ``$.arguments.skill`` (hyphen/underscore equivalent).
     match              nested checks that must all pass on the same payload/item.
     match_any          list of ``match`` lists; OR semantics on the same item.
-    occurrence           ``any`` (default), ``first``, or ``last``.
+    occurrence           ``any`` (default), ``first``, ``second``, ``third``, or ``last``.
+                       Ordinals index into captured payloads of that event type (1-based names).
 """
 
 from __future__ import annotations
@@ -251,9 +252,13 @@ def _matches_one(item: Any, check: dict[str, Any], eval_case: EvalCase) -> bool:
 
 def _select(payloads: list[Any], occurrence: str) -> list[Any]:
     if occurrence == "first":
-        return [payloads[0]]
+        return [payloads[0]] if payloads else []
+    if occurrence == "second":
+        return [payloads[1]] if len(payloads) >= 2 else []
+    if occurrence == "third":
+        return [payloads[2]] if len(payloads) >= 3 else []
     if occurrence == "last":
-        return [payloads[-1]]
+        return [payloads[-1]] if payloads else []
     return payloads
 
 

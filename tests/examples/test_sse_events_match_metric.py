@@ -190,3 +190,82 @@ def test_sse_events_match_skill_equals_in_match_any() -> None:
 
     score = metric.measure(eval_case)
     assert score.passed
+
+
+@pytest.mark.unit
+def test_sse_events_match_entity_mutation_create_update_update_ordinals() -> None:
+    """Row 4 pattern: three persisted mutations at 1st, 2nd, 3rd entity_mutation."""
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "entity_mutation",
+                "occurrence": "first",
+                "match": [
+                    {"path": "$.action", "equals": "create"},
+                    {"path": "$.identifier", "contains": "eval_maxconc_"},
+                ],
+            },
+            {
+                "event": "entity_mutation",
+                "occurrence": "second",
+                "match": [
+                    {"path": "$.action", "equals": "update"},
+                    {"path": "$.identifier", "contains": "eval_maxconc_"},
+                ],
+            },
+            {
+                "event": "entity_mutation",
+                "occurrence": "third",
+                "match": [
+                    {"path": "$.action", "equals": "update"},
+                    {"path": "$.identifier", "contains": "eval_maxconc_"},
+                ],
+            },
+        ],
+    )
+    eval_case = EvalCase(
+        input="max concurrency",
+        output="done",
+        metadata={
+            "sse_events": {
+                "entity_mutation": [
+                    {"action": "create", "resource_type": "pipeline", "identifier": "eval_maxconc_1"},
+                    {"action": "update", "resource_type": "pipeline", "identifier": "eval_maxconc_1"},
+                    {"action": "update", "resource_type": "pipeline", "identifier": "eval_maxconc_1"},
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_entity_mutation_third_fails_when_only_two() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "entity_mutation",
+                "occurrence": "third",
+                "match": [{"path": "$.action", "equals": "update"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="max concurrency",
+        output="done",
+        metadata={
+            "sse_events": {
+                "entity_mutation": [
+                    {"action": "create", "resource_type": "pipeline"},
+                    {"action": "update", "resource_type": "pipeline"},
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert not score.passed
+    assert score.value == 0.0

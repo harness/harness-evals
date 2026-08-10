@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```\s*$", re.DOTALL | re.IGNORECASE)
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL | re.IGNORECASE)
 
 
 def parse_json_value(output: str | dict | list | None) -> Any | None:
@@ -22,7 +22,7 @@ def parse_json_value(output: str | dict | list | None) -> Any | None:
     if not text:
         return None
 
-    fence = _JSON_FENCE_RE.match(text)
+    fence = _JSON_FENCE_RE.search(text)
     if fence:
         text = fence.group(1).strip()
 

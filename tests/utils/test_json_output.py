@@ -18,3 +18,7 @@ class TestParseJsonValue:
 
     def test_passthrough_dict(self):
         assert parse_json_value({"x": 1}) == {"x": 1}
+
+    def test_prose_before_fenced_object(self):
+        text = "Here is the JSON:\n```json\n{\"a\": 1}\n```"
+        assert parse_json_value(text) == {"a": 1}

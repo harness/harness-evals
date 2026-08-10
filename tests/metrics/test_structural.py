@@ -72,3 +72,12 @@ class TestSchemaValidation:
         ec = EvalCase(input="q", output='```json\n[{"title": "a"}]\n```')
         score = SchemaValidationMetric(schema=schema).measure(ec)
         assert score.passed
+
+    def test_markdown_fenced_json_with_leading_prose(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        ec = EvalCase(
+            input="q",
+            output='Sure — here you go:\n```json\n{"name": "test"}\n```',
+        )
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert score.passed

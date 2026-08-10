@@ -424,6 +424,31 @@ async def test_adapter_accepts_yaml_without_elicitation_hints():
 
 
 @pytest.mark.unit
+async def test_adapter_approves_elicitation_confirm_for_cost_category():
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_confirm",
+            "payload": {
+                "review_id": "rev-ccm",
+                "entity_info": {"entity_type": "cost_category", "name": "eval_cost_category_test"},
+                "tool_input": {"resource_type": "cost_category", "body": {"name": "eval_cost_category_test"}},
+            },
+        }
+    )
+    golden = ConversationGolden(
+        scenario="Create a CCM cost category",
+        expected_outcome="Cost category created",
+        elicitation_hints={"confirm": {"default_action": "approve"}},
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["capability_id"] == "rev-ccm"
+    assert result["result"]["action_id"] == "approve"
+    assert result["result"]["entity_info"]["entity_type"] == "cost_category"
+
+
+@pytest.mark.unit
 async def test_adapter_uses_llm_for_select_without_elicitation_hints():
     class ScriptedLLM(BaseLLM):
         async def generate(self, prompt: str, **kwargs) -> str:

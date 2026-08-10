@@ -81,3 +81,31 @@ class TestSchemaValidation:
         )
         score = SchemaValidationMetric(schema=schema).measure(ec)
         assert score.passed
+
+    def test_markdown_fenced_json_fails_schema_not_parse(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        ec = EvalCase(
+            input="q",
+            output='```json\n{"count": 42}\n```',
+        )
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert not score.passed
+        assert score.value == 0.0
+        assert "Validation failed" in score.reason
+        assert "could not be parsed" not in score.reason.lower()
+
+    def test_unparseable_string_includes_detail(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        ec = EvalCase(input="q", output="not json at all")
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert not score.passed
+        assert "Output could not be parsed as valid JSON" in score.reason
+        assert "no JSON object or array found" in score.reason
+
+    def test_invalid_fenced_json_includes_decode_detail(self):
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        ec = EvalCase(input="q", output="```json\n{not valid json}\n```")
+        score = SchemaValidationMetric(schema=schema).measure(ec)
+        assert not score.passed
+        assert "Output could not be parsed as valid JSON" in score.reason
+        assert "Expecting" in score.reason or "could not decode" in score.reason

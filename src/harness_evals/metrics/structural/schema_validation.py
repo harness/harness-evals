@@ -7,7 +7,7 @@ import jsonschema
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
-from harness_evals.utils.json_output import parse_json_value
+from harness_evals.utils.json_output import json_parse_failure_reason, parse_json_value
 
 
 class SchemaValidationMetric(BaseMetric):
@@ -28,11 +28,12 @@ class SchemaValidationMetric(BaseMetric):
         if isinstance(eval_case.output, str):
             data = parse_json_value(eval_case.output)
             if data is None:
+                detail = json_parse_failure_reason(eval_case.output)
                 return Score(
                     name=self.name,
                     value=0.0,
                     threshold=self.threshold,
-                    reason="Output could not be parsed as valid JSON",
+                    reason=f"Output could not be parsed as valid JSON ({detail})",
                 )
         else:
             data = eval_case.output

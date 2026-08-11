@@ -12,6 +12,7 @@ import asyncio
 import functools
 import importlib
 import importlib.util
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -140,6 +141,46 @@ def _embedding_registry() -> dict[str, type[BaseMetric]]:
     return _catalog_registry()[2]
 
 
+def _validate_constructor_options(
+    metric_class: type[BaseMetric],
+    options: dict[str, Any],
+    reserved: set[str] | None = None,
+) -> None:
+    """Reject misspelled metric options before constructors can swallow them."""
+    accepted: set[str] = set()
+    for klass in metric_class.__mro__:
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        for name, parameter in inspect.signature(init).parameters.items():
+            if name != "self" and parameter.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                accepted.add(name)
+
+    declared_by_metric: set[str] = set()
+    for klass in metric_class.__mro__:
+        if klass.__module__ == "harness_evals.core.metric":
+            continue
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        declared_by_metric.update(inspect.signature(init).parameters)
+
+    # name/dimension are BaseMetric-only kwargs unless the metric declares them itself
+    factory_supplied = {"llm", "embedding", "threshold"} | ({"name", "dimension"} - declared_by_metric)
+
+    conflicts = sorted(set(options) & (factory_supplied | (reserved or set())))
+    if conflicts:
+        raise TypeError(
+            f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {', '.join(conflicts)}"
+        )
+    unknown = sorted(set(options) - accepted)
+    if unknown:
+        raise TypeError(f"{metric_class.__name__} received unknown option(s): {', '.join(unknown)}")
+
+
 def build_llm_provider(config: dict[str, Any]) -> Any:
     """Instantiate the correct LLM provider from config metadata."""
     metadata = config.get("metadata", {})
@@ -150,7 +191,10 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
     api_key = metadata.get("api_key")
     base_url = metadata.get("base_url")
     temperature = float(metadata["temperature"]) if metadata.get("temperature") is not None else None
-    max_tokens = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else 4096
+    # None means "not set" — each provider's own constructor default wins. Only pass max_tokens
+    # when explicitly configured so e.g. BedrockOpenAILLM's 8192 default applies for gpt-oss judges.
+    max_tokens: int | None = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else None
+    token_kwargs: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
 
     # Harness-managed connectors route through the OpenAI-compatible LLM
     # gateway (see harness_evals.llm.harness_ai). Only fires when base_url is
@@ -178,7 +222,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             api_key=api_key,
             aws_region=metadata.get("region"),
             temperature=temperature,
-            max_tokens=max_tokens,
+            **token_kwargs,
         )
 
     if provider == "anthropic":
@@ -188,7 +232,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             model=model,
             api_key=api_key,
             temperature=temperature,
-            max_tokens=max_tokens,
+            **token_kwargs,
         )
 
     if provider == "openai" and metadata.get("bedrock"):
@@ -199,7 +243,7 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             api_key=api_key,
             aws_region=metadata.get("region"),
             temperature=temperature,
-            max_tokens=max_tokens,
+            **token_kwargs,
         )
 
     if OpenAILLM is None:
@@ -208,11 +252,86 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
         "model": model,
         "api_key": api_key,
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        **token_kwargs,
     }
     if base_url:
         kwargs["base_url"] = base_url
     return OpenAILLM(**kwargs)
+
+
+def build_embedding_provider(metadata: dict[str, Any]) -> OpenAIEmbedding:
+    """Instantiate an OpenAIEmbedding routed to the right backend.
+
+    Routing precedence (mirrors build_llm_provider):
+    1. ``embedding_api_key`` in metadata — explicit per-metric override, wins always.
+       Optionally paired with ``embedding_base_url`` and ``embedding_model``.
+    2. ``use_llm_gateway`` — Harness-managed connector; route through the LLM gateway
+       (OpenAI-compatible) using HARNESS_TOKEN + HARNESS_BASE_URL.
+    3. ``provider == "openai"`` + ``bedrock`` — same bearer key, Bedrock OpenAI-compat endpoint.
+    4. ``provider == "openai"`` direct — use the judge key as-is, no base_url.
+    5. ``provider == "anthropic"`` (direct or bedrock) — Anthropic has no embeddings API.
+       Raises a clear error directing the user to set ``embedding_api_key`` on the metric config.
+    """
+    embedding_api_key = metadata.get("embedding_api_key")
+    embedding_model = metadata.get("embedding_model") or "text-embedding-3-small"
+
+    # 1. Explicit per-metric embedding credential — always wins.
+    # Targets platform.openai.com directly; no base_url needed.
+    if embedding_api_key:
+        return OpenAIEmbedding(api_key=embedding_api_key, model=embedding_model)
+
+    provider = metadata.get("provider", "openai")
+
+    # 2. Harness-managed (gateway) — resolve base_url from env, use HARNESS_TOKEN.
+    if metadata.get("use_llm_gateway"):
+        gateway_path = metadata.get("llm_gateway_path", "/llm-gw/v1")
+        harness_base = os.environ.get("HARNESS_BASE_URL", "").rstrip("/")
+        for suffix in ("/ng", "/gateway"):
+            if harness_base.endswith(suffix):
+                harness_base = harness_base[: -len(suffix)]
+                break
+        base_url = f"{harness_base}{gateway_path}" if harness_base else None
+        api_key = os.environ.get("HARNESS_TOKEN", "")
+        if not base_url or not api_key:
+            raise ValueError(
+                "Harness-managed connector requires HARNESS_BASE_URL and HARNESS_TOKEN env vars "
+                "to route embeddings through the gateway"
+            )
+        return OpenAIEmbedding(api_key=api_key, base_url=base_url, model=embedding_model)
+
+    # 3. OpenAI via Bedrock — same bearer, Bedrock OpenAI-compat endpoint.
+    if provider == "openai" and metadata.get("bedrock"):
+        region = metadata.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
+        base_url = f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
+        api_key = metadata.get("api_key")
+        if not api_key:
+            raise ValueError(
+                "Bedrock OpenAI embedding requires an API key (the Bedrock bearer token). "
+                "Ensure the judge connector key is decrypted and available in metric metadata."
+            )
+        return OpenAIEmbedding(api_key=api_key, base_url=base_url, model=embedding_model)
+
+    # 4. Direct OpenAI — use the judge key.
+    if provider == "openai":
+        api_key = metadata.get("api_key")
+        kwargs = {"model": embedding_model}
+        if api_key:
+            kwargs["api_key"] = api_key
+        try:
+            return OpenAIEmbedding(**kwargs)
+        except ValueError as err:
+            raise ValueError(
+                "Embedding-based metric requires an OpenAI API key. "
+                "Set it via 'embedding_api_key' in the metric config, or set OPENAI_API_KEY."
+            ) from err
+
+    # 5. Anthropic (direct or Bedrock) — no embeddings API exists.
+    raise ValueError(
+        f"The judge connector uses provider '{provider}', which has no embeddings API. "
+        "Embedding-based metrics (answer_correctness, answer_similarity, embedding_similarity) "
+        "require an OpenAI-compatible embedding backend. "
+        "Set 'embedding_api_key' in the metric config with a valid OpenAI key."
+    )
 
 
 def _build_llm_metric(
@@ -227,15 +346,25 @@ def _build_llm_metric(
     kind = config.get("kind")
     registry = _llm_metric_registry()
     metric_class = registry.get(kind) if kind else None
-    options = config.get("options", {})
+    options = config.get("options") or {}
 
     if metric_class is not None:
         if metric_class is AnswerCorrectnessMetric:
+            embedding = build_embedding_provider(config.get("metadata", {}))
+            _validate_constructor_options(metric_class, options)
             try:
-                embedding = OpenAIEmbedding()
-            except ImportError as err:
-                raise ValueError("AnswerCorrectnessMetric requires: pip install 'harness-evals[llm]'") from err
-            metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
+                metric = metric_class(llm=llm, embedding=embedding, threshold=threshold, **options)
+            except TypeError as e:
+                if "got multiple values for keyword argument" in str(e):
+                    import re
+
+                    match = re.search(r"keyword argument '(\w+)'", str(e))
+                    key = match.group(1) if match else "unknown"
+                    raise TypeError(
+                        f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {key}"
+                    ) from None
+                raise
+
         else:
             kind_kwargs: dict[str, Any] = {}
             if "criteria" in config:
@@ -246,10 +375,20 @@ def _build_llm_metric(
                 kind_kwargs["prompt_instructions"] = config["prompt_instructions"]
             if "allowed_topics" in config:
                 kind_kwargs["allowed_topics"] = config["allowed_topics"]
+            _validate_constructor_options(metric_class, options, set(kind_kwargs))
             try:
                 metric = metric_class(llm=llm, threshold=threshold, **kind_kwargs, **options)
-            except TypeError:
-                metric = metric_class(llm=llm, threshold=threshold)
+            except TypeError as e:
+                if "got multiple values for keyword argument" in str(e):
+                    import re
+
+                    match = re.search(r"keyword argument '(\w+)'", str(e))
+                    key = match.group(1) if match else "unknown"
+                    raise TypeError(
+                        f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {key}"
+                    ) from None
+                raise
+
     else:
         rubric = config.get("rubric")
         if isinstance(rubric, dict):
@@ -277,22 +416,12 @@ def _build_embedding_metric(
         raise ValueError(f"Unknown embedding kind: {kind!r}. Available: {sorted(registry.keys())}")
 
     metadata = config.get("metadata", {})
-    api_key = metadata.get("api_key")
-    embedding_model = metadata.get("embedding_model")
-
-    embed_kwargs: dict[str, Any] = {}
-    if api_key:
-        embed_kwargs["api_key"] = api_key
-    if embedding_model:
-        embed_kwargs["model"] = embedding_model
-    embedding = OpenAIEmbedding(**embed_kwargs)
+    embedding = build_embedding_provider(metadata)
 
     metric_class = registry[kind]
-    options = config.get("options", {})
-    try:
-        metric = metric_class(embedding=embedding, threshold=threshold, **options)
-    except TypeError:
-        metric = metric_class(embedding=embedding, threshold=threshold)
+    options = config.get("options") or {}
+    _validate_constructor_options(metric_class, options)
+    metric = metric_class(embedding=embedding, threshold=threshold, **options)
 
     metric.name = score_name or kind
     return metric
@@ -330,12 +459,10 @@ def _build_heuristic_metric(
     if kind not in registry:
         raise ValueError(f"Unknown heuristic kind: {kind!r}. Available: {sorted(registry.keys())}")
     metric_class = registry[kind]
-    options = config.get("options", {})
+    options = config.get("options") or {}
 
-    try:
-        metric = metric_class(threshold=threshold, **options)
-    except TypeError:
-        metric = metric_class(threshold=threshold)
+    _validate_constructor_options(metric_class, options)
+    metric = metric_class(threshold=threshold, **options)
 
     metric.name = score_name or kind
     return metric
@@ -397,11 +524,9 @@ def _build_code_metric(
     if not issubclass(metric_class, BaseMetric):
         raise ValueError(f"{metric_class.__name__} must extend BaseMetric, got {metric_class}")
 
-    extra_config = config.get("config", {})
-    try:
-        metric = metric_class(threshold=threshold, **extra_config)
-    except TypeError:
-        metric = metric_class(threshold=threshold)
+    extra_config = config.get("config") or {}
+    _validate_constructor_options(metric_class, extra_config)
+    metric = metric_class(threshold=threshold, **extra_config)
 
     metric.name = score_name or path
     return metric
@@ -427,10 +552,11 @@ def _build_composite_metric(
         ref = ref_config.get("ref")
         if not ref:
             raise ValueError("Composite sub-metric must have 'ref' field")
-        weight = ref_config.get("weight", 1.0)
+        raw_weight = ref_config.get("weight", 1.0)
+        weight = float(raw_weight) if raw_weight is not None else 1.0
 
         sub_type = ref_config.get("type")
-        sub_config = ref_config.get("config", {})
+        sub_config = ref_config.get("config") or {}
         if sub_type:
             sub_metric = build_metric(
                 sub_type, sub_config, score_name=ref, suite_path=suite_path, allow_code_loading=allow_code_loading
@@ -441,6 +567,9 @@ def _build_composite_metric(
         sub_metrics.append(sub_metric)
         weights.append(weight)
 
+    if aggregation == "weighted_average" and sum(weights) == 0:
+        raise ValueError("Composite metric weighted_average has zero total weight")
+
     final_name = score_name or "composite"
 
     class CompositeMetric(BaseMetric):
@@ -450,13 +579,20 @@ def _build_composite_metric(
             self.weights = weights
             self.aggregation = aggregation
 
-        def _build_score(self, sub_scores: list[float], sub_details: list[dict[str, Any]]) -> Score | None:
+        def _build_score(
+            self,
+            sub_scores: list[float],
+            sub_weights: list[float],
+            sub_details: list[dict[str, Any]],
+        ) -> Score | None:
             if not sub_scores:
                 return None
 
             if self.aggregation == "weighted_average":
-                total_w = sum(self.weights[: len(sub_scores)])
-                final = sum(s * w for s, w in zip(sub_scores, self.weights, strict=False)) / total_w
+                total_w = sum(sub_weights)
+                if total_w == 0:
+                    return None
+                final = sum(s * w for s, w in zip(sub_scores, sub_weights, strict=True)) / total_w
             elif self.aggregation == "min":
                 final = min(sub_scores)
             elif self.aggregation == "max":
@@ -475,17 +611,19 @@ def _build_composite_metric(
 
         async def a_measure(self, eval_case: EvalCase) -> Score | None:
             sub_scores: list[float] = []
+            sub_weights: list[float] = []
             sub_details: list[dict[str, Any]] = []
-            for m in self.sub_metrics:
+            for m, weight in zip(self.sub_metrics, self.weights, strict=True):
                 s = await m.a_measure(eval_case)
                 if asyncio.iscoroutine(s):
                     s = await s
                 if s is None:
                     continue
                 sub_scores.append(s.value)
+                sub_weights.append(weight)
                 sub_details.append({"name": m.name, "value": s.value})
 
-            return self._build_score(sub_scores, sub_details)
+            return self._build_score(sub_scores, sub_weights, sub_details)
 
         def measure(self, eval_case: EvalCase) -> Score | None:
             try:
@@ -499,8 +637,9 @@ def _build_composite_metric(
                     self.name,
                 )
                 sub_scores: list[float] = []
+                sub_weights: list[float] = []
                 sub_details: list[dict[str, Any]] = []
-                for m in self.sub_metrics:
+                for m, weight in zip(self.sub_metrics, self.weights, strict=True):
                     s = m.measure(eval_case)
                     if asyncio.iscoroutine(s):
                         s.close()
@@ -508,8 +647,9 @@ def _build_composite_metric(
                     if s is None:
                         continue
                     sub_scores.append(s.value)
+                    sub_weights.append(weight)
                     sub_details.append({"name": m.name, "value": s.value})
-                return self._build_score(sub_scores, sub_details)
+                return self._build_score(sub_scores, sub_weights, sub_details)
             return asyncio.run(self.a_measure(eval_case))
 
     return CompositeMetric()

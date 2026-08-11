@@ -38,6 +38,7 @@ class LLMConversationMetric(BaseMetric):
     _prompt_template: str = ""
     _per_turn: bool = False
     _per_turn_prompt_template: str = ""
+    _use_expected_outcome: bool = False
 
     def __init__(
         self,
@@ -69,7 +70,17 @@ class LLMConversationMetric(BaseMetric):
             return await self._measure_per_turn(messages)
 
         conversation_text = "\n".join(f"[{msg.role}]: {msg.content or ''}" for msg in messages)
-        prompt = self._prompt_template.format(conversation_text=conversation_text)
+        expected_outcome_section = ""
+        expected_outcome = eval_case.meta("expected_outcome") if self._use_expected_outcome else None
+        if expected_outcome:
+            expected_outcome_section = (
+                f"**Expected outcome:**\n{expected_outcome}\n\n"
+                "Judge the conversation against this expected outcome when scoring.\n\n"
+            )
+        prompt = self._prompt_template.format(
+            conversation_text=conversation_text,
+            expected_outcome_section=expected_outcome_section,
+        )
 
         result = await self.llm.generate_json(prompt, _RESPONSE_SCHEMA)
         value = max(0.0, min(1.0, float(result.get("score", 0.0))))

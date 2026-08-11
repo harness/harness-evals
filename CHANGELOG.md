@@ -5,6 +5,78 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.6]
+
+### Fixed
+
+- Route `OpenAIEmbedding` through the correct backend for each judge connector type
+  (`answer_correctness`, `answer_similarity`, `embedding_similarity`): OpenAI direct reuses
+  the judge key; OpenAI-Bedrock uses the Bedrock `/openai/v1` endpoint with the bearer;
+  Harness-managed connectors route through the LLM gateway; Anthropic judges (no embeddings
+  API) require `embedding_api_key` set on the metric config and raise a clear error otherwise.
+- Add `base_url` param to `OpenAIEmbedding` so it can target any OpenAI-compatible endpoint.
+- Add `build_embedding_provider(metadata)` to `metrics/factory.py` — single routing path
+  for all embedding construction, replacing bare `OpenAIEmbedding()` calls.
+
+## [0.17.5]
+
+### Fixed
+
+- Fix `ruff format` failure on `src/harness_evals/metrics/factory.py` that was blocking the publish CI.
+
+## [0.17.4]
+
+### Changed
+
+- Re-release of 0.17.2 to retrigger publish pipeline after lint fixes.
+
+## [0.17.2]
+
+### Fixed
+
+- **`BedrockOpenAILLM` default `max_tokens` raised from 4096 to 8192**: gpt-oss models on
+  Bedrock externalize reasoning in `<reasoning>...</reasoning>` tags inside the visible
+  response. At 4096 the reasoning block completes but the JSON is cut off, producing a
+  cryptic "No JSON object found in Bedrock OpenAI response" error on all scored items.
+  8192 gives the model sufficient budget for both reasoning and JSON output.
+- **Clear budget-exhaustion error in `BedrockOpenAILLM.generate_json`**: when
+  `finish_reason=length` causes `_extract_json_object` to fail, the error message now
+  explicitly names the cause and the remedy (`increase max_tokens (current: N)`) instead
+  of surfacing the raw "No JSON object found" `JSONDecodeError`.
+
+## [0.17.1]
+
+### Fixed
+
+- **Trace text extraction**: supports typed text parts using the OTel `content` key,
+  including user input and assistant output.
+- **Metric factory compatibility**:
+  - Fix false-positive parameter conflicts (e.g., `dimension` on `GEvalMetric`) by gating reserved keyword checks against declared constructor parameters.
+  - Safely handle bare/null YAML keys (`options: None` or `config: None`) without raising `TypeError`.
+  - Preserve opt-in LLM temperature handling and retain underlying import errors.
+- **Composite metrics**:
+  - Raise `ValueError` at construction time for zero-weight `weighted_average` configurations rather than swallowing the error during evaluation.
+  - Preserve each submetric's configured weight when another submetric is skipped, avoiding score drift from misaligned weights.
+- **Breaking changes**:
+  - Unknown metric option keys now raise `TypeError` during construction instead of being silently dropped.
+  - Composite metrics using `weighted_average` aggregation now raise `ValueError` at construction time if total weight is zero.
+  - Composite `weighted_average` metrics now skip sub-metrics that return `None` and re-normalize weights accordingly, which may change scores for existing baselines that relied on the previous (buggy) behavior.
+
+## [0.17.0]
+
+### Added
+
+- **Hallucination message references**: `HallucinationMetric` now supports
+  `include_messages_as_reference=True` to use non-assistant conversation
+  messages as reference material alongside `context` and `expected`.
+
+### Fixed
+
+- **Conversation expected outcomes in judge prompts**: goal accuracy, resolution,
+  and completeness judge prompts now include `metadata["expected_outcome"]` when
+  present, so they evaluate against authored conversation outcomes instead of
+  transcript-only inference.
+
 ## [0.16.3]
 
 ### Fixed

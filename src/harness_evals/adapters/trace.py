@@ -120,10 +120,16 @@ def _extract_text_from_parts(parts: list[dict[str, Any]]) -> str | None:
     texts = []
     for part in parts:
         ptype = part.get("type", "")
-        if ptype == "text" or (not ptype and "text" in part):
-            texts.append(part.get("text", ""))
-        elif ptype == "" and "content" in part:
-            texts.append(part.get("content", ""))
+        if ptype == "text":
+            value = part.get("text")
+            if value is None:
+                value = part.get("content")
+            if isinstance(value, str):
+                texts.append(value)
+        elif not ptype and isinstance(part.get("text"), str):
+            texts.append(part["text"])
+        elif ptype == "" and isinstance(part.get("content"), str):
+            texts.append(part["content"])
     return "\n".join(texts) if texts else None
 
 

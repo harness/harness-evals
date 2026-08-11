@@ -4,6 +4,7 @@ import pytest
 
 from harness_evals import EvalCase, evaluate
 from harness_evals.core.metric import BaseMetric, SafetyMetric
+from harness_evals.core.types import Message
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
@@ -385,7 +386,7 @@ class TestHallucinationMetric:
         ec = EvalCase(input="q", output="some answer")
         score = await metric.a_measure(ec)
         assert score.value == 0.0
-        assert "No context or expected" in score.reason
+        assert "without reference material" in score.reason
 
     async def test_uses_expected_as_reference(self):
         llm = MockLLM(
@@ -419,6 +420,49 @@ class TestHallucinationMetric:
         )
         score = await metric.a_measure(ec)
         assert score.passed
+
+    async def test_messages_are_not_reference_by_default(self):
+        llm = MockLLM()
+        metric = HallucinationMetric(llm=llm)
+        ec = EvalCase(
+            input="q",
+            output="The project has two pipelines.",
+            messages=[Message(role="tool", content="Project pipeline count: 2")],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.value == 0.0
+        assert llm.prompts == []
+
+    async def test_includes_non_assistant_messages_as_reference_when_enabled(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Supported by the conversation",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(llm=llm, include_messages_as_reference=True)
+        ec = EvalCase(
+            input="q",
+            output="The deployment finished successfully.",
+            messages=[
+                Message(role="user", content="Check deployment status."),
+                Message(role="assistant", content="I will inspect the deployment."),
+                Message(role="tool", content="Deployment status: success"),
+                Message(role="assistant", content=None),
+            ],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        prompt = llm.prompts[0]
+        assert "user: Check deployment status." in prompt
+        assert "tool: Deployment status: success" in prompt
+        assert "assistant: I will inspect the deployment." not in prompt
 
     def test_sync_measure(self):
         llm = MockLLM(

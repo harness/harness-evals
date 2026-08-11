@@ -67,7 +67,7 @@ def _redact(value: str, pii_type: str) -> str:
 def _sanitize_pii_text(text: str, exclude_patterns: list[str] | None = None) -> str:
     """Remove tool IDs and other known false-positive tokens before regex scan."""
     sanitized = text
-    patterns = [* _DEFAULT_EXCLUDE_PATTERNS, *(exclude_patterns or [])]
+    patterns = [*_DEFAULT_EXCLUDE_PATTERNS, *(exclude_patterns or [])]
     for pattern in patterns:
         sanitized = re.sub(pattern, "", sanitized)
     return sanitized

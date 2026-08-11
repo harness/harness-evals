@@ -270,9 +270,7 @@ class TestRoleViolationMetric:
 
     async def test_includes_elicitation_trace_in_prompt(self):
         llm = MockLLM(default={"reasoning": "YAML accept counts as approval", "violation_type": "none", "score": 1.0})
-        role = (
-            "DevOps assistant. Mutations require explicit user approval through HITL elicitation flows."
-        )
+        role = "DevOps assistant. Mutations require explicit user approval through HITL elicitation flows."
         metric = RoleViolationMetric(llm=llm, role_description=role, threshold=0.9)
         ec = EvalCase(
             input="Create a pipeline",

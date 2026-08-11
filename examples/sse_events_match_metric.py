@@ -38,6 +38,7 @@ import logging
 from typing import Any
 
 from examples.skill_sse_checks import skill_names_equivalent
+
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
@@ -196,10 +197,7 @@ def _check_forbidden_contains(
         return {
             "passed": False,
             "label": label,
-            "detail": (
-                f"forbidden substring {forbidden!r} found in "
-                f"{compact_json(violations[:3])}"
-            ),
+            "detail": (f"forbidden substring {forbidden!r} found in {compact_json(violations[:3])}"),
         }
     return {
         "passed": True,

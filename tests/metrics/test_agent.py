@@ -385,6 +385,17 @@ class TestToolArgumentMatch:
         assert score.value == 1.0
         assert score.passed
         assert "skip_when_missing" in score.reason
+        assert score.metadata["skipped"] is True
+
+    def test_skip_when_missing_actual_tool_calls(self):
+        ec = EvalCase(
+            input="task",
+            output="result",
+            expected_tool_calls=[ToolCall(name="harness_list")],
+        )
+        score = ToolArgumentMatchMetric(skip_when_missing=True).measure(ec)
+        assert score.passed
+        assert score.metadata["skipped"] is True
 
     def test_missing_tool_calls(self):
         ec = EvalCase(
@@ -489,12 +500,6 @@ class TestToolArgumentMatch:
     def test_invalid_arg_match_raises(self):
         with pytest.raises(ValueError, match="arg_match must be"):
             ToolArgumentMatchMetric(arg_match="invalid")
-
-    def test_skip_when_missing_expected_tool_calls(self):
-        ec = EvalCase(input="task", output="result", tool_calls=[ToolCall(name="harness_list")])
-        score = ToolArgumentMatchMetric(skip_when_missing=True).measure(ec)
-        assert score.passed
-        assert score.metadata.get("skipped") is True
 
     def test_from_dict_round_trip_rehydrates_expected_tool_calls(self):
         ec = EvalCase.from_dict(

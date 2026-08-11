@@ -64,9 +64,7 @@ def test_sse_events_match_skill_equals_normalizes_underscores() -> None:
         output="done",
         metadata={
             "sse_events": {
-                "assistant_tool_request": [
-                    {"v": [{"name": "Skill", "arguments": {"skill": "hql_reference"}}]}
-                ],
+                "assistant_tool_request": [{"v": [{"name": "Skill", "arguments": {"skill": "hql_reference"}}]}],
             }
         },
     )
@@ -102,9 +100,7 @@ def test_sse_events_match_match_any_accepts_any_listed_skill() -> None:
         output="done",
         metadata={
             "sse_events": {
-                "assistant_tool_request": [
-                    {"v": [{"name": "Skill", "arguments": {"skill": "kg-analysis"}}]}
-                ],
+                "assistant_tool_request": [{"v": [{"name": "Skill", "arguments": {"skill": "kg-analysis"}}]}],
             }
         },
     )

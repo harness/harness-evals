@@ -193,5 +193,12 @@ def test_build_eval_case_propagates_tool_calls() -> None:
     assert eval_case.expected_tool_calls[0].name == "mcp__harness__harness_list"
     assert eval_case.tool_calls is not None
     assert len(eval_case.tool_calls) == 1
-    assert eval_case.tool_calls[0].name == "mcp__harness__harness_list"
+    # Captured names are normalized; goldens may use either form because
+    # tool-name comparison tolerates the MCP prefix.
+    assert eval_case.tool_calls[0].name == "harness_list"
     assert eval_case.tool_calls[0].input == {"resource_type": "pipeline"}
+
+    from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
+
+    score = ToolArgumentMatchMetric(pair="subsequence").measure(eval_case)
+    assert score.value == 1.0

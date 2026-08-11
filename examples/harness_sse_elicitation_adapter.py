@@ -171,11 +171,7 @@ class HarnessSseElicitationAdapter(ElicitationAdapter):
             )
             return self._with_capability_id(await self._llm_system_event(pending, golden, history), pending)
 
-        if (
-            _llm_on_miss(golden)
-            and self.llm is not None
-            and self._deterministic_would_miss(pending, golden)
-        ):
+        if _llm_on_miss(golden) and self.llm is not None and self._deterministic_would_miss(pending, golden):
             record_intent_miss(
                 self.intent_misses,
                 IntentMatchMiss(

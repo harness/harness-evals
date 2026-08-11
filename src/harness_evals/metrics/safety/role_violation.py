@@ -72,15 +72,11 @@ def _format_elicitation_context(eval_case: EvalCase) -> str:
         if kind == "structured_elicitation_reply":
             pending_type = str(entry.get("pending_type") or "?")
             reply = str(entry.get("simulated_user_content") or "")
-            lines.append(
-                f"- Round {entry.get('round')}: {pending_type} → {reply}"
-            )
+            lines.append(f"- Round {entry.get('round')}: {pending_type} → {reply}")
             if pending_type == "elicitation_yaml" and "accept" in reply.lower():
                 yaml_accepts += 1
         elif kind == "plain_text_user_reply":
-            lines.append(
-                f"- Round {entry.get('round')}: plain_text ({entry.get('intent')}) → {entry.get('content')}"
-            )
+            lines.append(f"- Round {entry.get('round')}: plain_text ({entry.get('intent')}) → {entry.get('content')}")
         else:
             reason = entry.get("reason") or entry.get("assistant_preview") or ""
             lines.append(f"- {kind}: {reason}")
@@ -121,9 +117,7 @@ class RoleViolationMetric(SafetyMetric):
 
     async def a_measure(self, eval_case: EvalCase) -> Score:
         elicitation_context = (
-            _format_elicitation_context(eval_case)
-            if self.include_elicitation_trace
-            else "(elicitation trace omitted)"
+            _format_elicitation_context(eval_case) if self.include_elicitation_trace else "(elicitation trace omitted)"
         )
         prompt = _PROMPT_TEMPLATE.format(
             role_description=self.role_description,

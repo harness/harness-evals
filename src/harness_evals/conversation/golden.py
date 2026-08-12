@@ -112,9 +112,5 @@ class ConversationGolden:
             ]
         if "mode" in mapped and isinstance(mapped["mode"], str):
             mapped["mode"] = ConversationMode(mapped["mode"])
-        if "expected_tool_calls" in mapped and mapped["expected_tool_calls"] is not None:
-            mapped["expected_tool_calls"] = [
-                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc) for tc in mapped["expected_tool_calls"]
-            ]
         known = {f.name for f in cls.__dataclass_fields__.values()}
         return cls(**{k: v for k, v in mapped.items() if k in known})

@@ -193,12 +193,59 @@ def test_build_eval_case_propagates_tool_calls() -> None:
     assert eval_case.expected_tool_calls[0].name == "mcp__harness__harness_list"
     assert eval_case.tool_calls is not None
     assert len(eval_case.tool_calls) == 1
-    # Captured names are normalized; goldens may use either form because
-    # tool-name comparison tolerates the MCP prefix.
-    assert eval_case.tool_calls[0].name == "harness_list"
+    assert eval_case.tool_calls[0].name == "mcp__harness__harness_list"
     assert eval_case.tool_calls[0].input == {"resource_type": "pipeline"}
 
     from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
 
     score = ToolArgumentMatchMetric(pair="subsequence").measure(eval_case)
     assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_build_eval_case_tool_calls_none_when_no_sse() -> None:
+    from harness_evals.conversation.simulator import ConversationSimulator
+    from harness_evals.core.types import ToolCall
+
+    golden = ConversationGolden(
+        scenario="No tools",
+        expected_outcome="Answer",
+        expected_tool_calls=[ToolCall(name="mcp__harness__harness_list")],
+    )
+    history = [Message(role="assistant", content="Hello.")]
+
+    eval_case = ConversationSimulator(simulator_llm=None)._build_eval_case(golden, history)
+    assert eval_case.tool_calls is None
+
+    from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
+
+    score = ToolArgumentMatchMetric(skip_when_missing=True).measure(eval_case)
+    assert score.passed
+    assert "skip_when_missing" in (score.reason or "")
+
+
+@pytest.mark.unit
+def test_build_eval_case_tool_calls_empty_when_sse_without_requests() -> None:
+    from harness_evals.conversation.simulator import ConversationSimulator
+    from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
+    from harness_evals.core.types import ToolCall
+
+    golden = ConversationGolden(
+        scenario="No tools",
+        expected_outcome="Answer",
+        expected_tool_calls=[ToolCall(name="mcp__harness__harness_list")],
+    )
+    history = [
+        Message(
+            role="assistant",
+            content="Hello.",
+            metadata={"sse_events": {"assistant_message": [{"v": "Hello."}]}},
+        )
+    ]
+
+    eval_case = ConversationSimulator(simulator_llm=None)._build_eval_case(golden, history)
+    assert eval_case.tool_calls == []
+
+    score = ToolArgumentMatchMetric(skip_when_missing=True).measure(eval_case)
+    assert not score.passed
+    assert score.value == 0.0

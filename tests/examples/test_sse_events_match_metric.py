@@ -269,3 +269,47 @@ def test_sse_events_match_entity_mutation_third_fails_when_only_two() -> None:
     score = metric.measure(eval_case)
     assert not score.passed
     assert score.value == 0.0
+    failed = score.metadata["checks"][0]
+    assert "occurrence='third'" in failed["detail"]
+
+
+@pytest.mark.unit
+def test_sse_events_match_forbidden_contains_passes_when_event_absent() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "event": "assistant_tool_result",
+                "path": "$.v[*]",
+                "forbidden_contains": "MCP error",
+            }
+        ],
+    )
+    eval_case = EvalCase(input="read only", output="done", metadata={"sse_events": {}})
+
+    score = metric.measure(eval_case)
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_ordinal_presence_only_fails_when_missing() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[{"event": "entity_mutation", "occurrence": "third"}],
+    )
+    eval_case = EvalCase(
+        input="mutations",
+        output="done",
+        metadata={
+            "sse_events": {
+                "entity_mutation": [
+                    {"action": "create"},
+                    {"action": "update"},
+                ]
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert not score.passed
+    failed = score.metadata["checks"][0]
+    assert "occurrence='third'" in failed["detail"]

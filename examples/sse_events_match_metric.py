@@ -118,15 +118,28 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
         present = len(payloads) > 0
         return {"passed": present == want, "label": label, "detail": f"present={present} want={want}"}
 
+    forbidden = check.get("forbidden_contains")
+    if forbidden is not None:
+        if not payloads:
+            return {
+                "passed": True,
+                "label": label,
+                "detail": "event not captured; forbidden substring absent",
+            }
+        candidates = _select(payloads, check.get("occurrence", "any"))
+        missing = _missing_occurrence_detail(check, payloads, candidates)
+        if missing:
+            return {"passed": False, "label": label, "detail": missing}
+        return _check_forbidden_contains(label, candidates, check.get("path"), str(forbidden))
+
     if not payloads:
         return {"passed": False, "label": label, "detail": "event not captured"}
 
     candidates = _select(payloads, check.get("occurrence", "any"))
+    missing = _missing_occurrence_detail(check, payloads, candidates)
+    if missing:
+        return {"passed": False, "label": label, "detail": missing}
     path = check.get("path")
-
-    forbidden = check.get("forbidden_contains")
-    if forbidden is not None:
-        return _check_forbidden_contains(label, candidates, path, str(forbidden))
 
     expected_substr = str(eval_case.expected) if check.get("contains_expected") else check.get("contains")
     equals = check.get("equals")
@@ -258,6 +271,13 @@ def _select(payloads: list[Any], occurrence: str) -> list[Any]:
     if occurrence == "last":
         return [payloads[-1]] if payloads else []
     return payloads
+
+
+def _missing_occurrence_detail(check: dict[str, Any], payloads: list[Any], candidates: list[Any]) -> str | None:
+    occurrence = check.get("occurrence", "any")
+    if occurrence in (None, "any") or candidates:
+        return None
+    return f"no payload at occurrence={occurrence!r} (captured {len(payloads)})"
 
 
 def _failure_detail(check: dict[str, Any], actual_values: list[Any], eval_case: EvalCase) -> str:

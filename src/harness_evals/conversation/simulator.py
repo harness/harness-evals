@@ -314,6 +314,8 @@ class ConversationSimulator:
             "n_turns": len(history),
             **(golden.metadata or {}),
         }
+        if golden.id:
+            metadata["golden_id"] = golden.id
         sse_events = _sse_events_from_history(history)
         if sse_events:
             metadata["sse_events"] = sse_events
@@ -335,15 +337,13 @@ class ConversationSimulator:
             metadata["elicitation_intent_misses"] = intent_misses
 
         expanded_messages = _history_with_chronological_tool_events(history)
-        # The expanded trace needs a per-turn ``sse_timeline``; fall back to the
-        # merged event map when only that was captured.
-        tool_calls = _tool_calls_from_messages(expanded_messages) or _tool_calls_from_sse_events(sse_events)
+        tool_calls = _tool_calls_for_eval_case(expanded_messages, sse_events)
 
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
             messages=expanded_messages,
-            tool_calls=tool_calls or None,
+            tool_calls=tool_calls,
             expected_tool_calls=golden.expected_tool_calls,
             metadata=metadata,
             tags=golden.tags,
@@ -670,7 +670,7 @@ def _plain_text_followup(
         if composite is not None:
             return composite
 
-    intent = resolve_intent(content, golden)
+    intent = resolve_intent(content, golden, plain_text=True)
     if intent and intent not in used_intents:
         answer = intents(golden).get(intent, "")
         if answer:
@@ -810,6 +810,29 @@ def _history_without_message_sse_events(history: list[Message]) -> list[Message]
     return cleaned
 
 
+def _assistant_message_from_timeline(message: Message, timeline_entry: dict[str, Any]) -> Message:
+    """Prefer assistant_message SSE text when the history Message has no content yet."""
+    content = (message.content or "").strip()
+    if content:
+        return message
+    payload = timeline_entry.get("payload")
+    if isinstance(payload, dict):
+        text = payload.get("v")
+        if isinstance(text, str) and text.strip():
+            return Message(
+                role=message.role,
+                content=text,
+                tool_calls=message.tool_calls,
+                latency_ms=message.latency_ms,
+                token_count=message.token_count,
+                cost_usd=message.cost_usd,
+                metadata=message.metadata,
+                retrieval_context=message.retrieval_context,
+                expected=message.expected,
+            )
+    return message
+
+
 def _history_with_chronological_tool_events(history: list[Message]) -> list[Message]:
     """Expand captured tool request/result events into the visible message trace.
 
@@ -839,7 +862,7 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
                 continue
             event_name = entry.get("event")
             if index == assistant_insert_index:
-                expanded.append(cleaned)
+                expanded.append(_assistant_message_from_timeline(cleaned, entry))
                 inserted_assistant = True
             if event_name == "assistant_tool_request":
                 tool_calls = _tool_calls_from_sse_payload(entry.get("payload"), result=False)
@@ -867,6 +890,23 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
     return expanded
 
 
+def _tool_calls_for_eval_case(
+    expanded_messages: list[Message],
+    sse_events: dict[str, list],
+) -> list[ToolCall] | None:
+    """Return observed tool calls, distinguishing missing capture from empty trajectory.
+
+    ``None`` — no SSE tool data was captured (``skip_when_missing`` may apply).
+    ``[]`` — SSE was captured and the agent made no Harness MCP tool requests.
+    """
+    from_messages = _tool_calls_from_messages(expanded_messages)
+    if from_messages:
+        return from_messages
+    if not sse_events:
+        return None
+    return _tool_calls_from_sse_events(sse_events)
+
+
 def _tool_calls_from_sse_events(sse_events: dict[str, list]) -> list[ToolCall]:
     """Collect Harness MCP tool requests straight from the captured event map."""
     calls: list[ToolCall] = []
@@ -886,12 +926,11 @@ def _tool_calls_from_messages(messages: list[Message]) -> list[ToolCall]:
         if (msg.metadata or {}).get("sse_event") != "assistant_tool_request":
             continue
         for tool_call in msg.tool_calls:
-            normalized_name = _normalize_tool_name(tool_call.name)
-            if not _is_harness_mcp_tool_name(normalized_name):
+            if not _is_harness_mcp_tool_name(tool_call.name):
                 continue
             calls.append(
                 ToolCall(
-                    name=normalized_name,
+                    name=tool_call.name,
                     input=tool_call.input,
                     output=tool_call.output,
                 )
@@ -899,12 +938,18 @@ def _tool_calls_from_messages(messages: list[Message]) -> list[ToolCall]:
     return calls
 
 
+def _harness_tool_suffix(name: str) -> str:
+    """Return the bare tool segment after MCP namespace prefixes (for classification only)."""
+    return name.rsplit("__", 1)[-1] if "__" in name else name
+
+
 def _is_harness_mcp_tool_name(name: str) -> bool:
     """True for Harness MCP tools; excludes agent utilities like Skill, Grep, Read."""
     if not name or name in _NON_HARNESS_AGENT_TOOLS:
         return False
-    lowered = name.lower()
-    return name.startswith("harness_") or name.startswith("validate_") or "hql" in lowered
+    short = _harness_tool_suffix(name)
+    lowered = short.lower()
+    return short.startswith("harness_") or short.startswith("validate_") or "hql" in lowered
 
 
 _NON_HARNESS_AGENT_TOOLS = frozenset(
@@ -923,13 +968,6 @@ _NON_HARNESS_AGENT_TOOLS = frozenset(
 )
 
 
-def _normalize_tool_name(name: str) -> str:
-    """Strip MCP namespace prefixes so goldens can use short Harness tool names."""
-    if "__" in name:
-        return name.rsplit("__", 1)[-1]
-    return name
-
-
 def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolCall]:
     """Normalize Harness ``assistant_tool_*`` payloads into ``ToolCall`` values."""
     raw_entries = payload.get("v") if isinstance(payload, dict) and "v" in payload else payload
@@ -945,7 +983,7 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolC
         name = str(entry["name"])
         if result:
             output = entry.get("result") if "result" in entry else entry.get("output")
-            tool_calls.append(ToolCall(name=_normalize_tool_name(name), output=output))
+            tool_calls.append(ToolCall(name=name, output=output))
         else:
             arguments = entry.get("arguments") if "arguments" in entry else entry.get("input")
             if isinstance(arguments, str):
@@ -956,7 +994,7 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolC
                     arguments = {"value": arguments}
             tool_calls.append(
                 ToolCall(
-                    name=_normalize_tool_name(name),
+                    name=name,
                     input=arguments if isinstance(arguments, dict) else None,
                 )
             )

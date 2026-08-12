@@ -24,6 +24,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Harden `PIIMetric` and `RoleViolationMetric` with additional patterns and tests.
 
+### Fixed
+
+- **`schema_validation`**: tolerate markdown-fenced JSON (and common surrounding prose) when
+  parsing string outputs, matching typical LLM structured responses.
+- **`sse_events_match`**: ordinal `occurrence` selectors fail when the indexed payload
+  does not exist; `forbidden_contains` passes when the event was never captured (vacuous
+  negative assertion).
+- **Conversation simulator `tool_calls`**: emit `None` when no SSE tool data was captured
+  (so `skip_when_missing` works) vs `[]` when SSE was captured but no tool requests fired.
+
 ## [0.17.6]
 
 ### Fixed

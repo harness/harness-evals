@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from harness_evals.config.runner import (
+    apply_json_result_file,
     build_baseline_store,
     build_metric,
     build_sink,
@@ -159,6 +160,53 @@ class TestBuildSink:
     def test_json_with_path(self, tmp_path) -> None:
         sink = build_sink(SinkSpec(type="json", params={"path": str(tmp_path / "out.jsonl")}))
         assert isinstance(sink, JsonSink)
+
+    def test_json_resolves_env_path(self, tmp_path, monkeypatch) -> None:
+        out = tmp_path / "custom-results.jsonl"
+        monkeypatch.setenv("EVAL_RESULT_FILE", str(out))
+        sink = build_sink(
+            SinkSpec(
+                type="json",
+                params={"path": "${EVAL_RESULT_FILE:-./output/default.jsonl}"},
+            )
+        )
+        assert isinstance(sink, JsonSink)
+        assert sink.path == out
+
+
+@pytest.mark.unit
+class TestApplyJsonResultFile:
+    def test_overrides_json_sink_path(self) -> None:
+        from harness_evals.config.schema import SinkSpec, TargetSpec
+        from harness_evals.refs import ResourceRef
+
+        cfg = EvalConfig(
+            name="test",
+            dataset=ResourceRef(source="local", id="data.jsonl"),
+            target=TargetSpec(type="http", params={"url": "http://localhost"}),
+            metrics=[],
+            sinks=[
+                SinkSpec(type="stdout"),
+                SinkSpec(type="json", params={"path": "./output/default.jsonl"}),
+            ],
+        )
+        apply_json_result_file(cfg, "./output/custom.jsonl")
+        assert cfg.sinks[1].params["path"] == "./output/custom.jsonl"
+
+    def test_raises_when_no_json_sink(self) -> None:
+        from harness_evals.config.schema import SinkSpec, TargetSpec
+        from harness_evals.errors import HarnessEvalsError
+        from harness_evals.refs import ResourceRef
+
+        cfg = EvalConfig(
+            name="test",
+            dataset=ResourceRef(source="local", id="data.jsonl"),
+            target=TargetSpec(type="http", params={"url": "http://localhost"}),
+            metrics=[],
+            sinks=[SinkSpec(type="stdout")],
+        )
+        with pytest.raises(HarnessEvalsError, match="No JSON sink"):
+            apply_json_result_file(cfg, "./output/custom.jsonl")
 
     def test_csv(self, tmp_path) -> None:
         from harness_evals.sinks.csv_sink import CsvSink

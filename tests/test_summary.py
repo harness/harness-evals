@@ -9,6 +9,7 @@ from harness_evals.summary import (
     ScoreSummary,
     build_dimension_summary,
     dimension_of,
+    summary_to_dict,
 )
 
 
@@ -260,3 +261,18 @@ class TestDimensionHelpers:
         result = summarize([scores])
         direct = build_dimension_summary("correctness", [1.0, 0.0], passed_count=1)
         assert result.by_dimension["correctness"] == direct
+
+
+@pytest.mark.unit
+class TestSummaryToDict:
+    def test_summary_to_dict_shape(self):
+        scores = [
+            _score("exact_match", 1.0, 0.5, "correctness"),
+            _score("hallucination", 1.0, 0.5, "safety"),
+        ]
+        payload = summary_to_dict(summarize([scores]))
+        assert payload["record_type"] == "summary"
+        assert payload["total_cases"] == 1
+        assert payload["metrics"]["exact_match"]["mean"] == 1.0
+        assert "correctness" in payload["dimensions"]
+        assert payload["dimensions"]["safety"]["is_safety"] is True

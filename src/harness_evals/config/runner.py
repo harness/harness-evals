@@ -276,12 +276,27 @@ def build_sink(spec: SinkSpec) -> BaseSink:
         "junit": JUnitSink,
     }
 
+    params = _resolve_env_in_params(spec.params)
     cls = builtin_sinks.get(spec.type)
     if cls is not None:
-        return cls(**spec.params)
+        return cls(**params)
 
     cls = lookup_sink(spec.type)
-    return cls(**spec.params)
+    return cls(**params)
+
+
+def apply_json_result_file(cfg: EvalConfig, path: str) -> None:
+    """Override ``path`` on every JSON sink in ``cfg`` (CLI ``--result-file``)."""
+    updated = False
+    for sink in cfg.sinks:
+        if sink.type != "json":
+            continue
+        sink.params["path"] = path
+        updated = True
+    if not updated:
+        raise HarnessEvalsError(
+            "No JSON sink found in eval config; add a sink with type: json or omit --result-file"
+        )
 
 
 def build_baseline_store(spec: BaselineSpec) -> BaselineStore:
@@ -324,7 +339,12 @@ def gate_against_baseline(scores: list[list[Score]], spec: BaselineSpec) -> None
         raise BaselineRegressionError(result)
 
 
-def run_config(cfg: EvalConfig, *, baseline: BaselineSpec | None = ...) -> list[list[Score]]:  # type: ignore[assignment]
+def run_config(
+    cfg: EvalConfig,
+    *,
+    baseline: BaselineSpec | None = ...,
+    show_progress: bool = True,
+) -> list[list[Score]]:  # type: ignore[assignment]
     """Synchronous entry point — load plugins, build objects, run eval.
 
     Returns the per-golden score lists on success. If a baseline spec is
@@ -345,10 +365,15 @@ def run_config(cfg: EvalConfig, *, baseline: BaselineSpec | None = ...) -> list[
 
     load_plugins(cfg.plugins)
     effective_baseline = cfg.baseline if baseline is ... else baseline
-    return _run_async(_run_config_async(cfg, baseline=effective_baseline))
+    return _run_async(_run_config_async(cfg, baseline=effective_baseline, show_progress=show_progress))
 
 
-async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = None) -> list[list[Score]]:
+async def _run_config_async(
+    cfg: EvalConfig,
+    *,
+    baseline: BaselineSpec | None = None,
+    show_progress: bool = True,
+) -> list[list[Score]]:
     """Wire specs to live objects and execute via ``evaluate_dataset()``."""
 
     if cfg.conversation is not None:
@@ -383,6 +408,13 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
     metrics = [build_metric(m, llm=judge_llm, registry=metric_registry) for m in cfg.metrics]
     sinks = [build_sink(s) for s in cfg.sinks]
 
+    on_progress = on_result = None
+    if show_progress:
+        from harness_evals.progress import make_stderr_progress_handlers, report_progress
+
+        on_progress, on_result = make_stderr_progress_handlers()
+        report_progress(f"Evaluating {len(goldens)} item(s) — {cfg.name}")
+
     async with target:
         if cfg.conversation is not None:
             agent_fn = getattr(target, "agenerate", None)
@@ -402,6 +434,8 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
                 concurrency=cfg.concurrency,
                 simulator_llm=simulator_llm,
                 human_input_simulator=human_input_simulator,
+                on_progress=on_progress,
+                on_result=on_result,
             )
         else:
             scores = await evaluate_dataset(
@@ -410,6 +444,8 @@ async def _run_config_async(cfg: EvalConfig, *, baseline: BaselineSpec | None = 
                 metrics=metrics,
                 sinks=sinks,
                 concurrency=cfg.concurrency,
+                on_progress=on_progress,
+                on_result=on_result,
             )
 
     if baseline:

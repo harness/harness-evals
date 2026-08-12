@@ -105,6 +105,33 @@ class TestCmdRun:
         captured = capsys.readouterr()
         assert "Config valid" in captured.err
 
+    def test_run_result_file_overrides_json_sink_path(self, tmp_path) -> None:
+        dataset_path = tmp_path / "goldens.jsonl"
+        dataset_path.write_text('{"input": "hi", "expected": "hello"}\n')
+        prompt_path = tmp_path / "prompt.txt"
+        prompt_path.write_text("{{input}}", encoding="utf-8")
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(
+            _MINIMAL_CONFIG.format(dataset_path=str(dataset_path), prompt_path=str(prompt_path)).replace(
+                "sinks: []",
+                "sinks:\n  - type: json\n    path: ./output/default.jsonl",
+            )
+        )
+        captured_cfg: list = []
+
+        def capture_run(cfg, *, baseline=..., show_progress=True):
+            captured_cfg.append(cfg)
+            return []
+
+        with patch("harness_evals.config.runner.run_config", side_effect=capture_run):
+            exit_code = main(["run", str(config_path), "--result-file", str(tmp_path / "custom.jsonl")])
+
+        assert exit_code == 0
+        assert len(captured_cfg) == 1
+        json_sinks = [s for s in captured_cfg[0].sinks if s.type == "json"]
+        assert json_sinks
+        assert json_sinks[0].params["path"] == str(tmp_path / "custom.jsonl")
+
     def test_run_fail_under(self, tmp_path) -> None:
         config_path = _write_config(tmp_path)
 

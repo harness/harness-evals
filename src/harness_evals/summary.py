@@ -161,3 +161,38 @@ def summarize(all_scores: list[list[Score]]) -> ScoreSummary:
         safety_pass_rate=safety_pass_rate,
         safety_violations=safety_violations,
     )
+
+
+def summary_to_dict(result: ScoreSummary) -> dict[str, object]:
+    """Serialize a :class:`ScoreSummary` for JSON output (e.g. JSONL footer record)."""
+    metrics: dict[str, object] = {}
+    for name, ms in result.by_metric.items():
+        metrics[name] = {
+            "mean": round(ms.mean, 4),
+            "pass_rate": round(ms.pass_rate, 4),
+            "passed_count": ms.passed_count,
+            "count": ms.count,
+        }
+
+    dimensions: dict[str, object] = {}
+    for dim in order_dimensions(list(result.by_dimension)):
+        ds = result.by_dimension[dim]
+        entry: dict[str, object] = {
+            "mean": round(ds.mean, 2),
+            "pass_rate": round(ds.pass_rate, 4),
+            "metric_count": ds.metric_count,
+            "is_safety": ds.is_safety,
+        }
+        if ds.is_safety and result.safety_violations:
+            entry["violations"] = result.safety_violations
+        dimensions[dim] = entry
+
+    return {
+        "record_type": "summary",
+        "total_cases": result.total_cases,
+        "quality_pass_rate": round(result.quality_pass_rate, 4),
+        "safety_pass_rate": round(result.safety_pass_rate, 4),
+        "safety_violations": result.safety_violations,
+        "metrics": metrics,
+        "dimensions": dimensions,
+    }

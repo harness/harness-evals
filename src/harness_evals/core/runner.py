@@ -229,6 +229,19 @@ _runner_logger = logging.getLogger(__name__)
 # bad callback never aborts the run.
 OnResult = Callable[[int, int, EvalCase, list[Score]], None | Awaitable[None]]
 
+# Called before long-running phases: ``(index, total, phase, label)`` where
+# ``phase`` is ``"running"`` (agent/conversation) or ``"scoring"`` (metrics).
+OnProgress = Callable[[int, int, str, str], None | Awaitable[None]]
+
+
+async def _invoke_callback(callback: Callable[..., object], *args: object) -> None:
+    try:
+        result = callback(*args)
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        _runner_logger.exception("Progress callback raised for args=%s", args[:2])
+
 
 async def _evaluate_dataset_single(
     goldens: list[Golden],
@@ -238,6 +251,7 @@ async def _evaluate_dataset_single(
     *,
     concurrency: int | None = None,
     on_result: OnResult | None = None,
+    on_progress: OnProgress | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of single-turn Golden instances.
 
@@ -276,11 +290,16 @@ async def _evaluate_dataset_single(
                 next_idx += 1
 
     async def _run_and_score(idx: int, golden: Golden) -> list[Score]:
+        label = truncate_repr(golden.input, max_len=72)
         try:
             if sem is not None:
                 async with sem:
+                    if on_progress is not None:
+                        await _invoke_callback(on_progress, idx, total, "running", label)
                     eval_case = await agent_fn(golden)
             else:
+                if on_progress is not None:
+                    await _invoke_callback(on_progress, idx, total, "running", label)
                 eval_case = await agent_fn(golden)
         except Exception as exc:
             # Target failure isolation: a raising agent_fn must not abort the
@@ -300,6 +319,8 @@ async def _evaluate_dataset_single(
                 scores.append(score)
             target_error = True
         else:
+            if on_progress is not None:
+                await _invoke_callback(on_progress, idx, total, "scoring", label)
             scores = await a_evaluate(eval_case, metrics)
             target_error = False
         metric_names = ", ".join(score.name for score in scores)
@@ -314,14 +335,7 @@ async def _evaluate_dataset_single(
             target_error_suffix,
         )
         if on_result is not None:
-            # Progress callbacks are observation-only: a raising callback must
-            # never abort the eval run. Accept sync or async callbacks.
-            try:
-                result = on_result(idx, total, eval_case, scores)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                _runner_logger.exception("on_result callback raised for item %d", idx)
+            await _invoke_callback(on_result, idx, total, eval_case, scores)
         if sink_queue is not None:
             await sink_queue.put((idx, scores, eval_case))
         return scores
@@ -350,37 +364,99 @@ async def _evaluate_dataset_conversation(
     concurrency: int | None = None,
     simulator_llm: BaseLLM | None = None,
     on_result: OnResult | None = None,
+    on_progress: OnProgress | None = None,
     human_input_simulator: object | None = None,
     elicitation_simulator: object | None = None,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of ConversationGolden instances."""
     from harness_evals.conversation.simulator import ConversationSimulator
+    from harness_evals.progress import golden_label
 
     resolved_simulator = human_input_simulator or elicitation_simulator
+    max_concurrent = concurrency or 10
     simulator = ConversationSimulator(
         simulator_llm,
-        max_concurrent=concurrency or 10,
+        max_concurrent=max_concurrent,
         human_input_simulator=resolved_simulator,  # type: ignore[arg-type]
     )
-    eval_cases = await simulator.simulate_batch(goldens, agent_fn)
+    total = len(goldens)
+    sem = asyncio.Semaphore(max_concurrent)
+    sink_queue: asyncio.Queue[tuple[int, list[Score], EvalCase] | None] = asyncio.Queue() if sinks else None  # type: ignore[assignment]
 
-    total = len(eval_cases)
+    async def _sink_writer() -> None:
+        assert sink_queue is not None
+        pending: dict[int, tuple[list[Score], EvalCase]] = {}
+        next_idx = 0
+        while True:
+            item = await sink_queue.get()
+            if item is None:
+                break
+            idx, scores, eval_case = item
+            pending[idx] = (scores, eval_case)
+            while next_idx in pending:
+                buf_scores, buf_case = pending.pop(next_idx)
+                try:
+                    for s in sinks:  # type: ignore[union-attr]
+                        s.write(buf_scores, buf_case)
+                except Exception:
+                    _runner_logger.exception("Sink write failed for eval_case input=%s", buf_case.input)
+                next_idx += 1
 
-    async def _score_and_report(idx: int, eval_case: EvalCase) -> list[Score]:
-        # Fire on_result as each item's scoring finishes (completion order),
-        # matching _evaluate_dataset_single — not in a post-gather barrier loop,
-        # so a progress callback streams output during the run.
+    async def _run_one(idx: int, golden: ConversationGolden) -> tuple[int, EvalCase, list[Score]]:
+        label = golden_label(golden)
+        try:
+            async with sem:
+                if on_progress is not None:
+                    await _invoke_callback(on_progress, idx, total, "running", label)
+                eval_case = await simulator.simulate(golden, agent_fn)
+        except Exception as exc:
+            _runner_logger.exception("Conversation simulate raised for golden=%s", label)
+            eval_case = EvalCase(
+                input=golden.scenario,
+                output="",
+                messages=[],
+                metadata={"golden_id": golden.id, "scenario": golden.scenario, "simulate_error": str(exc)},
+            )
+            scores = []
+            for metric in metrics:
+                score = Score(
+                    name=metric.name,
+                    value=0.0,
+                    threshold=metric.threshold,
+                    reason=f"Conversation simulate raised: {exc}",
+                    metadata={"target_error": True},
+                )
+                _enrich_score(score, metric)
+                scores.append(score)
+            if on_result is not None:
+                await _invoke_callback(on_result, idx, total, eval_case, scores)
+            if sink_queue is not None:
+                await sink_queue.put((idx, scores, eval_case))
+            return idx, eval_case, scores
+
+        if on_progress is not None:
+            await _invoke_callback(on_progress, idx, total, "scoring", label)
         scores = await a_evaluate(eval_case, metrics)
         if on_result is not None:
-            try:
-                result = on_result(idx, total, eval_case, scores)
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                _runner_logger.exception("on_result callback raised for item %d", idx)
-        return scores
+            await _invoke_callback(on_result, idx, total, eval_case, scores)
+        if sink_queue is not None:
+            await sink_queue.put((idx, scores, eval_case))
+        return idx, eval_case, scores
 
-    scored = list(await asyncio.gather(*[_score_and_report(i, ec) for i, ec in enumerate(eval_cases)]))
+    sink_task: asyncio.Task | None = None
+    if sink_queue is not None:
+        sink_task = asyncio.create_task(_sink_writer())
+
+    results = list(await asyncio.gather(*[_run_one(i, g) for i, g in enumerate(goldens)]))
+
+    if sink_queue is not None:
+        await sink_queue.put(None)
+        assert sink_task is not None
+        await sink_task
+
+    results.sort(key=lambda item: item[0])
+    eval_cases = [item[1] for item in results]
+    scored = [item[2] for item in results]
 
     for idx, (golden, eval_case, scores) in enumerate(zip(goldens, eval_cases, scored, strict=True)):
         golden_id = getattr(golden, "id", None) or truncate_repr(golden.scenario)
@@ -412,7 +488,7 @@ async def _evaluate_dataset_conversation(
                 compact_json(score.metadata) if score.metadata else "{}",
             )
 
-    if sinks:
+    if sinks and sink_queue is None:
         for eval_case, scores in zip(eval_cases, scored, strict=True):
             for sink in sinks:
                 sink.write(scores, eval_case)
@@ -430,6 +506,7 @@ async def evaluate_dataset(
     concurrency: int | None = None,
     simulator_llm: BaseLLM | None = None,
     on_result: OnResult | None = None,
+    on_progress: OnProgress | None = None,
     human_input_simulator: object | None = None,
     elicitation_simulator: object | None = None,
 ) -> list[list[Score]]:
@@ -513,6 +590,7 @@ async def evaluate_dataset(
             concurrency=concurrency,
             simulator_llm=simulator_llm,
             on_result=on_result,
+            on_progress=on_progress,
             human_input_simulator=human_input_simulator or elicitation_simulator,
         )
 
@@ -523,6 +601,7 @@ async def evaluate_dataset(
         sinks,
         concurrency=concurrency,
         on_result=on_result,
+        on_progress=on_progress,
     )
 
 

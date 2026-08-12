@@ -42,6 +42,12 @@ class ConversationGolden:
     initial_prompt: str | None = None
     user_persona: str | None = None
     elicitation_hints: dict[str, Any] | None = field(default=None)
+    # Optional expected agent output (e.g. pipeline YAML for structural_similarity).
+    # May contain shell-style ``${var}`` placeholders; those are not eval env vars.
+    expected: str | dict | list | None = None
+    # Optional expected tool trajectory for tool_argument_match (short names, e.g.
+    # validate_pipeline_yaml / harness_create — not mcp__* prefixes).
+    expected_tool_calls: list[ToolCall] | None = field(default=None)
     mode: ConversationMode | None = None
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
@@ -107,8 +113,8 @@ class ConversationGolden:
             mapped["turns"] = [m if isinstance(m, Message) else Message.from_dict(m) for m in mapped["turns"]]
         if "expected_tool_calls" in mapped and mapped["expected_tool_calls"] is not None:
             mapped["expected_tool_calls"] = [
-                call if isinstance(call, ToolCall) else ToolCall.from_dict(call)
-                for call in mapped["expected_tool_calls"]
+                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc)
+                for tc in mapped["expected_tool_calls"]
             ]
         if "mode" in mapped and isinstance(mapped["mode"], str):
             mapped["mode"] = ConversationMode(mapped["mode"])

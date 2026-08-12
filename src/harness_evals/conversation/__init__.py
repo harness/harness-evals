@@ -47,6 +47,25 @@ from pathlib import Path
 
 from harness_evals.env import resolve_env_in_value
 
+# Fields that may contain shell-style ``${var}`` placeholders that are *not*
+# eval env vars (e.g. pipeline YAML / tool-arg scripts). Leave them literal.
+_LITERAL_KEYS = frozenset({"expected", "expected_tool_calls"})
+
+
+def _resolve_conversation_record(record: dict) -> dict:
+    """Resolve ``${VAR}`` in a golden, leaving literal output fields untouched.
+
+    ``expected`` and ``expected_tool_calls`` often hold pipeline YAML/scripts
+    with shell-style ``${account}`` / ``${folder_path}`` placeholders that are
+    *not* eval env vars. Resolving them would fail the load or mutate the
+    golden YAML / tool arguments.
+    """
+    preserved = {k: record[k] for k in _LITERAL_KEYS if k in record}
+    to_resolve = {k: v for k, v in record.items() if k not in _LITERAL_KEYS}
+    resolved = resolve_env_in_value(to_resolve)
+    resolved.update(preserved)
+    return resolved
+
 
 def load_conversation_dataset(path: str | Path) -> list[ConversationGolden]:
     """Load a list of ConversationGolden from a JSONL or JSON file."""
@@ -58,7 +77,7 @@ def load_conversation_dataset(path: str | Path) -> list[ConversationGolden]:
         records = json.loads(text)
         if not isinstance(records, list):
             raise ValueError("JSON file must contain a list of objects")
-    return [ConversationGolden.from_dict(resolve_env_in_value(r)) for r in records]
+    return [ConversationGolden.from_dict(_resolve_conversation_record(r)) for r in records]
 
 
 def save_conversation_dataset(

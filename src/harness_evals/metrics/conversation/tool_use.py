@@ -95,7 +95,19 @@ class ToolUseMetric(BaseMetric):
                 reason="messages missing or has fewer than 2 turns",
             )
 
-        tool_calls = _collect_tool_calls(messages, eval_case.tool_calls)
+        # eval_case.tool_calls and message-level tool_calls are usually the
+        # same events duplicated (e.g. the conversation simulator populates
+        # both from SSE), so never merge them — that would double-count.
+        # But some sources (e.g. the OTel/Langfuse trace adapter) only
+        # promote a subset of calls to the top level while message-level
+        # carries the fuller trajectory, so picking top-level unconditionally
+        # can silently drop calls. Prefer whichever list is longer.
+        message_tool_calls = [tc for msg in messages for tc in (msg.tool_calls or [])]
+        top_level_tool_calls = list(eval_case.tool_calls or [])
+        tool_calls = (
+            top_level_tool_calls if len(top_level_tool_calls) >= len(message_tool_calls) else message_tool_calls
+        )
+
         if not tool_calls:
             return Score(
                 name=self.name,
@@ -138,16 +150,6 @@ class ToolUseMetric(BaseMetric):
             metadata=metadata,
         )
 
-
-def _collect_tool_calls(messages: list[Message], case_tool_calls: list[ToolCall] | None) -> list[ToolCall]:
-    """Return the tool calls to judge, preferring the per-message trace.
-
-    ``eval_case.tool_calls`` is usually a flattened copy of the calls already
-    attached to messages, so it is only used as a fallback — merging both would
-    show the judge every call twice.
-    """
-    from_messages = [tc for msg in messages if msg.tool_calls for tc in msg.tool_calls]
-    return from_messages or list(case_tool_calls or [])
 
 
 def _format_message(msg: Message) -> str:

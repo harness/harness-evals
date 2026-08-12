@@ -70,6 +70,80 @@ async def test_simulator_uses_initial_prompt_and_resolves_elicitation():
 
 
 @pytest.mark.unit
+async def test_multi_round_sse_tool_calls_are_not_double_counted():
+    golden = ConversationGolden(
+        scenario="Create a pipeline",
+        expected_outcome="Pipeline created",
+        max_turns=1,
+        max_elicitation_rounds=2,
+        initial_prompt="Create a pipeline",
+        elicitation_hints={
+            "intents": {"pipeline_name": "payments"},
+            "matchers": [{"intent": "pipeline_name", "question_contains": ["pipeline", "name"]}],
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            request = {
+                "v": [
+                    {
+                        "name": "mcp__harness_local__validate_pipeline_yaml",
+                        "arguments": {"yaml": "pipeline: {}"},
+                    }
+                ]
+            }
+            return Message(
+                role="assistant",
+                metadata={
+                    "pending_elicitation": {
+                        "type": "elicitation_free_text",
+                        "payload": {
+                            "review_id": "ask-pipeline-name",
+                            "content": {"question": "What pipeline name should I use?"},
+                        },
+                    },
+                    "sse_events": {"assistant_tool_request": [request]},
+                    "sse_timeline": [{"event": "assistant_tool_request", "payload": request}],
+                },
+            )
+
+        request = {
+            "v": [
+                {
+                    "name": "mcp__harness__harness_create",
+                    "arguments": {"resource_type": "pipeline_v1"},
+                }
+            ]
+        }
+        return Message(
+            role="assistant",
+            content="Pipeline created.",
+            metadata={
+                "sse_events": {"assistant_tool_request": [request]},
+                "sse_timeline": [{"event": "assistant_tool_request", "payload": request}],
+            },
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    expected_names = ["validate_pipeline_yaml", "harness_create"]
+    assert [tool_call.name for tool_call in eval_case.tool_calls or []] == expected_names
+    assert len(eval_case.metadata["sse_events"]["assistant_tool_request"]) == 2
+    message_tool_names = [
+        tool_call.name
+        for message in eval_case.messages or []
+        for tool_call in message.tool_calls or []
+        if message.role == "assistant"
+    ]
+    assert message_tool_names == expected_names
+
+
+@pytest.mark.unit
 async def test_simulator_stops_elicitation_loop_at_round_cap():
     golden = ConversationGolden(
         scenario="Create a k8s connector",
@@ -195,6 +269,47 @@ async def test_plain_text_followup_uses_elicitation_hints():
     assert len(simulated) == 1
     assert simulated[0].content == "eval_cost_category_test"
     assert eval_case.metadata["elicitation_trace"][0]["kind"] == "plain_text_user_reply"
+
+
+@pytest.mark.unit
+async def test_plain_text_followup_ignores_incidental_keywords_in_report_body():
+    golden = ConversationGolden(
+        scenario="Find account-level templates referenced and actively used in pipelines",
+        expected_outcome="Template usage summary",
+        max_turns=1,
+        max_elicitation_rounds=4,
+        initial_prompt="Check templates used in pipelines",
+        elicitation_hints={
+            "intents": {"search_scope": "account-wide"},
+            "matchers": [
+                {
+                    "intent": "search_scope",
+                    "question_contains": ["account level", "account-wide"],
+                }
+            ],
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        return Message(
+            role="assistant",
+            content=(
+                "Summary:\n\n"
+                "- testentitysetup (Secret Manager) - Account level\n\n"
+                "Would you like me to:\n"
+                "- Check a specific project's pipelines for template references?\n"
+                "- List all templates in a specific org or project?"
+            ),
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert calls == 1
+    assert not any((m.metadata or {}).get("plain_text_followup") for m in eval_case.messages or [])
 
 
 @pytest.mark.unit

@@ -5,16 +5,13 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.17.8]
+## [0.18.1]
 
 ### Added
 
 - **`sse_events_match` operators**: `not_contains`, `forbidden_contains`, `match_any`,
   `skill_equals`, and ordinal `occurrence` values `second`/`third`. New helper module
   `examples/skill_sse_checks.py`.
-- **`ConversationGolden.expected_tool_calls`**: rehydrated from dataset JSON via
-  `from_dict`; propagated to `EvalCase` by the conversation simulator from SSE
-  `assistant_tool_request` events.
 - **`ToolArgumentMatchMetric.skip_when_missing`**: when true, passes instead of
   scoring 0.0 when `expected_tool_calls` or actual `tool_calls` are absent.
 - **`HarnessSseElicitationAdapter`**: `elicitation_confirm` support for HITL entity
@@ -35,6 +32,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `running` on the concurrency semaphore so items report sequentially when `concurrency: 1`.
 - **`human_input` elicitation matchers**: `structured_only` and `question_contains_all`
   to avoid false-positive intent resolution on assistant prose.
+- **Plain-text elicitation follow-up**: intent matchers run against the closing question
+  block only, not the full assistant report, so incidental keywords in tables/prose do
+  not trigger simulated user replies.
 
 ### Fixed
 
@@ -42,9 +42,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does not exist; `forbidden_contains` passes when the event was never captured (vacuous
   negative assertion).
 - **Conversation simulator `tool_calls`**: emit `None` when no SSE tool data was captured
-  (so `skip_when_missing` works) vs `[]` when SSE was captured but no tool requests fired.
+  (so `skip_when_missing` works) vs `[]` when SSE was captured but no MCP tool requests fired.
 - **`JsonSink.unique_per_run`**: extension-less paths (e.g. `examples/output/run`) now
   timestamp under the configured parent directory instead of the process CWD.
+
+## [0.18.0]
+
+### Added
+
+- **ConversationGolden.expected**: optional expected agent output (e.g. pipeline YAML)
+  for `structural_similarity` on conversation evals. Shell-style `${var}` placeholders
+  inside `expected` are not treated as eval env vars during dataset load.
+- **ConversationGolden.expected_tool_calls**: optional expected tool trajectory for
+  `tool_argument_match`. Also left literal during `${VAR}` env resolution (same reason
+  as `expected`). The conversation simulator populates `EvalCase.tool_calls` from
+  `assistant_tool_request` SSE events and strips only `mcp__server__` prefixes so
+  goldens can use short names (`harness_create`, `validate_pipeline_yaml`).
+
+### Fixed
+
+- **ToolUseMetric** no longer double-counts tools when both `eval_case.tool_calls` and
+  message-level `tool_calls` are populated; it prefers the top-level field when set,
+  falling back to whichever list is longer so a partially-populated top-level field
+  (e.g. from the OTel/Langfuse trace adapter) never silently drops calls.
+- **Conversation simulator**: `EvalCase.tool_calls` (used by `tool_argument_match`)
+  now only includes MCP-routed tool calls (`mcp__server__tool`); agent-internal SDK
+  tools (`Skill`, `Read`, `Bash`, ...) no longer shift index-based pairing against
+  `expected_tool_calls`. The full unfiltered trajectory is still available on
+  `eval_case.messages`.
+- **Conversation simulator**: elicitation rounds no longer re-attach the full
+  accumulated SSE events/timeline onto the final assistant message, which was
+  duplicating every tool call made before the last elicitation round in
+  `EvalCase.tool_calls`, `sse_timeline`, and the chronologically-expanded messages.
 
 ## [0.17.7]
 

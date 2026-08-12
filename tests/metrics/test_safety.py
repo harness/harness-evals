@@ -214,6 +214,39 @@ class TestPIIMetric:
         found = (score.metadata or {}).get("pii_types_found", [])
         assert "credit_card" not in found
 
+    def test_tool_id_not_flagged_as_phone(self):
+        ec = EvalCase(
+            input="q",
+            output="Tool call toolu_vrtx_01XMbjJPxomCuari7ofB345U completed successfully.",
+        )
+        score = PIIMetric().measure(ec)
+        assert score.passed
+
+    def test_prose_with_embedded_phone_not_masked_by_tool_exclude(self):
+        ec = EvalCase(
+            input="q",
+            output="Please call_me_now_5551234567 for support.",
+        )
+        score = PIIMetric().measure(ec)
+        assert not score.passed
+        assert "phone" in (score.metadata or {}).get("pii_types_found", [])
+
+    def test_harness_tool_token_still_excluded(self):
+        ec = EvalCase(
+            input="q",
+            output="Invoked mcp__harness__harness_list via tool_AbCdEfGhIjKlMnOp successfully.",
+        )
+        score = PIIMetric().measure(ec)
+        assert score.passed
+
+    def test_eval_run_suffix_on_resource_name_not_flagged(self):
+        ec = EvalCase(
+            input="q",
+            output="Pipeline eval_org_standards_1786086622 was updated successfully.",
+        )
+        score = PIIMetric(exclude_patterns=[r"_\d{10}\b"]).measure(ec)
+        assert score.passed
+
     def test_is_safety_metric(self):
         assert isinstance(PIIMetric(), SafetyMetric)
 

@@ -155,6 +155,9 @@ class HarnessSseElicitationAdapter(ElicitationAdapter):
         if pending.type == "elicitation_yaml":
             return self._with_capability_id(self._yaml_response(pending.payload, golden), pending)
 
+        if pending.type == "elicitation_confirm":
+            return self._with_capability_id(self._confirm_response(pending.payload, golden), pending)
+
         if not golden.elicitation_hints:
             record_intent_miss(
                 self.intent_misses,
@@ -168,11 +171,7 @@ class HarnessSseElicitationAdapter(ElicitationAdapter):
             )
             return self._with_capability_id(await self._llm_system_event(pending, golden, history), pending)
 
-        if (
-            _llm_on_miss(golden)
-            and self.llm is not None
-            and self._deterministic_would_miss(pending, golden)
-        ):
+        if _llm_on_miss(golden) and self.llm is not None and self._deterministic_would_miss(pending, golden):
             record_intent_miss(
                 self.intent_misses,
                 IntentMatchMiss(
@@ -412,6 +411,23 @@ Always set success=true."""
             "entity_type": payload.get("entity_type") or entity_info.get("entity_type"),
             "entity_info": entity_info,
             "request_action": payload.get("request_action") or entity_info.get("request_action"),
+            "tool_input": payload.get("tool_input"),
+        }
+        return {
+            "event_type": "action_completed",
+            "result": {k: v for k, v in result.items() if v is not None},
+        }
+
+    def _confirm_response(self, payload: dict, golden: ConversationGolden) -> dict:
+        """Approve non-YAML entity mutations (e.g. cost_category) via confirm card."""
+        hints = golden.elicitation_hints or {}
+        confirm_hints = hints.get("confirm") or hints.get("yaml") or {}
+        action_id = str(confirm_hints.get("default_action") or "approve")
+        entity_info = payload.get("entity_info") or {}
+        result = {
+            "success": True,
+            "action_id": action_id,
+            "entity_info": entity_info,
             "tool_input": payload.get("tool_input"),
         }
         return {

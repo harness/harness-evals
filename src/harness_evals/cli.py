@@ -34,6 +34,16 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--fail-under", type=float, default=None, help="Exit non-zero if any metric mean < value")
     run_parser.add_argument("--validate", action="store_true", help="Parse and validate config without running")
     run_parser.add_argument(
+        "--result-file",
+        default=None,
+        help="Override the JSON sink output path (timestamp suffix still applies when unique_per_run is set in the eval YAML)",
+    )
+    run_parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable stderr progress lines during eval runs",
+    )
+    run_parser.add_argument(
         "--log-level",
         choices=["debug", "info", "warning", "error", "critical"],
         default=None,
@@ -152,6 +162,7 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     from harness_evals.config.runner import (
+        apply_json_result_file,
         build_baseline_store,
         gate_against_baseline,
         run_config,
@@ -167,9 +178,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"Config valid: {cfg.name} ({len(cfg.metrics)} metrics)", file=sys.stderr)
         return 0
 
+    if args.result_file:
+        apply_json_result_file(cfg, args.result_file)
+
     baseline_spec = cfg.baseline if (args.baseline or args.update_baseline) else None
 
-    scores = run_config(cfg, baseline=None)
+    scores = run_config(cfg, baseline=None, show_progress=not args.no_progress)
 
     exit_code = 0
 

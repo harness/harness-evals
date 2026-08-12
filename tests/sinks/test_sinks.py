@@ -241,6 +241,7 @@ class TestJsonSink:
             metadata={
                 "expected_outcome": "A pipeline is created",
                 "sse_events": {"entity_mutation": [{"resource_type": "pipeline"}]},
+                "sse_checks": [{"event": "entity_mutation", "exists": True}],
             },
         )
         sink = JsonSink(str(path), include_eval_case=True)
@@ -248,10 +249,37 @@ class TestJsonSink:
         sink.write(scores, eval_case)
 
         record = json.loads(path.read_text().strip())
-        assert record["eval_case"]["messages"][1]["metadata"]["conversation_id"] == "conv-1"
-        assert "sse_events" not in (record["eval_case"]["messages"][1].get("metadata") or {})
-        assert "sse_events" not in record["eval_case"]["metadata"]
-        assert record["eval_case"]["metadata"]["expected_outcome"] == "A pipeline is created"
+        assert record["output"] == "Pipeline created"
+        assert record["messages"][1]["metadata"]["conversation_id"] == "conv-1"
+        assert "sse_events" not in (record["messages"][1].get("metadata") or {})
+        assert "eval_case" not in record
+        assert record["debug"]["conversation_id"] == "conv-1"
+        assert "sse_checks" not in record.get("debug", {})
+
+    def test_include_eval_case_omits_sse_events_from_debug_trace(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="Create a pipeline",
+            output="Pipeline created",
+            messages=[Message(role="user", content="Create a pipeline")],
+            metadata={
+                "sse_events": {
+                    "elicitation_yaml": [{"review_id": "rev-1"}],
+                    "assistant_tool_request": [{"v": [{"name": "harness_create"}]}],
+                },
+                "sse_event_names": ["assistant_tool_request", "elicitation_yaml"],
+                "elicitation_trace": [{"round": 1, "kind": "plain_text_user_reply"}],
+            },
+        )
+        sink = JsonSink(str(path), include_eval_case=True, omit_messages=False)
+
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert record["messages"]
+        assert record["debug"]["elicitation_trace"] == [{"round": 1, "kind": "plain_text_user_reply"}]
+        assert "sse_events" not in record
+        assert "eval_case" not in record
 
     def test_sse_as_timeline_omits_messages(self, tmp_path, scores):
         path = tmp_path / "results.jsonl"
@@ -291,6 +319,67 @@ class TestJsonSink:
 
         lines = path.read_text().strip().splitlines()
         assert len(lines) == 1
+
+    def test_unique_per_run_adds_timestamp_suffix(self, tmp_path, eval_case, scores):
+        path = tmp_path / "results.jsonl"
+        sink = JsonSink(str(path), unique_per_run=True)
+        sink.write(scores, eval_case)
+
+        assert sink.path != path
+        assert sink.path.name.startswith("results-")
+        assert sink.path.suffix == ".jsonl"
+        assert sink.path.exists()
+
+    def test_unique_per_run_extensionless_path_keeps_parent_dir(self, tmp_path, eval_case, scores):
+        path = tmp_path / "nested" / "output" / "run"
+        sink = JsonSink(str(path), unique_per_run=True)
+        sink.write(scores, eval_case)
+
+        assert sink.path.parent == path.parent
+        assert sink.path.name.startswith("run-")
+        assert sink.path.suffix == ".jsonl"
+        assert sink.path.exists()
+
+    def test_debug_includes_golden_id(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="scenario prose",
+            output="done",
+            messages=[Message(role="user", content="hi")],
+            metadata={"golden_id": "code-8710e2d8-discover", "scenario": "long scenario text"},
+        )
+        sink = JsonSink(str(path), include_eval_case=True, omit_messages=False)
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert record["debug"]["golden_id"] == "code-8710e2d8-discover"
+
+    def test_finalize_appends_summary_record(self, tmp_path, eval_case, scores):
+        path = tmp_path / "results.jsonl"
+        sink = JsonSink(str(path))
+        sink.write(scores, eval_case)
+        sink.write(scores, eval_case)
+        sink.finalize()
+
+        lines = path.read_text().strip().splitlines()
+        assert len(lines) == 3
+        summary = json.loads(lines[-1])
+        assert summary["record_type"] == "summary"
+        assert summary["total_cases"] == 2
+        assert "exact_match" in summary["metrics"]
+        assert summary["metrics"]["exact_match"]["count"] == 2
+        assert "quality_pass_rate" in summary
+        assert "dimensions" in summary
+
+    def test_finalize_skips_summary_when_disabled(self, tmp_path, eval_case, scores):
+        path = tmp_path / "results.jsonl"
+        sink = JsonSink(str(path), include_summary=False)
+        sink.write(scores, eval_case)
+        sink.finalize()
+
+        lines = path.read_text().strip().splitlines()
+        assert len(lines) == 1
+        assert "record_type" not in json.loads(lines[0])
 
 
 # ---------------------------------------------------------------------------

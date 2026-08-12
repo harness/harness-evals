@@ -9,7 +9,7 @@ from harness_evals.conversation import (
     load_conversation_dataset,
     save_conversation_dataset,
 )
-from harness_evals.core.types import Message
+from harness_evals.core.types import Message, ToolCall
 
 
 @pytest.mark.unit
@@ -120,6 +120,18 @@ class TestConversationGolden:
         assert restored.elicitation_hints == original.elicitation_hints
         assert restored.metadata == original.metadata
 
+    def test_from_dict_expected_tool_calls(self):
+        data = {
+            "scenario": "Tool trajectory",
+            "expected_outcome": "Uses search",
+            "expected_tool_calls": [{"name": "mcp__harness__harness_list", "input": {"resource_type": "pipeline"}}],
+        }
+        golden = ConversationGolden.from_dict(data)
+        assert golden.expected_tool_calls is not None
+        assert len(golden.expected_tool_calls) == 1
+        assert golden.expected_tool_calls[0].name == "mcp__harness__harness_list"
+        assert golden.expected_tool_calls[0].input == {"resource_type": "pipeline"}
+
     def test_rejects_invalid_max_turns(self):
         with pytest.raises(ValueError, match="max_turns"):
             ConversationGolden(scenario="S", expected_outcome="O", max_turns=0)
@@ -135,6 +147,27 @@ class TestConversationGolden:
     def test_rejects_invalid_sse_checks(self):
         with pytest.raises(TypeError, match="sse_checks"):
             ConversationGolden(scenario="S", expected_outcome="O", metadata={"sse_checks": "bad"})
+
+    def test_expected_tool_calls_validation(self):
+        with pytest.raises(TypeError, match="expected_tool_calls"):
+            ConversationGolden(
+                scenario="S",
+                expected_outcome="O",
+                expected_tool_calls=[ToolCall(name="")],
+            )
+
+    def test_expected_tool_calls_roundtrip(self):
+        g = ConversationGolden(
+            scenario="S",
+            expected_outcome="O",
+            expected_tool_calls=[
+                ToolCall(name="harness_list", input={"resource_type": "pipeline"}),
+                ToolCall(name="harness_get", input={"resource_type": "pipeline"}),
+            ],
+        )
+        restored = ConversationGolden.from_dict(g.to_dict())
+        assert len(restored.expected_tool_calls) == 2
+        assert restored.expected_tool_calls[0].input == {"resource_type": "pipeline"}
 
 
 @pytest.mark.unit

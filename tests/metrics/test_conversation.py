@@ -14,7 +14,7 @@ from harness_evals.metrics.conversation.knowledge_retention import (
 )
 from harness_evals.metrics.conversation.resolution import ConversationResolutionMetric
 from harness_evals.metrics.conversation.role_adherence import RoleAdherenceMetric
-from harness_evals.metrics.conversation.tool_use import ToolUseMetric
+from harness_evals.metrics.conversation.tool_use import _PROMPT_TEMPLATE, ToolUseMetric
 from harness_evals.metrics.conversation.topic_adherence import TopicAdherenceMetric
 from harness_evals.metrics.conversation.turn_efficiency import TurnEfficiencyMetric
 from harness_evals.metrics.conversation.turn_relevancy import TurnRelevancyMetric
@@ -677,3 +677,69 @@ class TestToolUse:
         ec = EvalCase(input="q", output="a", messages=MESSAGES_WITH_TOOLS)
         score = metric.measure(ec)
         assert score.passed
+
+    async def test_case_tool_calls_not_duplicated(self):
+        """eval_case.tool_calls is a flattened copy — it must not double the trace."""
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+        metric = ToolUseMetric(llm=llm)
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=MESSAGES_WITH_TOOLS,
+            tool_calls=[ToolCall(name="flight_search", input={"destination": "Paris"})],
+        )
+        score = await metric.a_measure(ec)
+        assert score.metadata["n_tool_calls"] == 2
+        assert llm.prompts[0].count("flight_search") == 1
+
+    async def test_case_tool_calls_used_when_messages_have_none(self):
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+        metric = ToolUseMetric(llm=llm)
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=COHERENT_MESSAGES,
+            tool_calls=[ToolCall(name="flight_search", input={"destination": "Paris"})],
+        )
+        score = await metric.a_measure(ec)
+        assert score.metadata["n_tool_calls"] == 1
+        assert "flight_search" in llm.prompts[0]
+
+    async def test_prompt_stays_within_budget(self):
+        """Huge tool payloads must be compacted instead of blowing the judge context."""
+        huge = "x" * 200_000
+        messages = [
+            Message(role="user", content=huge),
+            Message(
+                role="assistant",
+                content=huge,
+                tool_calls=[ToolCall(name="search", input={"q": huge}, output=huge)],
+            ),
+            Message(role="tool", content=huge),
+        ] * 20
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.8})
+        metric = ToolUseMetric(llm=llm, max_prompt_chars=20_000)
+        score = await metric.a_measure(EvalCase(input="q", output="a", messages=messages))
+        assert score.value == 0.8
+        assert len(llm.prompts[0]) <= 20_000 + len(_PROMPT_TEMPLATE)
+        assert score.metadata["judge_prompt_chars"] == len(llm.prompts[0])
+
+    async def test_long_trace_reports_elided_lines(self):
+        messages = [Message(role="user", content="turn " + "y" * 500) for _ in range(200)]
+        messages[0].tool_calls = [ToolCall(name="search", input={"q": "a"})]
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.8})
+        metric = ToolUseMetric(llm=llm, max_prompt_chars=4_000)
+        score = await metric.a_measure(EvalCase(input="q", output="a", messages=messages))
+        assert score.metadata["judge_elided_messages"] > 0
+        assert "omitted" in llm.prompts[0]
+
+    async def test_short_trace_reports_no_elision(self):
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+        metric = ToolUseMetric(llm=llm)
+        score = await metric.a_measure(EvalCase(input="q", output="a", messages=MESSAGES_WITH_TOOLS))
+        assert "judge_elided_messages" not in score.metadata
+        assert "judge_elided_tool_calls" not in score.metadata
+
+    def test_invalid_max_prompt_chars(self):
+        with pytest.raises(ValueError, match="max_prompt_chars"):
+            ToolUseMetric(llm=MockLLM(), max_prompt_chars=0)

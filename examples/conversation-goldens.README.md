@@ -41,6 +41,7 @@ With simulate mode and an explicit first user message:
 | `elicitation_hints` | Optional semantic preferences for deterministic human-input answers. |
 | `metadata.elicitation_script` | Deterministic replay steps for tests only. |
 | `metadata.sse_checks` | Per-row checks consumed by stream trajectory metrics such as `sse_events_match`. |
+| `expected_tool_calls` | Ordered Harness MCP tool milestones (`name` + optional `input.resource_type`). Agent utilities like `Skill`/`Grep` are excluded. Graded by `tool_argument_match` in subsequence mode. |
 
 ## LLM-driven elicitation (no hints)
 

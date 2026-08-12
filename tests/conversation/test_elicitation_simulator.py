@@ -272,6 +272,47 @@ async def test_plain_text_followup_uses_elicitation_hints():
 
 
 @pytest.mark.unit
+async def test_plain_text_followup_ignores_incidental_keywords_in_report_body():
+    golden = ConversationGolden(
+        scenario="Find account-level templates referenced and actively used in pipelines",
+        expected_outcome="Template usage summary",
+        max_turns=1,
+        max_elicitation_rounds=4,
+        initial_prompt="Check templates used in pipelines",
+        elicitation_hints={
+            "intents": {"search_scope": "account-wide"},
+            "matchers": [
+                {
+                    "intent": "search_scope",
+                    "question_contains": ["account level", "account-wide"],
+                }
+            ],
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        return Message(
+            role="assistant",
+            content=(
+                "Summary:\n\n"
+                "- testentitysetup (Secret Manager) - Account level\n\n"
+                "Would you like me to:\n"
+                "- Check a specific project's pipelines for template references?\n"
+                "- List all templates in a specific org or project?"
+            ),
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert calls == 1
+    assert not any((m.metadata or {}).get("plain_text_followup") for m in eval_case.messages or [])
+
+
+@pytest.mark.unit
 async def test_eval_case_sse_events_live_at_top_level_not_on_messages():
     golden = ConversationGolden(
         scenario="List projects",

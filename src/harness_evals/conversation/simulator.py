@@ -314,6 +314,8 @@ class ConversationSimulator:
             "n_turns": len(history),
             **(golden.metadata or {}),
         }
+        if golden.id:
+            metadata["golden_id"] = golden.id
         sse_events = _sse_events_from_history(history)
         if sse_events:
             metadata["sse_events"] = sse_events
@@ -334,13 +336,16 @@ class ConversationSimulator:
         if intent_misses:
             metadata["elicitation_intent_misses"] = intent_misses
 
+        expanded_messages = _history_with_chronological_tool_events(history)
+        tool_calls = _tool_calls_for_eval_case(expanded_messages, sse_events)
+
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
             expected=golden.expected,
             expected_tool_calls=golden.expected_tool_calls,
-            tool_calls=_tool_calls_from_sse_events(sse_events) or None,
-            messages=_history_with_chronological_tool_events(history),
+            tool_calls=tool_calls,
+            messages=expanded_messages,
             metadata=metadata,
             tags=golden.tags,
         )
@@ -606,6 +611,8 @@ def _incomplete_after_elicitation(
 
 
 def _expected_tool_names_from_golden(golden: ConversationGolden) -> list[str]:
+    if golden.expected_tool_calls:
+        return [call.name for call in golden.expected_tool_calls]
     checks = (golden.metadata or {}).get("sse_checks") or []
     names: list[str] = []
     for check in checks:
@@ -643,10 +650,12 @@ def _plain_text_followup(
     content = assistant_msg.content or ""
     if not golden.elicitation_hints or not content.strip():
         return None
-    if not _looks_like_user_question(content):
+
+    question_scope = _plain_text_question_scope(content)
+    if not question_scope or not _looks_like_user_question(question_scope):
         return None
 
-    lowered = content.lower()
+    lowered = question_scope.lower()
     if (
         "cost category" in lowered
         and sum(1 for token in ("name", "bucket", "structure", "organize") if token in lowered) >= 2
@@ -655,13 +664,45 @@ def _plain_text_followup(
         if composite is not None:
             return composite
 
-    intent = resolve_intent(content, golden)
+    intent = resolve_intent(question_scope, golden, plain_text=True)
     if intent and intent not in used_intents:
         answer = intents(golden).get(intent, "")
         if answer:
             return {"intent": intent, "answer": answer, "intents": [intent]}
 
     return None
+
+
+def _plain_text_question_scope(content: str) -> str:
+    """Return the assistant text slice to scan for follow-up intent matchers.
+
+    Long reports often mention scope keywords in prose (e.g. "Account level"
+    in a table). Matchers should only run against the closing question block.
+    """
+    text = content.strip()
+    if not text:
+        return text
+
+    lowered = text.lower()
+    markers = (
+        "\nwould you like me to",
+        "\nwould you like to",
+        "\nwhich scope",
+        "\nwhat scope",
+        "\nplease confirm",
+        "\nplease let me know",
+        "\nshould i ",
+    )
+    for marker in markers:
+        idx = lowered.rfind(marker)
+        if idx >= 0:
+            return text[idx:].strip()
+
+    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
+    if paragraphs and _looks_like_user_question(paragraphs[-1]):
+        return paragraphs[-1]
+
+    return text if _looks_like_user_question(text) else ""
 
 
 def _composite_cost_category_answer(
@@ -786,6 +827,29 @@ def _history_without_message_sse_events(history: list[Message]) -> list[Message]
     return cleaned
 
 
+def _assistant_message_from_timeline(message: Message, timeline_entry: dict[str, Any]) -> Message:
+    """Prefer assistant_message SSE text when the history Message has no content yet."""
+    content = (message.content or "").strip()
+    if content:
+        return message
+    payload = timeline_entry.get("payload")
+    if isinstance(payload, dict):
+        text = payload.get("v")
+        if isinstance(text, str) and text.strip():
+            return Message(
+                role=message.role,
+                content=text,
+                tool_calls=message.tool_calls,
+                latency_ms=message.latency_ms,
+                token_count=message.token_count,
+                cost_usd=message.cost_usd,
+                metadata=message.metadata,
+                retrieval_context=message.retrieval_context,
+                expected=message.expected,
+            )
+    return message
+
+
 def _history_with_chronological_tool_events(history: list[Message]) -> list[Message]:
     """Expand captured tool request/result events into the visible message trace.
 
@@ -815,7 +879,7 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
                 continue
             event_name = entry.get("event")
             if index == assistant_insert_index:
-                expanded.append(cleaned)
+                expanded.append(_assistant_message_from_timeline(cleaned, entry))
                 inserted_assistant = True
             if event_name == "assistant_tool_request":
                 tool_calls = _tool_calls_from_sse_payload(entry.get("payload"), result=False)
@@ -841,6 +905,21 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
         if not inserted_assistant:
             expanded.append(cleaned)
     return expanded
+
+
+def _tool_calls_for_eval_case(
+    expanded_messages: list[Message],
+    sse_events: dict[str, list],
+) -> list[ToolCall] | None:
+    """Return observed MCP tool calls, distinguishing missing capture from empty trajectory.
+
+    ``None`` — no SSE tool data was captured (``skip_when_missing`` may apply).
+    ``[]`` — SSE was captured and the agent made no Harness MCP tool requests.
+    """
+    _ = expanded_messages  # chronological messages retain the full trajectory
+    if not sse_events:
+        return None
+    return _tool_calls_from_sse_events(sse_events)
 
 
 def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: bool = False) -> list[ToolCall]:

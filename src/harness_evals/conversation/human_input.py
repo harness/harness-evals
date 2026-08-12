@@ -170,16 +170,36 @@ def record_intent_miss(misses: list[IntentMatchMiss], miss: IntentMatchMiss) -> 
     _logger.warning("Elicitation intent miss: %s", compact_json(asdict(miss)))
 
 
-def resolve_intent(question: str, golden: ConversationGolden) -> str | None:
-    """Map a live question string to an intent key via golden matchers."""
+def resolve_intent(
+    question: str,
+    golden: ConversationGolden,
+    *,
+    plain_text: bool = False,
+) -> str | None:
+    """Map a live question string to an intent key via golden matchers.
+
+    When ``plain_text`` is True, matchers with ``structured_only: true`` are
+    skipped so keyword follow-ups only fire on real assistant questions, not
+    on structured elicitation forms handled by the adapter.
+    """
     lowered = question.lower()
     for matcher in (golden.elicitation_hints or {}).get("matchers", []):
         if not isinstance(matcher, dict):
             continue
+        if plain_text and matcher.get("structured_only"):
+            continue
         intent = matcher.get("intent")
+        if not intent:
+            continue
+        contains_all = matcher.get("question_contains_all")
+        if contains_all is not None and not _matches_all(lowered, contains_all):
+            continue
         contains = matcher.get("question_contains") or []
-        if intent and _matches(lowered, contains):
-            return str(intent)
+        if contains and not _matches(lowered, contains):
+            continue
+        if contains_all is None and not contains:
+            continue
+        return str(intent)
     return None
 
 
@@ -194,4 +214,12 @@ def _matches(question: str, matcher: Any) -> bool:
         return matcher.lower() in question.lower()
     if isinstance(matcher, list):
         return any(str(item).lower() in question.lower() for item in matcher)
+    return False
+
+
+def _matches_all(question: str, matcher: Any) -> bool:
+    if isinstance(matcher, str):
+        return matcher.lower() in question.lower()
+    if isinstance(matcher, list):
+        return all(str(item).lower() in question.lower() for item in matcher)
     return False

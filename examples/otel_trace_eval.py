@@ -74,9 +74,7 @@ def main() -> None:
     print("  Per-turn breakdown:")
     for turn in ec.meta("turns") or []:
         print(
-            f"    {turn['span_id']}: "
-            f"{turn['input_tokens']}+{turn['output_tokens']} tokens, "
-            f"{turn['latency_ms']:.0f}ms"
+            f"    {turn['span_id']}: {turn['input_tokens']}+{turn['output_tokens']} tokens, {turn['latency_ms']:.0f}ms"
         )
     print()
 

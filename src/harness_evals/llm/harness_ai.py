@@ -17,11 +17,11 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 
 from harness_evals.llm.base import BaseLLM
 from harness_evals.llm.usage import record_token_usage
+from harness_evals.utils.json_output import JSON_PARSE_FAILED, parse_json_value
 
 logger = logging.getLogger(__name__)
 
@@ -90,23 +90,12 @@ def _generate_jwt(secret: bytes, *, service_name: str = "harness-evals") -> str:
     return jwt.encode(claims, secret, algorithm="HS256")
 
 
-_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
-
-
 def _extract_json(text: str) -> dict:
     """Parse JSON from LLM text, stripping markdown fences if present."""
-    text = text.strip()
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    m = _JSON_FENCE_RE.search(text)
-    if m:
-        return json.loads(m.group(1).strip())
-
-    raise json.JSONDecodeError("No valid JSON found in LLM response", text, 0)
+    parsed = parse_json_value(text)
+    if parsed is JSON_PARSE_FAILED or not isinstance(parsed, dict):
+        raise json.JSONDecodeError("No valid JSON found in LLM response", text, 0)
+    return parsed
 
 
 class HarnessAILLM(BaseLLM):

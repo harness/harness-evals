@@ -56,6 +56,10 @@ class TestExtractJson:
         text = 'Here is my evaluation:\n```json\n{"score": 9, "reasoning": "excellent"}\n```\nEnd.'
         assert _extract_json(text) == {"score": 9, "reasoning": "excellent"}
 
+    def test_reasoning_tag_before_fenced_json(self):
+        text = '<reasoning>evaluating</reasoning>\n```json\n{"score": 6}\n```'
+        assert _extract_json(text) == {"score": 6}
+
     def test_invalid_json_raises(self):
         with pytest.raises(json.JSONDecodeError):
             _extract_json("this is not json at all")

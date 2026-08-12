@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
@@ -64,17 +63,3 @@ def make_stderr_progress_handlers() -> tuple[OnProgress, Callable[..., None]]:
         report_progress(f"[{n}/{total}] done — {status} | {label}")
 
     return on_progress, on_result
-
-
-async def invoke_progress_callback(callback: Callable[..., Any], *args: Any) -> None:
-    """Invoke a sync or async progress/on_result callback; swallow errors."""
-    import inspect
-    import logging
-
-    logger = logging.getLogger(__name__)
-    try:
-        result = callback(*args)
-        if inspect.isawaitable(result):
-            await result
-    except Exception:
-        logger.exception("Progress callback raised for args=%s", args[:2])

@@ -13,6 +13,7 @@ from harness_evals.summary import summarize, summary_to_dict
 
 _MAX_TOOL_RESULT_CHARS = 500
 _DEBUG_METADATA_KEYS = (
+    "golden_id",
     "elicitation_trace",
     "elicitation_rounds",
     "elicitation_error",
@@ -157,10 +158,6 @@ def _eval_case_for_json(
             elif isinstance(metadata.get("sse_events"), dict):
                 metadata["sse_events"] = _truncate_tool_results(metadata["sse_events"])
                 metadata.pop("sse_timeline", None)
-        else:
-            metadata.pop("sse_events", None)
-            metadata.pop("sse_timeline", None)
-            metadata.pop("sse_event_names", None)
         data["metadata"] = metadata
     return data
 
@@ -173,8 +170,7 @@ def _resolve_output_path(path: str, *, unique_per_run: bool) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     suffix = resolved.suffix or ".jsonl"
     stem = resolved.stem if resolved.suffix else resolved.name
-    parent = resolved.parent if resolved.suffix else Path(".")
-    return parent / f"{stem}-{stamp}{suffix}"
+    return resolved.parent / f"{stem}-{stamp}{suffix}"
 
 
 class JsonSink(BaseSink):

@@ -5,7 +5,7 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.17.7]
+## [0.17.8]
 
 ### Added
 
@@ -27,6 +27,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Harden `PIIMetric` and `RoleViolationMetric` with additional patterns and tests.
+- Tighten default PII exclude patterns so underscore-rich prose (e.g. phone-like
+  tokens embedded in words) is not stripped before regex scan.
 - **JsonSink conversation traces**: flat `{input, output, scores, messages, debug}` rows;
   truncate large tool payloads; optional `unique_per_run` timestamped paths.
 - **Conversation eval progress**: print `[n/N] done` as each golden finishes; gate
@@ -36,13 +38,20 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **`schema_validation`**: tolerate markdown-fenced JSON (and common surrounding prose) when
-  parsing string outputs, matching typical LLM structured responses.
 - **`sse_events_match`**: ordinal `occurrence` selectors fail when the indexed payload
   does not exist; `forbidden_contains` passes when the event was never captured (vacuous
   negative assertion).
 - **Conversation simulator `tool_calls`**: emit `None` when no SSE tool data was captured
   (so `skip_when_missing` works) vs `[]` when SSE was captured but no tool requests fired.
+- **`JsonSink.unique_per_run`**: extension-less paths (e.g. `examples/output/run`) now
+  timestamp under the configured parent directory instead of the process CWD.
+
+## [0.17.7]
+
+### Fixed
+
+- **`schema_validation`**: tolerate markdown-fenced JSON (and common surrounding prose) when
+  parsing string outputs, matching typical LLM structured responses.
 
 ## [0.17.6]
 

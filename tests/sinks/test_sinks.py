@@ -330,6 +330,30 @@ class TestJsonSink:
         assert sink.path.suffix == ".jsonl"
         assert sink.path.exists()
 
+    def test_unique_per_run_extensionless_path_keeps_parent_dir(self, tmp_path, eval_case, scores):
+        path = tmp_path / "nested" / "output" / "run"
+        sink = JsonSink(str(path), unique_per_run=True)
+        sink.write(scores, eval_case)
+
+        assert sink.path.parent == path.parent
+        assert sink.path.name.startswith("run-")
+        assert sink.path.suffix == ".jsonl"
+        assert sink.path.exists()
+
+    def test_debug_includes_golden_id(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="scenario prose",
+            output="done",
+            messages=[Message(role="user", content="hi")],
+            metadata={"golden_id": "code-8710e2d8-discover", "scenario": "long scenario text"},
+        )
+        sink = JsonSink(str(path), include_eval_case=True, omit_messages=False)
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert record["debug"]["golden_id"] == "code-8710e2d8-discover"
+
     def test_finalize_appends_summary_record(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"
         sink = JsonSink(str(path))

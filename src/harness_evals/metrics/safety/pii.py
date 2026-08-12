@@ -11,8 +11,8 @@ from harness_evals.core.score import Score
 # Tool/provider IDs and eval harness tokens that resemble phone numbers or other PII.
 _DEFAULT_EXCLUDE_PATTERNS: tuple[str, ...] = (
     r"toolu_[A-Za-z0-9_]+",
-    r"tool_[A-Za-z0-9_]{8,}",
-    r"call_[A-Za-z0-9_]{8,}",
+    r"\btool_[A-Za-z0-9]{16,}\b",
+    r"\bcall_[A-Za-z0-9]{16,}\b",
 )
 
 _PII_PATTERNS: dict[str, re.Pattern[str]] = {

@@ -67,14 +67,18 @@ class ToolUseMetric(BaseMetric):
                 reason="messages missing or has fewer than 2 turns",
             )
 
-        # Collect tool calls from individual messages and top-level eval_case
-        all_tool_calls = []
-        for msg in messages:
-            if msg.tool_calls:
-                all_tool_calls.extend(msg.tool_calls)
-
-        if eval_case.tool_calls:
-            all_tool_calls.extend(eval_case.tool_calls)
+        # eval_case.tool_calls and message-level tool_calls are usually the
+        # same events duplicated (e.g. the conversation simulator populates
+        # both from SSE), so never merge them — that would double-count.
+        # But some sources (e.g. the OTel/Langfuse trace adapter) only
+        # promote a subset of calls to the top level while message-level
+        # carries the fuller trajectory, so picking top-level unconditionally
+        # can silently drop calls. Prefer whichever list is longer.
+        message_tool_calls = [tc for msg in messages for tc in (msg.tool_calls or [])]
+        top_level_tool_calls = list(eval_case.tool_calls or [])
+        all_tool_calls = (
+            top_level_tool_calls if len(top_level_tool_calls) >= len(message_tool_calls) else message_tool_calls
+        )
 
         if not all_tool_calls:
             return Score(

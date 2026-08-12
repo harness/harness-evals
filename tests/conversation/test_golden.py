@@ -234,3 +234,65 @@ class TestConversationDatasetIO:
         loaded = load_conversation_dataset(path)
 
         assert loaded[0].scenario == "Create connector with prod-delegate"
+
+    def test_load_preserves_shell_placeholders_in_expected(self, tmp_path, monkeypatch):
+        """Pipeline YAML in ``expected`` may contain ``${account}``-style shell
+        vars; those must not be treated as required eval env vars."""
+        monkeypatch.setenv("HARNESS_ORG_ID", "demo-org")
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Create pipeline",
+                    "expected_outcome": "Pipeline created",
+                    "context": ["Org: ${HARNESS_ORG_ID}"],
+                    "expected": "script: echo ${account}; cd ${folder_path}",
+                    "expected_tool_calls": [
+                        {
+                            "name": "validate_pipeline_yaml",
+                            "input": {
+                                "resource_type": "pipeline_v1",
+                                "yaml": "script: echo ${account}",
+                            },
+                        }
+                    ],
+                }
+            )
+            + "\n"
+        )
+
+        loaded = load_conversation_dataset(path)
+
+        assert loaded[0].context == ["Org: demo-org"]
+        assert loaded[0].expected == "script: echo ${account}; cd ${folder_path}"
+        assert loaded[0].expected_tool_calls is not None
+        assert loaded[0].expected_tool_calls[0].input == {
+            "resource_type": "pipeline_v1",
+            "yaml": "script: echo ${account}",
+        }
+
+    def test_load_expected_tool_calls(self, tmp_path):
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Create pipeline",
+                    "expected_outcome": "Pipeline created",
+                    "expected_tool_calls": [
+                        {"name": "validate_pipeline_yaml", "input": {"resource_type": "pipeline_v1"}},
+                        {"name": "harness_create", "input": {"resource_type": "pipeline_v1"}},
+                    ],
+                }
+            )
+            + "\n"
+        )
+
+        loaded = load_conversation_dataset(path)
+
+        assert loaded[0].expected_tool_calls is not None
+        assert [tc.name for tc in loaded[0].expected_tool_calls] == [
+            "validate_pipeline_yaml",
+            "harness_create",
+        ]
+        assert loaded[0].expected_tool_calls[0].input == {"resource_type": "pipeline_v1"}
+

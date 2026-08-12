@@ -337,6 +337,9 @@ class ConversationSimulator:
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
+            expected=golden.expected,
+            expected_tool_calls=golden.expected_tool_calls,
+            tool_calls=_tool_calls_from_sse_events(sse_events) or None,
             messages=_history_with_chronological_tool_events(history),
             metadata=metadata,
             tags=golden.tags,
@@ -355,9 +358,7 @@ class ConversationSimulator:
             return assistant_msg
 
         accumulated_sse: dict[str, list] = {}
-        accumulated_timeline: list[dict[str, Any]] = []
         _merge_sse_events(accumulated_sse, assistant_msg.metadata)
-        _merge_sse_timeline(accumulated_timeline, assistant_msg.metadata)
         if not history or history[-1] is not assistant_msg:
             history.append(assistant_msg)
 
@@ -396,7 +397,6 @@ class ConversationSimulator:
                     )
                     assistant_msg = await self._call_agent(agent_fn, history)
                     _merge_sse_events(accumulated_sse, assistant_msg.metadata)
-                    _merge_sse_timeline(accumulated_timeline, assistant_msg.metadata)
                     history.append(assistant_msg)
                     rounds += 1
                     continue
@@ -440,7 +440,7 @@ class ConversationSimulator:
                         assistant_msg.content,
                         sorted((assistant_msg.metadata or {}).get("sse_events", {})),
                     )
-                return _finalize_elicitation(assistant_msg, accumulated_sse, accumulated_timeline, trace, rounds)
+                return _finalize_elicitation(assistant_msg, trace, rounds)
 
             _logger.debug(
                 "Elicitation round %d/%d: pending=%s correlation_id=%s",
@@ -471,7 +471,6 @@ class ConversationSimulator:
             )
             assistant_msg = await self._call_agent(agent_fn, history, human_input=human_input)
             _merge_sse_events(accumulated_sse, assistant_msg.metadata)
-            _merge_sse_timeline(accumulated_timeline, assistant_msg.metadata)
             history.append(assistant_msg)
             rounds += 1
 
@@ -492,7 +491,7 @@ class ConversationSimulator:
                 "reason": f"Stopped after {rounds} elicitation round(s).",
             }
         )
-        return _finalize_elicitation(assistant_msg, accumulated_sse, accumulated_timeline, trace, rounds)
+        return _finalize_elicitation(assistant_msg, trace, rounds)
 
     async def _call_agent(
         self,
@@ -537,15 +536,10 @@ class ConversationSimulator:
 
 def _finalize_elicitation(
     assistant_msg: Message,
-    accumulated_sse: dict[str, list],
-    accumulated_timeline: list[dict[str, Any]],
     trace: list[dict[str, Any]],
     rounds: int,
 ) -> Message:
-    assistant_msg = _attach_sse_events(assistant_msg, accumulated_sse)
     metadata = dict(assistant_msg.metadata or {})
-    if accumulated_timeline:
-        metadata["sse_timeline"] = accumulated_timeline
     metadata["elicitation_rounds"] = rounds
     if trace:
         metadata["elicitation_trace"] = trace
@@ -742,15 +736,6 @@ def _merge_sse_timeline(accumulator: list[dict[str, Any]], metadata: dict | None
     return accumulator
 
 
-def _attach_sse_events(message: Message, sse_events: dict[str, list]) -> Message:
-    if not sse_events:
-        return message
-    metadata = dict(message.metadata or {})
-    metadata["sse_events"] = sse_events
-    message.metadata = metadata
-    return message
-
-
 def _sse_events_from_history(history: list[Message]) -> dict[str, list]:
     accumulated: dict[str, list] = {}
     for msg in history:
@@ -858,8 +843,14 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
     return expanded
 
 
-def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolCall]:
-    """Normalize Harness ``assistant_tool_*`` payloads into ``ToolCall`` values."""
+def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: bool = False) -> list[ToolCall]:
+    """Normalize Harness ``assistant_tool_*`` payloads into ``ToolCall`` values.
+
+    When ``mcp_only`` is set, entries whose raw name is not ``mcp__server__tool``
+    are dropped — agent-internal SDK tools (``Read``, ``Bash``, ``Skill``, ...)
+    are not Harness tool calls and goldens' ``expected_tool_calls`` never list
+    them (see ``ConversationGolden.expected_tool_calls``).
+    """
     raw_entries = payload.get("v") if isinstance(payload, dict) and "v" in payload else payload
     if isinstance(raw_entries, dict):
         raw_entries = [raw_entries]
@@ -870,7 +861,10 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolC
     for entry in raw_entries:
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
-        name = str(entry["name"])
+        raw_name = str(entry["name"])
+        if mcp_only and not raw_name.startswith("mcp__"):
+            continue
+        name = _short_tool_name(raw_name)
         if result:
             output = entry.get("result") if "result" in entry else entry.get("output")
             tool_calls.append(ToolCall(name=name, output=output))
@@ -889,6 +883,28 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolC
                 )
             )
     return tool_calls
+
+
+def _short_tool_name(name: str) -> str:
+    """Strip ``mcp__server__`` prefixes so goldens can use short tool names."""
+    return name.rsplit("__", 1)[-1] if name.startswith("mcp__") else name
+
+
+def _tool_calls_from_sse_events(sse_events: dict[str, list]) -> list[ToolCall]:
+    """Flatten assistant_tool_request payloads into chronological ToolCall values.
+
+    Restricted to MCP-routed calls (``mcp_only=True``): this list feeds
+    ``EvalCase.tool_calls``, which ``tool_argument_match`` pairs 1:1 against
+    ``expected_tool_calls`` (Harness tool names only, e.g. ``harness_create``).
+    Including agent-internal SDK tools here would shift index-based pairing
+    and misgrade an otherwise-correct trajectory. The full, unfiltered call
+    sequence remains available on ``eval_case.messages`` via
+    ``_history_with_chronological_tool_events``.
+    """
+    calls: list[ToolCall] = []
+    for payload in sse_events.get("assistant_tool_request") or []:
+        calls.extend(_tool_calls_from_sse_payload(payload, result=False, mcp_only=True))
+    return calls
 
 
 def _tool_result_content(output: object) -> str:

@@ -606,6 +606,40 @@ class TestToolUse:
         assert score.value == 0.95
         assert score.metadata["n_tool_calls"] == 2
 
+    async def test_prefers_eval_case_tool_calls_without_double_count(self):
+        """When both message-level and top-level tool_calls are set (as the
+        conversation simulator does), count each tool once."""
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+        metric = ToolUseMetric(llm=llm, threshold=0.7)
+        top_level = [
+            ToolCall(name="flight_search", input={"destination": "Paris"}),
+            ToolCall(name="book_flight", input={"flight_id": "AA123"}),
+        ]
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=MESSAGES_WITH_TOOLS,
+            tool_calls=top_level,
+        )
+        score = await metric.a_measure(ec)
+        assert score.passed
+        assert score.metadata["n_tool_calls"] == 2
+
+    async def test_prefers_message_level_when_top_level_is_a_partial_subset(self):
+        """Some sources (e.g. the OTel/Langfuse trace adapter) only promote a
+        subset of calls to eval_case.tool_calls while messages carry the
+        fuller trajectory — don't silently drop the extra calls."""
+        llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+        metric = ToolUseMetric(llm=llm, threshold=0.7)
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=MESSAGES_WITH_TOOLS,
+            tool_calls=[ToolCall(name="book_flight", input={"flight_id": "AA123"})],
+        )
+        score = await metric.a_measure(ec)
+        assert score.metadata["n_tool_calls"] == 2
+
     async def test_poor_tool_use(self):
         llm = MockLLM(default={"reasoning": "Wrong tool selected", "score": 0.2})
         metric = ToolUseMetric(llm=llm, threshold=0.7)

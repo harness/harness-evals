@@ -149,3 +149,62 @@ class TestConversationSimulator:
 
         assert result.metadata["custom_key"] == "custom_value"
         assert result.tags == {"env": "test"}
+
+
+@pytest.mark.unit
+class TestShortToolName:
+    def test_strips_mcp_server_prefix(self):
+        from harness_evals.conversation.simulator import _short_tool_name
+
+        assert _short_tool_name("mcp__harness__harness_create") == "harness_create"
+        assert _short_tool_name("mcp__harness_local__validate_pipeline_yaml") == "validate_pipeline_yaml"
+
+    def test_preserves_non_mcp_double_underscore_names(self):
+        from harness_evals.conversation.simulator import _short_tool_name
+
+        assert _short_tool_name("my_custom__tool") == "my_custom__tool"
+        assert _short_tool_name("Skill") == "Skill"
+
+    def test_sse_payload_uses_short_names(self):
+        from harness_evals.conversation.simulator import _tool_calls_from_sse_payload
+
+        calls = _tool_calls_from_sse_payload(
+            {
+                "v": [
+                    {"name": "mcp__harness__harness_create", "arguments": {"resource_type": "pipeline_v1"}},
+                    {"name": "my_custom__tool", "arguments": {}},
+                ]
+            },
+            result=False,
+        )
+        assert [c.name for c in calls] == ["harness_create", "my_custom__tool"]
+
+    def test_sse_payload_mcp_only_drops_agent_internal_tools(self):
+        from harness_evals.conversation.simulator import _tool_calls_from_sse_payload
+
+        calls = _tool_calls_from_sse_payload(
+            {
+                "v": [
+                    {"name": "Skill", "arguments": {"name": "pipeline-generation"}},
+                    {"name": "mcp__harness__validate_pipeline_yaml", "arguments": {"yaml": "x"}},
+                    {"name": "Bash", "arguments": {"command": "ls"}},
+                    {"name": "mcp__harness__harness_create", "arguments": {"resource_type": "pipeline_v1"}},
+                ]
+            },
+            result=False,
+            mcp_only=True,
+        )
+        assert [c.name for c in calls] == ["validate_pipeline_yaml", "harness_create"]
+
+    def test_tool_calls_from_sse_events_excludes_non_mcp_tools(self):
+        from harness_evals.conversation.simulator import _tool_calls_from_sse_events
+
+        sse_events = {
+            "assistant_tool_request": [
+                {"v": [{"name": "Skill", "arguments": {"name": "pipeline-generation"}}]},
+                {"v": [{"name": "mcp__harness__validate_pipeline_yaml", "arguments": {"yaml": "x"}}]},
+                {"v": [{"name": "mcp__harness__harness_create", "arguments": {"resource_type": "pipeline_v1"}}]},
+            ]
+        }
+        calls = _tool_calls_from_sse_events(sse_events)
+        assert [c.name for c in calls] == ["validate_pipeline_yaml", "harness_create"]

@@ -922,13 +922,12 @@ def _tool_calls_for_eval_case(
     return _tool_calls_from_sse_events(sse_events)
 
 
-def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: bool = False) -> list[ToolCall]:
+def _tool_calls_from_sse_payload(payload: object, *, result: bool) -> list[ToolCall]:
     """Normalize Harness ``assistant_tool_*`` payloads into ``ToolCall`` values.
 
-    When ``mcp_only`` is set, entries whose raw name is not ``mcp__server__tool``
-    are dropped — agent-internal SDK tools (``Read``, ``Bash``, ``Skill``, ...)
-    are not Harness tool calls and goldens' ``expected_tool_calls`` never list
-    them (see ``ConversationGolden.expected_tool_calls``).
+    Tool names are preserved exactly as emitted on the SSE stream (e.g.
+    ``mcp__harness__harness_list``, ``Skill``) so downstream metrics and goldens
+    see the same identifiers the agent used in chat.
     """
     raw_entries = payload.get("v") if isinstance(payload, dict) and "v" in payload else payload
     if isinstance(raw_entries, dict):
@@ -940,10 +939,7 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: boo
     for entry in raw_entries:
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
-        raw_name = str(entry["name"])
-        if mcp_only and not raw_name.startswith("mcp__"):
-            continue
-        name = _short_tool_name(raw_name)
+        name = str(entry["name"])
         if result:
             output = entry.get("result") if "result" in entry else entry.get("output")
             tool_calls.append(ToolCall(name=name, output=output))
@@ -964,25 +960,11 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: boo
     return tool_calls
 
 
-def _short_tool_name(name: str) -> str:
-    """Strip ``mcp__server__`` prefixes so goldens can use short tool names."""
-    return name.rsplit("__", 1)[-1] if name.startswith("mcp__") else name
-
-
 def _tool_calls_from_sse_events(sse_events: dict[str, list]) -> list[ToolCall]:
-    """Flatten assistant_tool_request payloads into chronological ToolCall values.
-
-    Restricted to MCP-routed calls (``mcp_only=True``): this list feeds
-    ``EvalCase.tool_calls``, which ``tool_argument_match`` pairs 1:1 against
-    ``expected_tool_calls`` (Harness tool names only, e.g. ``harness_create``).
-    Including agent-internal SDK tools here would shift index-based pairing
-    and misgrade an otherwise-correct trajectory. The full, unfiltered call
-    sequence remains available on ``eval_case.messages`` via
-    ``_history_with_chronological_tool_events``.
-    """
+    """Flatten assistant_tool_request payloads into chronological ToolCall values."""
     calls: list[ToolCall] = []
     for payload in sse_events.get("assistant_tool_request") or []:
-        calls.extend(_tool_calls_from_sse_payload(payload, result=False, mcp_only=True))
+        calls.extend(_tool_calls_from_sse_payload(payload, result=False))
     return calls
 
 

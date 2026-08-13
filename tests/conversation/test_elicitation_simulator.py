@@ -131,7 +131,10 @@ async def test_multi_round_sse_tool_calls_are_not_double_counted():
     simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
     eval_case = await simulator.simulate(golden, agent_fn)
 
-    expected_names = ["validate_pipeline_yaml", "harness_create"]
+    expected_names = [
+        "mcp__harness_local__validate_pipeline_yaml",
+        "mcp__harness__harness_create",
+    ]
     assert [tool_call.name for tool_call in eval_case.tool_calls or []] == expected_names
     assert len(eval_case.metadata["sse_events"]["assistant_tool_request"]) == 2
     message_tool_names = [

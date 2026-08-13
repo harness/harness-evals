@@ -35,6 +35,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Plain-text elicitation follow-up**: intent matchers run against the closing question
   block only, not the full assistant report, so incidental keywords in tables/prose do
   not trigger simulated user replies.
+- **Conversation simulator `tool_calls`**: preserve SSE wire names as-is (e.g.
+  ``mcp__harness__harness_list``, ``Skill``); no MCP-prefix stripping or SDK-tool
+  filtering when flattening ``assistant_tool_request`` events.
 
 ### Fixed
 

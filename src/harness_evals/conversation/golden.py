@@ -45,14 +45,13 @@ class ConversationGolden:
     # Optional expected agent output (e.g. pipeline YAML for structural_similarity).
     # May contain shell-style ``${var}`` placeholders; those are not eval env vars.
     expected: str | dict | list | None = None
-    # Optional expected tool trajectory for tool_argument_match (short names, e.g.
-    # validate_pipeline_yaml / harness_create — not mcp__* prefixes).
+    # Optional expected tool trajectory for tool_argument_match (names as emitted on
+    # the wire, e.g. mcp__harness__harness_list or Skill).
     expected_tool_calls: list[ToolCall] | None = field(default=None)
     mode: ConversationMode | None = None
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
-    expected_tool_calls: list[ToolCall] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.mode is None:

@@ -5,6 +5,16 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0]
+
+### Added
+
+- **Metric-config compatibility API**: `normalize_metric_config()` applies
+  compatible legacy heuristic option aliases for every metric-factory caller,
+  and `heuristic_options_schema()` exposes constructor-derived option metadata.
+  `token_cost.max_value` is mapped to `max_tokens` only for positive integer
+  values because historic fractional values represented monetary cost.
+
 ## [0.18.1]
 
 ### Added

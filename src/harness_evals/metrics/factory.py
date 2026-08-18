@@ -15,8 +15,9 @@ import importlib.util
 import inspect
 import logging
 import os
+import types
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin, get_type_hints
 
 from harness_evals import BaseMetric, Dimension, EvalCase, Score
 from harness_evals.catalog import catalog
@@ -24,6 +25,16 @@ from harness_evals.llm.openai_embedding import OpenAIEmbedding
 from harness_evals.metrics import AnswerCorrectnessMetric, GEvalMetric, RubricJudgeMetric
 
 logger = logging.getLogger("harness_evals.metrics.factory")
+
+# Legacy option names supported by earlier metric configuration schemas.
+# Translate only values whose semantics remain unambiguous.
+_LEGACY_HEURISTIC_OPTIONS = {
+    "latency": ("max_value", "max_ms"),
+    "token_cost": ("max_value", "max_tokens"),
+    "cost_efficiency": ("max_value", "max_cost_usd"),
+    "bleu": ("max_ngram", "max_n"),
+    "tool_correctness": ("pair", "mode"),
+}
 
 try:
     from harness_evals.llm.openai import OpenAILLM
@@ -66,7 +77,7 @@ def build_metric(
 
     Raises ValueError if type is unknown or config is invalid.
     """
-    effective_config = merge_metric_config(config, entry_config)
+    effective_config = normalize_metric_config(metric_type, config, entry_config)
 
     if metric_type in ("llm", "ai_judge"):
         return _build_llm_metric(effective_config, score_name, threshold)
@@ -109,6 +120,59 @@ def merge_metric_config(
     return effective
 
 
+def normalize_metric_config(
+    metric_type: str,
+    config: dict[str, Any],
+    entry_config: dict[str, Any] | None = None,
+    *,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    """Merge metric config and translate compatible legacy heuristic options.
+
+    The result is a new mapping.  In particular, ``token_cost.max_value`` is
+    only interpreted as ``max_tokens`` for positive, non-boolean integers:
+    historical fractional values represented a monetary cost instead.
+    """
+    effective_config = merge_metric_config(config, entry_config)
+    options = effective_config.get("options")
+    kind = kind or effective_config.get("kind")
+    if metric_type != "heuristic" or not kind or not isinstance(options, dict):
+        return effective_config
+
+    normalized_options = dict(options)
+    option_names = _LEGACY_HEURISTIC_OPTIONS.get(kind)
+    if option_names is not None:
+        legacy_option_name, option_name = option_names
+        if legacy_option_name in normalized_options:
+            legacy_value = normalized_options[legacy_option_name]
+            token_cost_value_is_compatible = kind != "token_cost" or (
+                isinstance(legacy_value, int) and not isinstance(legacy_value, bool) and legacy_value > 0
+            )
+            if token_cost_value_is_compatible:
+                normalized_options.pop(legacy_option_name)
+                if option_name in normalized_options:
+                    logger.warning(
+                        "Heuristic metric %r received both %r and %r; ignoring the legacy %r.",
+                        kind,
+                        legacy_option_name,
+                        option_name,
+                        legacy_option_name,
+                    )
+                normalized_options.setdefault(option_name, legacy_value)
+
+    options_schema = heuristic_options_schema(kind)
+    if options_schema is not None:
+        unsupported_options = sorted(set(normalized_options) - set(options_schema["properties"]))
+        if unsupported_options:
+            logger.warning(
+                "Heuristic metric %r has options not declared by the SDK: %s; "
+                "they may be rejected by the metric factory.",
+                kind,
+                ", ".join(unsupported_options),
+            )
+    return {**effective_config, "options": normalized_options}
+
+
 @functools.cache
 def _catalog_registry() -> tuple[dict[str, type[BaseMetric]], dict[str, type[BaseMetric]], dict[str, type[BaseMetric]]]:
     """Auto-derive heuristic, LLM, and embedding registries from the catalog."""
@@ -131,6 +195,109 @@ def _catalog_registry() -> tuple[dict[str, type[BaseMetric]], dict[str, type[Bas
 
 def _heuristic_registry() -> dict[str, type[BaseMetric]]:
     return _catalog_registry()[0]
+
+
+def heuristic_options_schema(kind: str) -> dict[str, Any] | None:
+    """Return JSON Schema properties for a built-in heuristic metric's options."""
+    metric_class = _heuristic_registry().get(kind)
+    if metric_class is None:
+        return None
+
+    properties: dict[str, Any] = {}
+    for klass in metric_class.__mro__:
+        if klass.__module__ == "harness_evals.core.metric":
+            continue
+        init = klass.__dict__.get("__init__")
+        if init is None:
+            continue
+        try:
+            annotations = get_type_hints(init)
+        except (NameError, TypeError):
+            annotations = {}
+        for name, parameter in inspect.signature(init).parameters.items():
+            if name in ("self", "threshold") or parameter.kind not in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            ):
+                continue
+            prop = _infer_json_schema_type(
+                parameter.default,
+                annotations.get(name, parameter.annotation),
+            )
+            if prop and parameter.default is not None and parameter.default is not inspect.Parameter.empty:
+                prop["default"] = parameter.default
+            properties.setdefault(name, prop)
+    return {"type": "object", "properties": properties}
+
+
+def _infer_json_schema_type(value: Any, annotation: Any = inspect.Parameter.empty) -> dict[str, Any]:
+    """Infer a JSON Schema property type from a constructor default."""
+    annotated = _json_schema_from_annotation(annotation)
+    if annotated:
+        return {**annotated, "default": None} if value is None else annotated
+    if value is inspect.Parameter.empty or value is None:
+        return {}
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    if isinstance(value, list):
+        if value and all(isinstance(item, str) for item in value):
+            return {"type": "array", "items": {"type": "string"}}
+        return {"type": "array"}
+    if isinstance(value, dict):
+        return {"type": "object", "additionalProperties": True}
+    return {}
+
+
+def _json_schema_from_annotation(annotation: Any) -> dict[str, Any]:
+    """Convert a supported constructor type annotation to a JSON Schema type."""
+    origin = get_origin(annotation)
+    if origin in (types.UnionType, getattr(types, "UnionType", None)) or str(origin) == "typing.Union":
+        schemas = [_json_schema_from_annotation(arg) for arg in get_args(annotation)]
+        if not all(schemas):
+            return {}
+        null_schema = {"type": "null"}
+        non_null_schemas = [schema for schema in schemas if schema != null_schema]
+        if len(non_null_schemas) == 1 and len(non_null_schemas) != len(schemas):
+            schema = dict(non_null_schemas[0])
+            schema_type = schema["type"]
+            schema["type"] = [*schema_type, "null"] if isinstance(schema_type, list) else [schema_type, "null"]
+            return schema
+        schema_types = [
+            schema_type
+            for schema in schemas
+            for schema_type in (schema["type"] if isinstance(schema["type"], list) else [schema["type"]])
+        ]
+        if schema_types:
+            return {"type": schema_types[0] if len(schema_types) == 1 else schema_types}
+        return {}
+    if annotation is bool:
+        return {"type": "boolean"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is list or origin is list:
+        args = get_args(annotation)
+        return {"type": "array", "items": {"type": "string"}} if args == (str,) else {"type": "array"}
+    if annotation is set or origin is set:
+        args = get_args(annotation)
+        schema = {"type": "array", "uniqueItems": True}
+        if args == (str,):
+            schema["items"] = {"type": "string"}
+        return schema
+    if annotation is dict or origin is dict:
+        return {"type": "object", "additionalProperties": True}
+    if annotation is type(None):
+        return {"type": "null"}
+    return {}
 
 
 def _llm_metric_registry() -> dict[str, type[BaseMetric]]:

@@ -294,9 +294,7 @@ def apply_json_result_file(cfg: EvalConfig, path: str) -> None:
         sink.params["path"] = path
         updated = True
     if not updated:
-        raise HarnessEvalsError(
-            "No JSON sink found in eval config; add a sink with type: json or omit --result-file"
-        )
+        raise HarnessEvalsError("No JSON sink found in eval config; add a sink with type: json or omit --result-file")
 
 
 def build_baseline_store(spec: BaselineSpec) -> BaselineStore:

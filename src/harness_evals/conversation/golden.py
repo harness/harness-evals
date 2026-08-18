@@ -113,8 +113,7 @@ class ConversationGolden:
             mapped["turns"] = [m if isinstance(m, Message) else Message.from_dict(m) for m in mapped["turns"]]
         if "expected_tool_calls" in mapped and mapped["expected_tool_calls"] is not None:
             mapped["expected_tool_calls"] = [
-                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc)
-                for tc in mapped["expected_tool_calls"]
+                tc if isinstance(tc, ToolCall) else ToolCall.from_dict(tc) for tc in mapped["expected_tool_calls"]
             ]
         if "mode" in mapped and isinstance(mapped["mode"], str):
             mapped["mode"] = ConversationMode(mapped["mode"])

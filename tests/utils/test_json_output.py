@@ -47,7 +47,7 @@ class TestParseJsonValue:
         text = (
             "Answer:\n"
             '{"feature_map": ["login"], "test_cases": [1]}\n\n'
-            "Schema I followed:\n```json\n{\"type\": \"object\"}\n```"
+            'Schema I followed:\n```json\n{"type": "object"}\n```'
         )
         assert parse_json_value(text) == {"feature_map": ["login"], "test_cases": [1]}
 
@@ -127,16 +127,12 @@ class TestParseJsonValue:
 
     def test_last_valid_fenced_json_wins_over_draft_in_reasoning(self):
         text = (
-            '<reasoning>Draft:\n```json\n{"name": "DRAFT"}\n```\nnow final</reasoning>\n'
-            '```json\n{"name": "FINAL"}\n```'
+            '<reasoning>Draft:\n```json\n{"name": "DRAFT"}\n```\nnow final</reasoning>\n```json\n{"name": "FINAL"}\n```'
         )
         assert parse_json_value(text) == {"name": "FINAL"}
 
     def test_draft_in_thinking_block_is_skipped(self):
-        text = (
-            '<thinking>```json\n{"name": "DRAFT"}\n```</thinking>\n'
-            '```json\n{"name": "FINAL"}\n```'
-        )
+        text = '<thinking>```json\n{"name": "DRAFT"}\n```</thinking>\n```json\n{"name": "FINAL"}\n```'
         assert parse_json_value(text) == {"name": "FINAL"}
 
     def test_first_fenced_answer_wins_over_trailing_example(self):
@@ -152,8 +148,5 @@ class TestParseJsonValue:
         assert parse_json_value(text) == {"feature_map": ["login"], "test_cases": [1]}
 
     def test_answer_wins_over_reasoning_block_after_answer(self):
-        text = (
-            '```json\n{"name": "FINAL"}\n```\n'
-            '<reasoning>alt: ```json\n{"name": "DRAFT"}\n```</reasoning>'
-        )
+        text = '```json\n{"name": "FINAL"}\n```\n<reasoning>alt: ```json\n{"name": "DRAFT"}\n```</reasoning>'
         assert parse_json_value(text) == {"name": "FINAL"}

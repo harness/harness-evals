@@ -328,4 +328,3 @@ class TestConversationDatasetIO:
             "harness_create",
         ]
         assert loaded[0].expected_tool_calls[0].input == {"resource_type": "pipeline_v1"}
-

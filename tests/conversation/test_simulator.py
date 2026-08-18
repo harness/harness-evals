@@ -227,8 +227,8 @@ def test_build_eval_case_tool_calls_none_when_no_sse() -> None:
 @pytest.mark.unit
 def test_build_eval_case_tool_calls_empty_when_sse_without_requests() -> None:
     from harness_evals.conversation.simulator import ConversationSimulator
-    from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
     from harness_evals.core.types import ToolCall
+    from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
 
     golden = ConversationGolden(
         scenario="No tools",

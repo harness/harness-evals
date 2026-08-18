@@ -151,7 +151,6 @@ class ToolUseMetric(BaseMetric):
         )
 
 
-
 def _format_message(msg: Message) -> str:
     content = _truncate(str(msg.content or ""), _max_content_chars_for_role(msg.role))
     return f"[{msg.role}]: {content}"

@@ -5,6 +5,17 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.2]
+
+### Fixed
+
+- **Conversation evaluation concurrency**: retain the concurrency slot through
+  scoring and result callbacks so progress output remains ordered when
+  `concurrency=1`.
+- **Callable targets**: await awaitable results from synchronous callables and
+  preserve legacy asyncio coroutine-marker compatibility without using the
+  deprecated `asyncio.iscoroutinefunction()`.
+
 ## [0.19.1]
 
 ### Changed

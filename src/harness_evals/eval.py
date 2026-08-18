@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -23,18 +24,23 @@ from harness_evals.targets.base import BaseTarget
 
 logger = logging.getLogger(__name__)
 
+_LEGACY_COROUTINE_MARKER = getattr(asyncio.coroutines, "_is_coroutine", None)
+
 
 class _CallableTarget(BaseTarget):
     """Wraps a plain callable (sync or async) as a ``BaseTarget``."""
 
     def __init__(self, fn: Callable) -> None:
         self._fn = fn
-        self._is_async = asyncio.iscoroutinefunction(fn)
+        self._is_async = inspect.iscoroutinefunction(fn) or (
+            _LEGACY_COROUTINE_MARKER is not None and getattr(fn, "_is_coroutine", None) is _LEGACY_COROUTINE_MARKER
+        )
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
         if self._is_async:
             return await self._fn(golden)
-        return await asyncio.to_thread(self._fn, golden)
+        result = await asyncio.to_thread(self._fn, golden)
+        return await result if inspect.isawaitable(result) else result
 
 
 def run_eval(

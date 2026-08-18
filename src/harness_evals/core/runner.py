@@ -404,44 +404,44 @@ async def _evaluate_dataset_conversation(
 
     async def _run_one(idx: int, golden: ConversationGolden) -> tuple[int, EvalCase, list[Score]]:
         label = golden_label(golden)
-        try:
-            async with sem:
+        async with sem:
+            try:
                 if on_progress is not None:
                     await _invoke_callback(on_progress, idx, total, "running", label)
                 eval_case = await simulator.simulate(golden, agent_fn)
-        except Exception as exc:
-            _runner_logger.exception("Conversation simulate raised for golden=%s", label)
-            eval_case = EvalCase(
-                input=golden.scenario,
-                output="",
-                messages=[],
-                metadata={"golden_id": golden.id, "scenario": golden.scenario, "simulate_error": str(exc)},
-            )
-            scores = []
-            for metric in metrics:
-                score = Score(
-                    name=metric.name,
-                    value=0.0,
-                    threshold=metric.threshold,
-                    reason=f"Conversation simulate raised: {exc}",
-                    metadata={"target_error": True},
+            except Exception as exc:
+                _runner_logger.exception("Conversation simulate raised for golden=%s", label)
+                eval_case = EvalCase(
+                    input=golden.scenario,
+                    output="",
+                    messages=[],
+                    metadata={"golden_id": golden.id, "scenario": golden.scenario, "simulate_error": str(exc)},
                 )
-                _enrich_score(score, metric)
-                scores.append(score)
+                scores = []
+                for metric in metrics:
+                    score = Score(
+                        name=metric.name,
+                        value=0.0,
+                        threshold=metric.threshold,
+                        reason=f"Conversation simulate raised: {exc}",
+                        metadata={"target_error": True},
+                    )
+                    _enrich_score(score, metric)
+                    scores.append(score)
+                if on_result is not None:
+                    await _invoke_callback(on_result, idx, total, eval_case, scores)
+                if sink_queue is not None:
+                    await sink_queue.put((idx, scores, eval_case))
+                return idx, eval_case, scores
+
+            if on_progress is not None:
+                await _invoke_callback(on_progress, idx, total, "scoring", label)
+            scores = await a_evaluate(eval_case, metrics)
             if on_result is not None:
                 await _invoke_callback(on_result, idx, total, eval_case, scores)
             if sink_queue is not None:
                 await sink_queue.put((idx, scores, eval_case))
             return idx, eval_case, scores
-
-        if on_progress is not None:
-            await _invoke_callback(on_progress, idx, total, "scoring", label)
-        scores = await a_evaluate(eval_case, metrics)
-        if on_result is not None:
-            await _invoke_callback(on_result, idx, total, eval_case, scores)
-        if sink_queue is not None:
-            await sink_queue.put((idx, scores, eval_case))
-        return idx, eval_case, scores
 
     sink_task: asyncio.Task | None = None
     if sink_queue is not None:
@@ -528,8 +528,8 @@ async def evaluate_dataset(
     ``list[Message]`` and returns a ``Message``.
 
     The ``concurrency`` semaphore gates ``agent_fn`` calls only for
-    single-turn mode; for conversation mode it sets ``max_concurrent``
-    on the simulator.
+    single-turn mode; for conversation mode it bounds complete conversation
+    evaluations and sets ``max_concurrent`` on the simulator.
 
     Args:
         goldens: List of ``Golden`` or ``ConversationGolden`` instances

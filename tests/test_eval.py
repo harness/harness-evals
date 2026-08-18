@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from collections.abc import Awaitable
+
 import pytest
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
 from harness_evals.core.score import Score
-from harness_evals.eval import _CallableTarget, run_eval
+from harness_evals.eval import _LEGACY_COROUTINE_MARKER, _CallableTarget, run_eval
 from harness_evals.metrics.deterministic.exact_match import ExactMatchMetric
 
 # ---------------------------------------------------------------------------
@@ -32,6 +36,80 @@ class TestCallableTarget:
         target = _CallableTarget(agent)
         result = await target.ainvoke(Golden(input="hi", expected="hi"))
         assert result.output == "hi"
+
+    async def test_runs_sync_callable_in_worker_thread(self) -> None:
+        event_loop_thread = threading.get_ident()
+        callable_thread: int | None = None
+
+        def agent(golden: Golden) -> EvalCase:
+            nonlocal callable_thread
+            callable_thread = threading.get_ident()
+            return EvalCase.from_golden(golden, output=golden.expected or "")
+
+        result = await _CallableTarget(agent).ainvoke(Golden(input="hi", expected="hi"))
+
+        assert result.output == "hi"
+        assert callable_thread is not None
+        assert callable_thread != event_loop_thread
+
+    async def test_awaits_awaitable_from_sync_callable(self) -> None:
+        async def build_eval_case(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected or "")
+
+        def agent(golden: Golden) -> Awaitable[EvalCase]:
+            return build_eval_case(golden)
+
+        target = _CallableTarget(agent)
+        result = await target.ainvoke(Golden(input="hi", expected="hi"))
+        assert result.output == "hi"
+
+    @pytest.mark.skipif(_LEGACY_COROUTINE_MARKER is None, reason="legacy asyncio coroutine marker removed")
+    async def test_wraps_legacy_coroutine_marked_callable(self) -> None:
+        event_loop_thread = threading.get_ident()
+        callable_thread: int | None = None
+
+        def agent(golden: Golden) -> Awaitable[EvalCase]:
+            nonlocal callable_thread
+            callable_thread = threading.get_ident()
+            result: asyncio.Future[EvalCase] = asyncio.Future()
+            result.set_result(EvalCase.from_golden(golden, output=golden.expected or ""))
+            return result
+
+        agent._is_coroutine = _LEGACY_COROUTINE_MARKER
+
+        result = await _CallableTarget(agent).ainvoke(Golden(input="hi", expected="hi"))
+        assert result.output == "hi"
+        assert callable_thread == event_loop_thread
+
+    async def test_ignores_equal_nonlegacy_coroutine_marker(self) -> None:
+        event_loop_thread = threading.get_ident()
+        callable_thread: int | None = None
+
+        class EqualToAnything:
+            def __eq__(self, other: object) -> bool:
+                return True
+
+        def agent(golden: Golden) -> EvalCase:
+            nonlocal callable_thread
+            callable_thread = threading.get_ident()
+            return EvalCase.from_golden(golden, output=golden.expected or "")
+
+        agent._is_coroutine = EqualToAnything()
+
+        result = await _CallableTarget(agent).ainvoke(Golden(input="hi", expected="hi"))
+        assert result.output == "hi"
+        assert callable_thread is not None
+        assert callable_thread != event_loop_thread
+
+    @pytest.mark.skipif(_LEGACY_COROUTINE_MARKER is None, reason="legacy asyncio coroutine marker removed")
+    async def test_legacy_coroutine_marker_requires_awaitable_result(self) -> None:
+        def agent(golden: Golden) -> EvalCase:
+            return EvalCase.from_golden(golden, output=golden.expected or "")
+
+        agent._is_coroutine = _LEGACY_COROUTINE_MARKER
+
+        with pytest.raises(TypeError):
+            await _CallableTarget(agent).ainvoke(Golden(input="hi", expected="hi"))
 
     async def test_context_manager(self) -> None:
         def agent(golden: Golden) -> EvalCase:

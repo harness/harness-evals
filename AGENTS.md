@@ -71,6 +71,8 @@ version = "X.Y.Z"  # Bump this to trigger a publish
 ```
 
 Follow semver: patch for fixes, minor for new metrics/features, major for breaking changes.
+Every release version bump must include a matching `CHANGELOG.md` entry that
+summarizes the user-visible changes.
 
 ## Git Workflow
 

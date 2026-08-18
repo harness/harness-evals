@@ -10,19 +10,21 @@ import pytest
 
 from harness_evals.llm.harness_ai import HarnessAILLM, _extract_json, _generate_jwt
 
+TEST_JWT_SECRET = b"test-secret-must-be-at-least-32-bytes"
+
 
 @pytest.mark.unit
 class TestGenerateJwt:
     def test_returns_string(self):
-        token = _generate_jwt(b"test-secret")
+        token = _generate_jwt(TEST_JWT_SECRET)
         assert isinstance(token, str)
         assert len(token) > 0
 
     def test_decodable(self):
         import jwt
 
-        token = _generate_jwt(b"my-secret")
-        payload = jwt.decode(token, b"my-secret", algorithms=["HS256"])
+        token = _generate_jwt(TEST_JWT_SECRET)
+        payload = jwt.decode(token, TEST_JWT_SECRET, algorithms=["HS256"])
         assert payload["iss"] == "Harness Inc"
         assert payload["sub"] == "harness-evals"
         assert payload["type"] == "SERVICE"
@@ -30,8 +32,8 @@ class TestGenerateJwt:
     def test_custom_service_name(self):
         import jwt
 
-        token = _generate_jwt(b"my-secret", service_name="CustomApp")
-        payload = jwt.decode(token, b"my-secret", algorithms=["HS256"])
+        token = _generate_jwt(TEST_JWT_SECRET, service_name="CustomApp")
+        payload = jwt.decode(token, TEST_JWT_SECRET, algorithms=["HS256"])
         assert payload["sub"] == "CustomApp"
         assert payload["name"] == "CustomApp"
 
@@ -109,7 +111,7 @@ def _mock_httpx_response(payload: dict, status_code: int = 200) -> httpx.Respons
 @pytest.mark.unit
 class TestHarnessAILLMGenerate:
     def _make_llm(self) -> HarnessAILLM:
-        return HarnessAILLM(base_url="http://test:8001", secret="test-secret")
+        return HarnessAILLM(base_url="http://test:8001", secret=TEST_JWT_SECRET.decode())
 
     async def test_generate_success(self):
         llm = self._make_llm()
@@ -216,7 +218,7 @@ class TestHarnessAILLMGenerate:
 @pytest.mark.unit
 class TestHarnessAIUsage:
     def _make_llm(self) -> HarnessAILLM:
-        return HarnessAILLM(base_url="http://test:8001", secret="test-secret")
+        return HarnessAILLM(base_url="http://test:8001", secret=TEST_JWT_SECRET.decode())
 
     async def test_records_openai_style_usage(self):
         from harness_evals.llm.usage import collect_token_usage

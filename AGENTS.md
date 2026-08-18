@@ -97,6 +97,7 @@ Follow semver: patch for fixes, minor for new metrics/features, major for breaki
 - Never average safety scores into an overall score — report them separately
 - Don't use `print()` — use the sink system for output
 - Never reference internal Harness repos, services, environments, or design docs
+- Translate legacy metric-option aliases only when their semantics and values are unambiguous. Preserve ambiguous values as validation errors, and test every alias, collision, and rejected value.
 
 ## Project Structure
 

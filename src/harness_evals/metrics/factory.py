@@ -35,6 +35,7 @@ _LEGACY_HEURISTIC_OPTIONS = {
     "bleu": ("max_ngram", "max_n"),
     "tool_correctness": ("pair", "mode"),
 }
+_MIN_LEGACY_TOKEN_COUNT = 100
 
 try:
     from harness_evals.llm.openai import OpenAILLM
@@ -130,8 +131,9 @@ def normalize_metric_config(
     """Merge metric config and translate compatible legacy heuristic options.
 
     The result is a new mapping.  In particular, ``token_cost.max_value`` is
-    only interpreted as ``max_tokens`` for positive, non-boolean integers:
-    historical fractional values represented a monetary cost instead.
+    only interpreted as ``max_tokens`` for token-plausible, non-boolean
+    integers. Historical small or fractional values represented a monetary
+    cost instead.
     """
     effective_config = merge_metric_config(config, entry_config)
     options = effective_config.get("options")
@@ -145,8 +147,14 @@ def normalize_metric_config(
         legacy_option_name, option_name = option_names
         if legacy_option_name in normalized_options:
             legacy_value = normalized_options[legacy_option_name]
-            token_cost_value_is_compatible = kind != "token_cost" or (
-                isinstance(legacy_value, int) and not isinstance(legacy_value, bool) and legacy_value > 0
+            token_cost_value_is_compatible = (
+                kind != "token_cost"
+                or option_name in normalized_options
+                or (
+                    isinstance(legacy_value, int)
+                    and not isinstance(legacy_value, bool)
+                    and legacy_value >= _MIN_LEGACY_TOKEN_COUNT
+                )
             )
             if token_cost_value_is_compatible:
                 normalized_options.pop(legacy_option_name)
@@ -159,6 +167,17 @@ def normalize_metric_config(
                         legacy_option_name,
                     )
                 normalized_options.setdefault(option_name, legacy_value)
+            elif kind == "token_cost":
+                logger.warning(
+                    "Heuristic metric %r did not convert legacy %r=%r: only non-boolean integers >= %d "
+                    "are token counts; rejected values are treated as monetary cost, not tokens. "
+                    "Set %r explicitly.",
+                    kind,
+                    legacy_option_name,
+                    legacy_value,
+                    _MIN_LEGACY_TOKEN_COUNT,
+                    option_name,
+                )
 
     options_schema = heuristic_options_schema(kind)
     if options_schema is not None:

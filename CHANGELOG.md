@@ -5,6 +5,15 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1]
+
+### Changed
+
+- **`token_cost` legacy option handling** (breaking): `token_cost.max_value` maps
+  to `max_tokens` only for integer values greater than or equal to 100. Values
+  below 100 — previously converted to `max_tokens` — are now rejected because
+  they are ambiguous with monetary cost; set `max_tokens` explicitly instead.
+
 ## [0.19.0]
 
 ### Added

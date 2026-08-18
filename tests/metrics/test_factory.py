@@ -168,20 +168,20 @@ class TestHeuristicCompatibility:
         assert schema is not None
         assert option_name in schema["properties"]
 
-    @pytest.mark.parametrize("legacy_value", [0, -1, True, False, 0.05, "1000", None])
-    def test_token_cost_legacy_value_requires_positive_non_boolean_integer(self, caplog, legacy_value):
+    @pytest.mark.parametrize("legacy_value", [0, 1, 99, -1, True, False, 0.05, "1000", None])
+    def test_token_cost_legacy_value_requires_token_plausible_non_boolean_integer(self, caplog, legacy_value):
         config = {"options": {"max_value": legacy_value}}
 
         with caplog.at_level(logging.WARNING, logger="harness_evals.metrics.factory"):
             normalized = normalize_metric_config("heuristic", config, kind="token_cost")
 
         assert normalized == config
-        assert "max_value" in caplog.text
+        assert "treated as monetary cost, not tokens" in caplog.text
 
-    def test_token_cost_normalizes_positive_integer_legacy_value(self):
-        normalized = normalize_metric_config("heuristic", {"options": {"max_value": 1}}, kind="token_cost")
+    def test_token_cost_normalizes_token_plausible_legacy_value(self):
+        normalized = normalize_metric_config("heuristic", {"options": {"max_value": 100}}, kind="token_cost")
 
-        assert normalized == {"options": {"max_tokens": 1}}
+        assert normalized == {"options": {"max_tokens": 100}}
 
     def test_token_cost_preserves_explicit_modern_option(self):
         normalized = normalize_metric_config(
@@ -191,6 +191,10 @@ class TestHeuristicCompatibility:
         )
 
         assert normalized == {"options": {"max_tokens": 10}}
+
+    def test_token_cost_rejects_ambiguous_legacy_value(self):
+        with pytest.raises(TypeError, match="max_value"):
+            build_metric("heuristic", {"kind": "token_cost", "options": {"max_value": 5}})
 
     def test_heuristic_options_schema_preserves_most_derived_default(self, monkeypatch):
         from harness_evals.metrics import factory

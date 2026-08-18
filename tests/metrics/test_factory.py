@@ -8,6 +8,7 @@ import pytest
 from harness_evals import EvalCase
 from harness_evals.metrics import factory
 from harness_evals.metrics.factory import build_metric, heuristic_options_schema, normalize_metric_config
+from harness_evals.metrics.safety.role_violation import RoleViolationMetric
 
 
 class TestBuildMetric:
@@ -85,6 +86,21 @@ class TestBuildMetric:
                     "metadata": {"llm": object()},
                 },
             )
+
+    def test_role_violation_forwards_top_level_role_description(self):
+        metric = build_metric(
+            "llm",
+            {
+                "kind": "role_violation",
+                "role_description": "Only provide account support.",
+                "metadata": {"llm": object()},
+            },
+            threshold=0.85,
+        )
+
+        assert isinstance(metric, RoleViolationMetric)
+        assert metric.role_description == "Only provide account support."
+        assert metric.threshold == 0.85
 
     def test_null_options_and_config_handled_gracefully(self):
         m = build_metric(

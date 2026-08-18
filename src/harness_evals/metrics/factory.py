@@ -561,6 +561,8 @@ def _build_llm_metric(
                 kind_kwargs["prompt_instructions"] = config["prompt_instructions"]
             if "allowed_topics" in config:
                 kind_kwargs["allowed_topics"] = config["allowed_topics"]
+            if kind == "role_violation" and "role_description" in config:
+                kind_kwargs["role_description"] = config["role_description"]
             _validate_constructor_options(metric_class, options, set(kind_kwargs))
             try:
                 metric = metric_class(llm=llm, threshold=threshold, **kind_kwargs, **options)

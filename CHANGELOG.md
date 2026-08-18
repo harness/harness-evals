@@ -5,6 +5,13 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.3]
+
+### Fixed
+
+- **`role_violation` factory configuration**: forward top-level
+  `role_description` to `RoleViolationMetric` when building LLM metrics.
+
 ## [0.19.2]
 
 ### Fixed

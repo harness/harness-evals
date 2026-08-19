@@ -5,6 +5,40 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.4]
+
+### Added
+
+- **`examples/multi_turn_tool_eval.py`**: offline ConversationGolden REPLAY demo for
+  tool correctness / argument match on multi-turn transcripts (pass + fail goldens).
+
+### Fixed
+
+- **ConversationSimulator REPLAY tool trajectories**: populate `EvalCase.tool_calls`
+  from message-embedded tool calls when SSE events are absent. Names are
+  normalized once, on the way out, stripping both wire prefixes (`tool:` from
+  Langfuse/OTel import and `mcp__server__`) so observed calls and the golden's
+  expectations compare alike. Agent-runtime builtins (`Read`, `Bash`, `Task`,
+  ...) are dropped unless the golden explicitly expects that name; an
+  `mcp__server__tool` call is never treated as a builtin. Unexpected
+  non-builtin calls are kept so metrics can penalize them. Also set
+  `expected_tools` from the golden for trajectory metrics. `ConversationGolden.context`
+  is *not* propagated: it steers prompt generation, while `EvalCase.context` means
+  retrieval evidence for RAG metrics. Per-turn retrieval evidence belongs on
+  `Message.retrieval_context`.
+- **ConversationSimulator capture-source selection**: a turn that reports the
+  same calls more than one way — message-embedded, aggregated `sse_events`, and
+  ordered `sse_timeline`, which is what live SSE capture emits together —
+  contributes them once. Selection is per turn, so neither does a duplicate
+  record inflate a trajectory nor does one turn's capture mode suppress
+  another's.
+- **ConversationSimulator empty trajectories**: an assistant turn that requests
+  no tools now yields `EvalCase.tool_calls == []` instead of `None`, so
+  trajectory metrics score the miss rather than skipping it under
+  `skip_when_missing`. `None` is reserved for transcripts with no captured
+  assistant behavior. An authored `expected_tool_calls=[]` likewise sets
+  `expected_tools=[]` rather than `None`.
+
 ## [0.19.3]
 
 ### Fixed

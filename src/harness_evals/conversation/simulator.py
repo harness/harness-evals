@@ -7,7 +7,7 @@ import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from harness_evals._async_compat import _run_async
@@ -336,14 +336,29 @@ class ConversationSimulator:
         if intent_misses:
             metadata["elicitation_intent_misses"] = intent_misses
 
-        expanded_messages = _history_with_chronological_tool_events(history)
-        tool_calls = _tool_calls_for_eval_case(expanded_messages, sse_events)
+        expanded_messages = _history_with_chronological_tool_events(
+            history, _expected_tool_names(golden.expected_tool_calls)
+        )
+        tool_calls = _tool_calls_for_eval_case(
+            expanded_messages,
+            expected_tool_calls=golden.expected_tool_calls,
+        )
+        # Goldens authored from imported traces may carry wire-prefixed names
+        # (``tool:Write``). Normalize both expectation shapes with the same rule
+        # applied to observed calls so metrics compare like with like.
+        expected_tool_calls = (
+            [replace(call, name=_short_tool_name(call.name)) for call in golden.expected_tool_calls]
+            if golden.expected_tool_calls is not None
+            else None
+        )
+        expected_tools = [call.name for call in expected_tool_calls] if expected_tool_calls is not None else None
 
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
             expected=golden.expected,
-            expected_tool_calls=golden.expected_tool_calls,
+            expected_tools=expected_tools,
+            expected_tool_calls=expected_tool_calls,
             tool_calls=tool_calls,
             messages=expanded_messages,
             metadata=metadata,
@@ -850,7 +865,9 @@ def _assistant_message_from_timeline(message: Message, timeline_entry: dict[str,
     return message
 
 
-def _history_with_chronological_tool_events(history: list[Message]) -> list[Message]:
+def _history_with_chronological_tool_events(
+    history: list[Message], expected_names: set[str] | None = None
+) -> list[Message]:
     """Expand captured tool request/result events into the visible message trace.
 
     Each assistant turn carries its own ordered ``sse_timeline``. Preserve the
@@ -861,39 +878,115 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
     expanded: list[Message] = []
     for message in history:
         cleaned = _history_without_message_sse_events([message])[0]
-        timeline = (message.metadata or {}).get("sse_timeline")
-        if message.role != "assistant" or not isinstance(timeline, list):
+        meta = message.metadata or {}
+        timeline = meta.get("sse_timeline")
+        if message.role != "assistant":
             expanded.append(cleaned)
             continue
 
+        # A turn that captured tool requests over SSE records them under the
+        # wire's ``mcp__`` marker, so its embedded copy is an SSE-shaped record
+        # and takes the SSE keep rule. Without this the same live call is
+        # filtered one way when it arrives on the timeline and another when it
+        # arrives on the message.
+        if cleaned.tool_calls and _turn_captured_sse_tool_requests(meta):
+            cleaned = replace(cleaned, metadata={**(cleaned.metadata or {}), "tool_call_source": "sse"})
+
+        names = expected_names or set()
+
+        # Parsed with raw names: these calls feed trajectory filtering, which
+        # must still see the ``mcp__`` marker. The displayed message below gets
+        # the short form, and _tool_calls_for_eval_case normalizes on emit.
+        timeline_tool_calls: dict[int, list[ToolCall]] = {}
+        for index, entry in enumerate(timeline if isinstance(timeline, list) else []):
+            if isinstance(entry, dict) and entry.get("event") == "assistant_tool_request":
+                parsed = _tool_calls_from_sse_payload(entry.get("payload"), result=False, normalize_names=False)
+                if parsed:
+                    timeline_tool_calls[index] = parsed
+
+        # A turn can carry three records of the same calls: embeds, grouped SSE
+        # events, and an ordered SSE timeline. Exactly one may reach the expanded
+        # trace. Select once across all three records; branch-specific decisions
+        # cannot compare an empty or partial timeline with a fuller grouped
+        # record.
+        #
+        # Completeness counts only calls that survive scoring, under the same
+        # provenance-specific rule final emission applies. The fuller record
+        # wins. Ties prefer the ordered timeline, then grouped SSE events, then
+        # embeds: raw stream records are authoritative when contradictory
+        # records have equal evidence. The one exception is an all-zero tie with
+        # embeds, where preserving local-work calls on the transcript is more
+        # useful than replacing them with equally unscorable runtime machinery.
+        #
+        # This precedence is deliberately independent of the golden's exact
+        # sequence. Choosing the source that happens to match expectations would
+        # hide a genuine unexpected call in a contradictory trace.
+        aggregated = _aggregated_request_messages(meta)
+        timeline_score_count = sum(
+            _scoring_relevant_call_count(calls, names, keep=_keep_sse_tool_call)
+            for calls in timeline_tool_calls.values()
+        )
+        aggregated_score_count = sum(
+            _scoring_relevant_call_count(_with_raw_tool_names(message), names, keep=_keep_sse_tool_call)
+            for message in aggregated
+        )
+        turn_score_count = _scoring_relevant_call_count(
+            cleaned.tool_calls or [], names, keep=_keep_rule_for_message(cleaned)
+        )
+        max_score_count = max(timeline_score_count, aggregated_score_count, turn_score_count)
+        preserve_zero_score_embeds = bool(cleaned.tool_calls) and max_score_count == 0
+        use_timeline_calls = (
+            not preserve_zero_score_embeds and bool(timeline_tool_calls) and timeline_score_count == max_score_count
+        )
+        use_aggregated_calls = (
+            not preserve_zero_score_embeds
+            and not use_timeline_calls
+            and bool(aggregated)
+            and aggregated_score_count == max_score_count
+        )
+        if cleaned.tool_calls and (use_timeline_calls or use_aggregated_calls):
+            cleaned = replace(cleaned, tool_calls=None)
+
         assistant_event_indexes = [
             index
-            for index, entry in enumerate(timeline)
+            for index, entry in enumerate(timeline if isinstance(timeline, list) else [])
             if isinstance(entry, dict) and entry.get("event") == "assistant_message"
         ]
         assistant_insert_index = assistant_event_indexes[-1] if assistant_event_indexes else None
         inserted_assistant = False
+        # Buffer this turn so aggregated requests can be placed at the tool-request
+        # position (before assistant text), not after the whole turn.
+        turn_messages: list[Message] = []
+        pending_aggregated = list(aggregated) if use_aggregated_calls else []
 
-        for index, entry in enumerate(timeline):
+        for index, entry in enumerate(timeline if isinstance(timeline, list) else []):
             if not isinstance(entry, dict):
                 continue
             event_name = entry.get("event")
+            # Aggregated requests belong where timeline requests would have been —
+            # at the first tool-request slot, or just before assistant text.
+            if pending_aggregated and (event_name == "assistant_tool_request" or index == assistant_insert_index):
+                turn_messages.extend(pending_aggregated)
+                pending_aggregated = []
             if index == assistant_insert_index:
-                expanded.append(_assistant_message_from_timeline(cleaned, entry))
+                turn_messages.append(_assistant_message_from_timeline(cleaned, entry))
                 inserted_assistant = True
-            if event_name == "assistant_tool_request":
-                tool_calls = _tool_calls_from_sse_payload(entry.get("payload"), result=False)
+            if event_name == "assistant_tool_request" and use_timeline_calls:
+                tool_calls = timeline_tool_calls.get(index)
                 if tool_calls:
-                    expanded.append(
+                    turn_messages.append(
                         Message(
                             role="assistant",
-                            tool_calls=tool_calls,
-                            metadata={"sse_event": event_name},
+                            tool_calls=[replace(call, name=_short_tool_name(call.name)) for call in tool_calls],
+                            metadata={"sse_event": event_name, "raw_tool_names": [call.name for call in tool_calls]},
                         )
                     )
-            elif event_name == "assistant_tool_result":
+            elif event_name == "assistant_tool_result" and use_timeline_calls:
+                # Keep requests and results together: when arbitration drops the
+                # timeline's requests, its results must go with them or the
+                # transcript shows a tool result the agent never requested.
                 for tool_call in _tool_calls_from_sse_payload(entry.get("payload"), result=True):
-                    expanded.append(
+                    turn_messages.append(
                         Message(
                             role="tool",
                             content=_tool_result_content(tool_call.output),
@@ -903,32 +996,264 @@ def _history_with_chronological_tool_events(history: list[Message]) -> list[Mess
                     )
 
         if not inserted_assistant:
-            expanded.append(cleaned)
+            if pending_aggregated:
+                turn_messages.extend(pending_aggregated)
+            turn_messages.append(cleaned)
+        expanded.extend(turn_messages)
     return expanded
+
+
+def _turn_captured_sse_tool_requests(metadata: dict[str, Any]) -> bool:
+    """Whether this turn actually recorded a tool request over SSE.
+
+    Provenance has to come from a captured request, not from the presence of SSE
+    keys. A turn carrying only assistant-text events, an empty ``sse_timeline``,
+    or a timeline whose payloads do not parse has said nothing about how its
+    tool calls were produced — treating that as SSE applies the closed keep rule
+    to a trace-imported record, and a genuinely wrong bare-named tool
+    disappears from scoring while still showing on the transcript.
+    """
+    events = metadata.get("sse_events")
+    if isinstance(events, dict) and _raw_tool_calls_from_sse_events(events):
+        return True
+    timeline = metadata.get("sse_timeline")
+    if not isinstance(timeline, list):
+        return False
+    return any(
+        isinstance(entry, dict)
+        and entry.get("event") == "assistant_tool_request"
+        and _tool_calls_from_sse_payload(entry.get("payload"), result=False, normalize_names=False)
+        for entry in timeline
+    )
+
+
+def _aggregated_request_messages(metadata: dict[str, Any]) -> list[Message]:
+    """Render one turn's own ``sse_events`` tool requests as trace messages.
+
+    ``sse_events`` is captured per turn and only later flattened across the
+    conversation by ``_sse_events_from_history``. Reading it here, while the
+    owning turn is still in hand, is what makes source selection a per-record
+    decision: the flattened map cannot say which turn a call came from, so any
+    choice made from it applies to every turn at once.
+    """
+    events = metadata.get("sse_events")
+    raw = _raw_tool_calls_from_sse_events(events) if isinstance(events, dict) else []
+    if not raw:
+        return []
+    return [
+        Message(
+            role="assistant",
+            tool_calls=[replace(call, name=_short_tool_name(call.name)) for call in raw],
+            metadata={"sse_event": "assistant_tool_request", "raw_tool_names": [call.name for call in raw]},
+        )
+    ]
 
 
 def _tool_calls_for_eval_case(
     expanded_messages: list[Message],
-    sse_events: dict[str, list],
+    expected_tool_calls: list[ToolCall] | None = None,
 ) -> list[ToolCall] | None:
-    """Return observed MCP tool calls, distinguishing missing capture from empty trajectory.
+    """Return observed tool calls, distinguishing missing capture from empty trajectory.
 
-    ``None`` — no SSE tool data was captured (``skip_when_missing`` may apply).
-    ``[]`` — SSE was captured and the agent made no Harness MCP tool requests.
+    The expanded trace is the single source. Every capture mode — ``sse_timeline``
+    entries, a turn's aggregated ``sse_events``, and plain REPLAY embeds — has
+    already been reduced to at most one record per turn by
+    ``_history_with_chronological_tool_events``, which is the only place holding
+    the turn-to-record association. Reading a conversation-wide aggregate here
+    instead cannot express "this turn already reported these calls", so it either
+    double-counts turns that captured both ways or drops turns that captured
+    neither.
+
+    ``None`` — no assistant behavior was captured at all, so the trajectory is
+    unknown (``skip_when_missing`` may apply).
+    ``[]`` — assistant behavior was captured and no (scorable) tools were
+    requested. This is a real trajectory that metrics must score, not a skip.
+
+    Keep rules differ by record shape because the records do not carry the same
+    information (``_keep_rule_for_message`` picks per message):
+
+    * **SSE-shaped**: closed over ``mcp__``. An unrecognized runtime tool
+      degrades to "not scored".
+    * **REPLAY / trace-imported** embeds: open denylist. A bare
+      ``lookup_order`` may be the tool under test, so unexpected non-builtins
+      stay visible to metrics.
+
+    An unexpected bare name is therefore penalized on REPLAY and invisible on
+    SSE. That divergence is intentional.
     """
-    _ = expanded_messages  # chronological messages retain the full trajectory
-    if not sse_events:
+    expected_names = _expected_tool_names(expected_tool_calls)
+    kept: list[ToolCall] = []
+    saw_assistant_turn = False
+
+    for msg in expanded_messages:
+        if msg.role != "assistant":
+            continue
+        saw_assistant_turn = True
+        if msg.tool_calls:
+            kept.extend(
+                _filter_and_normalize_tool_calls(
+                    _with_raw_tool_names(msg), expected_names, keep=_keep_rule_for_message(msg)
+                )
+            )
+    if not saw_assistant_turn:
         return None
-    return _tool_calls_from_sse_events(sse_events)
+    return kept
 
 
-def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: bool = False) -> list[ToolCall]:
+def _keep_rule_for_message(message: Message) -> Callable[[ToolCall, set[str]], bool]:
+    """Pick the keep rule matching where a turn's calls came from.
+
+    A message synthesized from an ``sse_timeline`` entry or from a turn's
+    aggregated ``sse_events``, and a live turn's own embedded copy of those
+    calls, are all SSE-shaped records carrying the ``mcp__`` marker, so they
+    take the closed SSE rule; filtering them with the denylist would score an
+    unenumerated runtime tool as a wrong tool. Trace-imported calls have no such
+    marker and take the denylist rule. See ``_tool_calls_for_eval_case``.
+    """
+    metadata = message.metadata or {}
+    if metadata.get("sse_event") == "assistant_tool_request" or metadata.get("tool_call_source") == "sse":
+        return _keep_sse_tool_call
+    return _keep_message_embedded_tool_call
+
+
+def _filter_and_normalize_tool_calls(
+    raw_calls: list[ToolCall],
+    expected_names: set[str],
+    *,
+    keep: Callable[[ToolCall, set[str]], bool],
+) -> list[ToolCall]:
+    """Apply a path's keep rule, then normalize names once on the way out."""
+    kept = [call for call in raw_calls if keep(call, expected_names)]
+    return [ToolCall(name=_short_tool_name(call.name), input=call.input, output=call.output) for call in kept]
+
+
+def _keep_sse_tool_call(call: ToolCall, expected_names: set[str]) -> bool:
+    """SSE keep rule: MCP-routed calls, plus any name the golden expects.
+
+    Closed by construction — it never has to recognize a runtime builtin, so a
+    tool the runtime adds tomorrow cannot turn a passing trajectory into a
+    failing one. See ``_tool_calls_for_eval_case`` for why SSE and REPLAY
+    differ here.
+    """
+    return call.name.removeprefix("tool:").startswith("mcp__") or _is_expected_by_name(call, expected_names)
+
+
+# Agent-runtime builtins that trace import puts on Message.tool_calls but that
+# goldens never list in expected_tool_calls (those are Harness tools only). Used by
+# the REPLAY keep rule *only* — SSE is closed over the mcp__ prefix and never
+# consults this list, so a builtin missing from it cannot fail a live trajectory
+# (see _tool_calls_for_eval_case). Best-effort by nature: it cannot enumerate every
+# runtime's vocabulary, so treat it as reducing REPLAY false failures, not as
+# something correctness depends on. A golden that explicitly expects one of these
+# names keeps it (_is_expected_by_name), which is what makes the list safe for
+# agents that genuinely expose a tool named Write.
+_AGENT_INTERNAL_TOOL_NAMES = frozenset(
+    {
+        "AskUserQuestion",
+        "Bash",
+        "BashOutput",
+        "Edit",
+        "ExitPlanMode",
+        "Glob",
+        "Grep",
+        "KillShell",
+        "LS",
+        "MultiEdit",
+        "NotebookEdit",
+        "NotebookRead",
+        "Read",
+        "Skill",
+        "SlashCommand",
+        "Task",
+        "TodoWrite",
+        "WebFetch",
+        "WebSearch",
+        "Write",
+    }
+)
+
+
+def _expected_tool_names(expected_tool_calls: list[ToolCall] | None) -> set[str]:
+    """Expected tool names under both the raw and normalized spellings.
+
+    Goldens authored from imported traces may carry wire-prefixed names, so
+    matching on the raw name alone would miss.
+    """
+    names = {call.name for call in (expected_tool_calls or [])}
+    return names | {_short_tool_name(name) for name in names}
+
+
+def _scoring_relevant_call_count(
+    calls: list[ToolCall],
+    expected_names: set[str],
+    *,
+    keep: Callable[[ToolCall, set[str]], bool],
+) -> int:
+    """Count the calls that will still be there once filtering runs.
+
+    ``keep`` must be the rule that will actually filter these calls, or the
+    count overstates one side of a timeline-vs-turn comparison.
+    """
+    return sum(1 for call in calls if keep(call, expected_names))
+
+
+def _with_raw_tool_names(message: Message) -> list[ToolCall]:
+    """Return a turn's tool calls under the raw wire names used for filtering.
+
+    Timeline-derived messages carry short names for display and their raw names
+    in ``metadata["raw_tool_names"]``. Filtering has to read the raw form, or an
+    ``mcp__server__tool`` whose short name matches an agent builtin is dropped
+    on this path while the SSE path keeps it.
+    """
+    calls = message.tool_calls or []
+    raw_names = (message.metadata or {}).get("raw_tool_names")
+    if not isinstance(raw_names, list) or len(raw_names) != len(calls):
+        return list(calls)
+    return [
+        replace(call, name=raw_name) if isinstance(raw_name, str) else call
+        for call, raw_name in zip(calls, raw_names, strict=True)
+    ]
+
+
+def _is_agent_internal_tool_name(name: str) -> bool:
+    """Return True for agent-runtime builtins (under any wire prefix).
+
+    An ``mcp__server__tool`` name is never one of these, however its short form
+    reads: MCP-routed calls are the tools under test, and the SSE path keeps
+    every one of them. Without this guard a server tool whose short name
+    collides with a builtin (``mcp__crm__Task``) would be dropped on REPLAY and
+    kept on SSE — the capture-mode divergence this denylist exists to remove.
+    """
+    bare = name.removeprefix("tool:")
+    if bare.startswith("mcp__"):
+        return False
+    return bare in _AGENT_INTERNAL_TOOL_NAMES
+
+
+def _is_expected_by_name(call: ToolCall, expected_names: set[str]) -> bool:
+    """Return True when the golden expects this call, raw or normalized."""
+    return call.name in expected_names or _short_tool_name(call.name) in expected_names
+
+
+def _keep_message_embedded_tool_call(call: ToolCall, expected_names: set[str]) -> bool:
+    """Drop agent-internal builtins unless the golden explicitly expects them."""
+    if _is_expected_by_name(call, expected_names):
+        return True
+    return not _is_agent_internal_tool_name(call.name)
+
+
+def _tool_calls_from_sse_payload(
+    payload: object,
+    *,
+    result: bool,
+    normalize_names: bool = True,
+) -> list[ToolCall]:
     """Normalize Harness ``assistant_tool_*`` payloads into ``ToolCall`` values.
 
-    When ``mcp_only`` is set, entries whose raw name is not ``mcp__server__tool``
-    are dropped — agent-internal SDK tools (``Read``, ``Bash``, ``Skill``, ...)
-    are not Harness tool calls and goldens' ``expected_tool_calls`` never list
-    them (see ``ConversationGolden.expected_tool_calls``).
+    Clear ``normalize_names`` to keep the raw wire name. Callers that filter
+    before scoring need it: shortening first discards the ``mcp__`` marker, and
+    a server tool whose short name collides with an agent builtin
+    (``mcp__crm__Task``) would then be misread as internal and dropped.
     """
     raw_entries = payload.get("v") if isinstance(payload, dict) and "v" in payload else payload
     if isinstance(raw_entries, dict):
@@ -941,9 +1266,7 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: boo
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
         raw_name = str(entry["name"])
-        if mcp_only and not raw_name.startswith("mcp__"):
-            continue
-        name = _short_tool_name(raw_name)
+        name = _short_tool_name(raw_name) if normalize_names else raw_name
         if result:
             output = entry.get("result") if "result" in entry else entry.get("output")
             tool_calls.append(ToolCall(name=name, output=output))
@@ -965,24 +1288,31 @@ def _tool_calls_from_sse_payload(payload: object, *, result: bool, mcp_only: boo
 
 
 def _short_tool_name(name: str) -> str:
-    """Strip ``mcp__server__`` prefixes so goldens can use short tool names."""
-    return name.rsplit("__", 1)[-1] if name.startswith("mcp__") else name
+    """Reduce a raw tool name to the short form goldens author.
+
+    Strips both wire prefixes seen on imported traces: the Langfuse/OTel
+    ``tool:`` span prefix (``tool:Read``, see ``importers/otel.py``) and the
+    MCP ``mcp__server__`` prefix. This is the single normalization used for
+    both filtering and emission — a name that passes a filter under its short
+    form must be emitted under that same form, or metrics compare
+    ``tool:lookup_order`` against an expected ``lookup_order`` and score 0.0.
+    """
+    bare = name.removeprefix("tool:")
+    return bare.rsplit("__", 1)[-1] if bare.startswith("mcp__") else bare
 
 
-def _tool_calls_from_sse_events(sse_events: dict[str, list]) -> list[ToolCall]:
+def _raw_tool_calls_from_sse_events(sse_events: dict[str, list]) -> list[ToolCall]:
     """Flatten assistant_tool_request payloads into chronological ToolCall values.
 
-    Restricted to MCP-routed calls (``mcp_only=True``): this list feeds
-    ``EvalCase.tool_calls``, which ``tool_argument_match`` pairs 1:1 against
-    ``expected_tool_calls`` (Harness tool names only, e.g. ``harness_create``).
-    Including agent-internal SDK tools here would shift index-based pairing
-    and misgrade an otherwise-correct trajectory. The full, unfiltered call
-    sequence remains available on ``eval_case.messages`` via
-    ``_history_with_chronological_tool_events``.
+    Returns calls under their *raw* wire names and unfiltered; the caller
+    (``_tool_calls_for_eval_case``) applies the SSE keep rule and name
+    normalization. Filtering here would discard the ``mcp__`` marker that rule
+    depends on. The full trajectory, including agent builtins, remains on
+    ``eval_case.messages`` via ``_history_with_chronological_tool_events``.
     """
     calls: list[ToolCall] = []
     for payload in sse_events.get("assistant_tool_request") or []:
-        calls.extend(_tool_calls_from_sse_payload(payload, result=False, mcp_only=True))
+        calls.extend(_tool_calls_from_sse_payload(payload, result=False, normalize_names=False))
     return calls
 
 

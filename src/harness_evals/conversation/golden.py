@@ -35,6 +35,9 @@ class ConversationGolden:
     scenario: str
     expected_outcome: str
     id: str | None = None
+    # Simulator steering, rendered as "Background context" in generated user
+    # prompts. Retrieval evidence belongs on Message.retrieval_context; this
+    # value must not populate EvalCase.context (which RAG metrics consume).
     context: list[str] | None = None
     turns: list[Message] | None = field(default=None)
     max_turns: int = 10

@@ -424,6 +424,36 @@ async def test_adapter_accepts_yaml_without_elicitation_hints():
 
 
 @pytest.mark.unit
+async def test_adapter_rejects_yaml_with_cancellation_event():
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_yaml",
+            "payload": {
+                "review_id": "rev-yaml",
+                "content": {"yaml": "pipeline:\n  id: test\n", "language": "yaml"},
+                "actions": [
+                    {"id": "accept", "sends": "action_completed"},
+                    {"id": "deny", "sends": "action_cancelled"},
+                ],
+            },
+        }
+    )
+    golden = ConversationGolden(
+        scenario="Review generated pipeline YAML",
+        expected_outcome="Pipeline review is rejected",
+        elicitation_hints={"yaml": {"default_action": "deny"}},
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result == {
+        "event_type": "action_cancelled",
+        "result": {},
+        "capability_id": "rev-yaml",
+    }
+
+
+@pytest.mark.unit
 async def test_adapter_approves_elicitation_confirm_for_cost_category():
     pending = PendingHumanInput.from_metadata(
         {

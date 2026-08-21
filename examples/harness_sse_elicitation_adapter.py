@@ -402,6 +402,12 @@ Always set success=true."""
     def _yaml_response(self, payload: dict, golden: ConversationGolden) -> dict:
         hints = golden.elicitation_hints or {}
         action_id = str((hints.get("yaml") or {}).get("default_action") or "accept")
+        event_type = _event_type_for_action(payload, action_id)
+        if event_type == "action_cancelled":
+            return {
+                "event_type": event_type,
+                "result": {},
+            }
         content = payload.get("content") or {}
         entity_info = payload.get("entity_info") or {}
         result = {
@@ -414,7 +420,7 @@ Always set success=true."""
             "tool_input": payload.get("tool_input"),
         }
         return {
-            "event_type": "action_completed",
+            "event_type": event_type,
             "result": {k: v for k, v in result.items() if v is not None},
         }
 
@@ -580,6 +586,17 @@ class ElicitationSimulator(HumanInputSimulator):
         history: list[Message],
     ) -> dict:
         return await self.respond(elicitation, golden, history)
+
+
+def _event_type_for_action(payload: dict, action_id: str) -> str:
+    for action in payload.get("actions") or []:
+        if isinstance(action, dict) and str(action.get("id")) == action_id:
+            sends = action.get("sends")
+            if sends in {"action_completed", "action_cancelled"}:
+                return str(sends)
+    if action_id.lower() in {"cancel", "deny", "reject"}:
+        return "action_cancelled"
+    return "action_completed"
 
 
 def _elicitation_question(pending: PendingHumanInput) -> str:

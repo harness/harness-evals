@@ -55,6 +55,25 @@ class TestEvaluateDatasetWithConversationGolden:
         assert len(results) == 1
         assert isinstance(results[0], list)
 
+    async def test_scripted_mode_uses_initial_prompt_without_simulator_llm(self):
+        seen_messages: list[list[Message]] = []
+
+        async def recording_agent(messages: list[Message]) -> Message:
+            seen_messages.append(list(messages))
+            return Message(role="assistant", content="Done")
+
+        golden = ConversationGolden(
+            scenario="Create a pipeline",
+            expected_outcome="Pipeline reaches review",
+            mode=ConversationMode.SCRIPTED,
+            initial_prompt="Create a Pipeline v1 definition",
+        )
+
+        results = await evaluate_dataset([golden], recording_agent, [], simulator_llm=None)
+
+        assert len(results) == 1
+        assert seen_messages[0][-1].content == "Create a Pipeline v1 definition"
+
     async def test_on_result_fires_per_item(self):
         """on_result fires once per conversation item with correct (index, total)."""
         goldens = [
@@ -233,9 +252,8 @@ class TestEvaluateDatasetWithConversationGolden:
         assert len(results) == 1
         assert call_count == 3
 
-    async def test_scripted_mode_requires_turns(self):
-        """SCRIPTED mode without turns raises ValueError."""
-        with pytest.raises(ValueError, match="requires 'turns'"):
+    async def test_scripted_mode_requires_turns_or_initial_prompt(self):
+        with pytest.raises(ValueError, match="requires 'turns' or 'initial_prompt'"):
             ConversationGolden(
                 scenario="test",
                 expected_outcome="done",

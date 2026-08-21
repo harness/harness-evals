@@ -193,9 +193,13 @@ class ConversationSimulator:
         agent_fn: Callable[[list[Message]], Awaitable[Message]],
     ) -> EvalCase:
         """Run agent against pre-scripted user turns from a dataset."""
-        assert golden.turns is not None
+        turns = golden.turns
+        if turns is None and golden.initial_prompt:
+            turns = [Message(role="user", content=golden.initial_prompt)]
+        if not turns:
+            raise ValueError("SCRIPTED mode requires turns or an initial_prompt")
         history: list[Message] = []
-        for turn in golden.turns:
+        for turn in turns:
             if turn.role == "user":
                 history.append(turn)
                 assistant_msg = await self._call_agent(agent_fn, history)
@@ -582,6 +586,10 @@ def _simulated_user_message(pending: PendingHumanInput, human_input: dict) -> Me
 def _human_input_preview(pending: PendingHumanInput, human_input: dict) -> str:
     result = human_input.get("result") if isinstance(human_input.get("result"), dict) else {}
     if pending.type == "elicitation_yaml":
+        if human_input.get("event_type") == "action_cancelled":
+            entity_info = pending.payload.get("entity_info") or {}
+            entity_type = pending.payload.get("entity_type") or entity_info.get("entity_type") or "entity"
+            return f"[Simulated YAML review: reject {entity_type}]"
         action_id = str(result.get("action_id") or "accept")
         entity_type = human_input.get("entity_type") or result.get("entity_type") or "entity"
         return f"[Simulated YAML review: {action_id} {entity_type}]"

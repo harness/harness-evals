@@ -30,6 +30,9 @@ Check keys:
     match_any          list of ``match`` lists; OR semantics on the same item.
     occurrence           ``any`` (default), ``first``, ``second``, ``third``, or ``last``.
                        Ordinals index into captured payloads of that event type (1-based names).
+    events               optional list of event names — payloads are merged across all listed types
+                       (use instead of ``event`` for OR-across-event-type checks).
+    optional             when true, the check passes if no matching events were captured.
 """
 
 from __future__ import annotations
@@ -107,11 +110,18 @@ class SseEventsMatchMetric(BaseMetric):
 
 def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_case: EvalCase) -> dict[str, Any]:
     event = check.get("event")
+    events = check.get("events")
     label = _label(check)
-    if not event:
-        return {"passed": False, "label": label, "detail": "check missing 'event'"}
+    if not event and not events:
+        return {"passed": False, "label": label, "detail": "check missing 'event' or 'events'"}
 
-    payloads = sse_events.get(event, [])
+    if events:
+        payloads: list[Any] = []
+        for event_name in events:
+            if isinstance(event_name, str):
+                payloads.extend(sse_events.get(event_name, []))
+    else:
+        payloads = sse_events.get(event, [])
 
     if "exists" in check:
         want = bool(check["exists"])
@@ -133,6 +143,12 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
         return _check_forbidden_contains(label, candidates, check.get("path"), str(forbidden))
 
     if not payloads:
+        if check.get("optional"):
+            return {
+                "passed": True,
+                "label": label,
+                "detail": "optional check skipped (no matching events captured)",
+            }
         return {"passed": False, "label": label, "detail": "event not captured"}
 
     candidates = _select(payloads, check.get("occurrence", "any"))
@@ -364,5 +380,8 @@ def _describe_check_expectation(check: dict[str, Any]) -> str:
 
 
 def _label(check: dict[str, Any]) -> str:
-    event = check.get("event", "?")
+    event = check.get("event")
+    if not event:
+        events = check.get("events")
+        event = "+".join(events) if isinstance(events, list) and events else "?"
     return f"{event}.{_describe_check_expectation(check)}"

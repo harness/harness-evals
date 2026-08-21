@@ -49,6 +49,24 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Framework log level (overrides HARNESS_EVALS_LOG_LEVEL)",
     )
+    run_parser.add_argument(
+        "--golden-ids",
+        default=None,
+        help="Run only these dataset goldens (comma-separated ids; overrides eval YAML golden_ids)",
+    )
+    run_parser.add_argument(
+        "--modules",
+        default=None,
+        help="Run goldens whose tags.module matches (comma-separated, e.g. ci,ce,cd; overrides eval YAML modules)",
+    )
+    run_parser.add_argument(
+        "--golden-tags",
+        default=None,
+        help=(
+            "Run goldens matching all tag filters (comma-separated key=value pairs, "
+            "e.g. scenario_type=write,environment=qa; overrides eval YAML golden_tags)"
+        ),
+    )
 
     # --- import ---
     import_parser = sub.add_parser("import", help="Translate a platform eval definition to YAML")
@@ -169,13 +187,28 @@ def _cmd_run(args: argparse.Namespace) -> int:
         scores_to_baseline_dict,
     )
     from harness_evals.config.schema import load_config
+    from harness_evals.datasets.filter import parse_golden_ids, parse_golden_tags, parse_modules
     from harness_evals.logging_config import configure_logging
 
     configure_logging(args.log_level)
     cfg = load_config(args.config)
 
+    if args.golden_ids:
+        cfg.golden_ids = parse_golden_ids(args.golden_ids)
+    if args.modules:
+        cfg.modules = parse_modules(args.modules)
+    if args.golden_tags:
+        cfg.golden_tags = parse_golden_tags(args.golden_tags)
+
     if args.validate:
-        print(f"Config valid: {cfg.name} ({len(cfg.metrics)} metrics)", file=sys.stderr)
+        detail = f"{len(cfg.metrics)} metrics"
+        if cfg.golden_ids:
+            detail += f", golden_ids={','.join(cfg.golden_ids)}"
+        if cfg.modules:
+            detail += f", modules={','.join(cfg.modules)}"
+        if cfg.golden_tags:
+            detail += f", golden_tags={cfg.golden_tags}"
+        print(f"Config valid: {cfg.name} ({detail})", file=sys.stderr)
         return 0
 
     if args.result_file:

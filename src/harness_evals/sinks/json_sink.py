@@ -110,6 +110,25 @@ def _messages_for_json(messages: list[dict[str, Any]] | None) -> list[dict[str, 
     return cleaned
 
 
+def _agent_model_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    """Resolve the unified agent model from captured ``model_usage`` SSE events."""
+    if not isinstance(metadata, dict):
+        return None
+    direct = metadata.get("agent_model")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    events = metadata.get("sse_events")
+    if not isinstance(events, dict):
+        return None
+    payloads = events.get("model_usage") or []
+    for payload in reversed(payloads):
+        if isinstance(payload, dict):
+            model = payload.get("model")
+            if isinstance(model, str) and model.strip():
+                return model.strip()
+    return None
+
+
 def _debug_metadata(metadata: dict[str, Any] | None, messages: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Small eval-run context for debugging; golden config (sse_checks) stays in the dataset."""
     debug: dict[str, Any] = {}
@@ -117,6 +136,9 @@ def _debug_metadata(metadata: dict[str, Any] | None, messages: list[dict[str, An
         for key in _DEBUG_METADATA_KEYS:
             if key in metadata:
                 debug[key] = metadata[key]
+        agent_model = _agent_model_from_metadata(metadata)
+        if agent_model:
+            debug["agent_model"] = agent_model
     if isinstance(messages, list):
         for msg in reversed(messages):
             if not isinstance(msg, dict):

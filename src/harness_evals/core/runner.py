@@ -367,6 +367,8 @@ async def _evaluate_dataset_conversation(
     on_progress: OnProgress | None = None,
     human_input_simulator: object | None = None,
     elicitation_simulator: object | None = None,
+    elicitation_resume_delay_s: float = 0.0,
+    post_elicitation_settle_delay_s: float = 0.0,
 ) -> list[list[Score]]:
     """Internal helper: evaluate a list of ConversationGolden instances."""
     from harness_evals.conversation.simulator import ConversationSimulator
@@ -378,6 +380,8 @@ async def _evaluate_dataset_conversation(
         simulator_llm,
         max_concurrent=max_concurrent,
         human_input_simulator=resolved_simulator,  # type: ignore[arg-type]
+        elicitation_resume_delay_s=elicitation_resume_delay_s,
+        post_elicitation_settle_delay_s=post_elicitation_settle_delay_s,
     )
     total = len(goldens)
     sem = asyncio.Semaphore(max_concurrent)
@@ -509,6 +513,8 @@ async def evaluate_dataset(
     on_progress: OnProgress | None = None,
     human_input_simulator: object | None = None,
     elicitation_simulator: object | None = None,
+    elicitation_resume_delay_s: float = 0.0,
+    post_elicitation_settle_delay_s: float = 0.0,
 ) -> list[list[Score]]:
     """Run an agent on goldens, then evaluate each resulting EvalCase.
 
@@ -592,6 +598,8 @@ async def evaluate_dataset(
             on_result=on_result,
             on_progress=on_progress,
             human_input_simulator=human_input_simulator or elicitation_simulator,
+            elicitation_resume_delay_s=elicitation_resume_delay_s,
+            post_elicitation_settle_delay_s=post_elicitation_settle_delay_s,
         )
 
     return await _evaluate_dataset_single(

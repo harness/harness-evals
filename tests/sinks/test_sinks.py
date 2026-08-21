@@ -354,6 +354,28 @@ class TestJsonSink:
         record = json.loads(path.read_text().strip())
         assert record["debug"]["golden_id"] == "code-8710e2d8-discover"
 
+    def test_debug_includes_agent_model_from_model_usage(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="scenario",
+            output="done",
+            messages=[Message(role="user", content="hi")],
+            metadata={
+                "golden_id": "row-1",
+                "sse_events": {
+                    "model_usage": [
+                        {"input_tokens": 1, "output_tokens": 2},
+                        {"input_tokens": 3, "output_tokens": 4, "model": "claude-sonnet-4-20250514"},
+                    ]
+                },
+            },
+        )
+        sink = JsonSink(str(path), include_eval_case=True, omit_messages=False)
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert record["debug"]["agent_model"] == "claude-sonnet-4-20250514"
+
     def test_finalize_appends_summary_record(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"
         sink = JsonSink(str(path))

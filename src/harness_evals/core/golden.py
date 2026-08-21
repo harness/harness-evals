@@ -15,6 +15,7 @@ class Golden:
     """
 
     input: str | dict | list
+    id: str | None = None
     expected: str | dict | list | None = None
     context: list[str] | None = None
     expected_tools: list[str] | None = None

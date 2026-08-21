@@ -90,6 +90,9 @@ baseline: {store: json, path: .evals/baseline.json}
 
 ```bash
 harness-evals run my-eval.eval.yaml                # run the eval
+harness-evals run my-eval.eval.yaml --golden-ids case-a,case-b  # run subset by golden id
+harness-evals run my-eval.eval.yaml --modules ci,ce             # run goldens tagged module=ci or ce
+harness-evals run my-eval.eval.yaml --golden-tags scenario_type=write,environment=qa
 harness-evals run my-eval.eval.yaml --baseline     # compare against stored baseline
 harness-evals run my-eval.eval.yaml --fail-under 0.8  # CI gate on absolute score
 harness-evals list-metrics                         # see all available metrics

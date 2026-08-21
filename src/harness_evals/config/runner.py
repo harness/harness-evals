@@ -390,6 +390,17 @@ async def _run_config_async(
         source = source_cls.from_ref(cfg.dataset)
         async with source:
             goldens = await source.fetch(cfg.dataset)
+    if cfg.golden_ids:
+        from harness_evals.datasets.filter import filter_goldens_by_ids
+
+        goldens = filter_goldens_by_ids(goldens, cfg.golden_ids)
+
+    from harness_evals.datasets.filter import filter_goldens_by_tags, merge_golden_tag_filter
+
+    tag_filter = merge_golden_tag_filter(modules=cfg.modules, golden_tags=cfg.golden_tags)
+    if tag_filter:
+        goldens = filter_goldens_by_tags(goldens, tag_filter)
+
     logger.debug(
         "Loaded dataset %s://%s: %d goldens (samples: %s)",
         cfg.dataset.source,
@@ -424,6 +435,16 @@ async def _run_config_async(
             simulator_llm = _resolve_simulator_llm(cfg.conversation, judge_llm)
             human_input_simulator = _build_human_input_simulator(cfg.conversation, simulator_llm)
 
+            resume_delay = (
+                cfg.conversation.elicitation_resume_delay_s
+                if cfg.conversation.elicitation_resume_delay_s is not None
+                else 0.0
+            )
+            settle_delay = (
+                cfg.conversation.post_elicitation_settle_delay_s
+                if cfg.conversation.post_elicitation_settle_delay_s is not None
+                else 0.0
+            )
             scores = await evaluate_dataset(
                 goldens,
                 agent_fn,
@@ -432,6 +453,8 @@ async def _run_config_async(
                 concurrency=cfg.concurrency,
                 simulator_llm=simulator_llm,
                 human_input_simulator=human_input_simulator,
+                elicitation_resume_delay_s=resume_delay,
+                post_elicitation_settle_delay_s=settle_delay,
                 on_progress=on_progress,
                 on_result=on_result,
             )

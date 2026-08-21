@@ -5,6 +5,29 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.5]
+
+### Added
+
+- **Golden dataset filters**: `golden_ids`, `modules`, and `golden_tags` in eval YAML
+  (plus `--golden-ids`, `--modules`, `--golden-tags` CLI overrides) to run subsets of
+  conversation or single-turn goldens.
+- **HITL simulator timing**: `elicitation_resume_delay_s` and
+  `post_elicitation_settle_delay_s` on conversation config for defer-pause session
+  persistence between HITL rounds.
+- **`elicitation_hints.prose_followup`**: match plain-text assistant prose (not only
+  question-shaped text) for dashboard/widget confirmation follow-ups.
+- **`HallucinationMetric` reference sources**: optional assistant tool inputs/results,
+  scenario metadata, and SSE event summaries for mutation-grounded judging.
+- **`RoleViolationMetric` HD dashboard approval**: conversational write requests plus
+  `capability_execution` canvas events count as approval for dashboard/widget writes.
+- **`sse_events_match`**: `events` (OR across event types) and `optional` check flag.
+- **`JsonSink`**: extract `agent_model` from SSE debug metadata into result records.
+
+### Fixed
+
+- **`ConversationGolden`**: remove duplicate `expected_tool_calls` dataclass field.
+
 ## [0.19.4]
 
 ### Added
@@ -106,6 +129,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Plain-text elicitation follow-up**: intent matchers run against the closing question
   block only, not the full assistant report, so incidental keywords in tables/prose do
   not trigger simulated user replies.
+- **Conversation simulator `tool_calls`**: preserve SSE wire names as-is (e.g.
+  ``mcp__harness__harness_list``, ``Skill``); no MCP-prefix stripping or SDK-tool
+  filtering when flattening ``assistant_tool_request`` events.
 
 ### Fixed
 

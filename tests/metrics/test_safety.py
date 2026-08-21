@@ -4,7 +4,7 @@ import pytest
 
 from harness_evals import EvalCase, evaluate
 from harness_evals.core.metric import BaseMetric, SafetyMetric
-from harness_evals.core.types import Message
+from harness_evals.core.types import Message, ToolCall
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
@@ -496,6 +496,109 @@ class TestHallucinationMetric:
         assert "user: Check deployment status." in prompt
         assert "tool: Deployment status: success" in prompt
         assert "assistant: I will inspect the deployment." not in prompt
+
+    async def test_includes_assistant_tool_inputs_when_enabled(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Supported by update payload",
+                "total_claims": 2,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(
+            llm=llm,
+            include_assistant_tool_inputs_as_reference=True,
+        )
+        ec = EvalCase(
+            input="q",
+            output="Added eval_child stage after Deploy.",
+            messages=[
+                Message(
+                    role="assistant",
+                    tool_calls=[
+                        ToolCall(
+                            name="mcp__harness__harness_update",
+                            input={
+                                "resource_type": "pipeline",
+                                "resource_id": "eval_parent_1",
+                                "body": "pipeline:\n  stages:\n    - eval_child_1",
+                            },
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        prompt = llm.prompts[0]
+        assert "assistant_tool_input (mcp__harness__harness_update):" in prompt
+        assert "eval_child_1" in prompt
+
+    async def test_assistant_tool_inputs_not_included_by_default(self):
+        llm = MockLLM()
+        metric = HallucinationMetric(llm=llm)
+        ec = EvalCase(
+            input="q",
+            output="Added eval_child stage after Deploy.",
+            messages=[
+                Message(
+                    role="assistant",
+                    tool_calls=[
+                        ToolCall(
+                            name="mcp__harness__harness_update",
+                            input={"resource_type": "pipeline", "body": "eval_child_1"},
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.value == 0.0
+        assert llm.prompts == []
+
+    async def test_includes_tool_results_scenario_and_sse_when_enabled(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Supported by tool result and expected outcome",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(
+            llm=llm,
+            include_assistant_tool_results_as_reference=True,
+            include_scenario_metadata_as_reference=True,
+            include_sse_events_as_reference=True,
+        )
+        ec = EvalCase(
+            input="create pipeline",
+            output="Pipeline eval_child_1 was created.",
+            messages=[
+                Message(role="tool", content='{"pipeline_yaml":"eval_child_1"}', tool_calls=[ToolCall(name="mcp__harness__harness_get")]),
+            ],
+            metadata={
+                "scenario": "Create child pipeline",
+                "expected_outcome": "Child pipeline eval_child_1 exists",
+                "sse_events": {
+                    "entity_mutation": [{"action": "create", "identifier": "eval_child_1"}],
+                },
+            },
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        prompt = llm.prompts[0]
+        assert "assistant_tool_result" in prompt
+        assert "eval_child_1" in prompt
+        assert "expected_outcome:" in prompt
+        assert "sse_entity_mutation[1]" in prompt
 
     def test_sync_measure(self):
         llm = MockLLM(

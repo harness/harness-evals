@@ -5,7 +5,7 @@ import json
 import pytest
 from examples.harness_sse_elicitation_adapter import ElicitationSimulator
 
-from harness_evals.conversation import ConversationGolden, ConversationSimulator
+from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
 
@@ -70,6 +70,117 @@ async def test_simulator_uses_initial_prompt_and_resolves_elicitation():
 
 
 @pytest.mark.unit
+async def test_elicitation_resume_delay_before_human_input_call(monkeypatch):
+    golden = ConversationGolden(
+        scenario="Create a pipeline",
+        expected_outcome="Pipeline created",
+        max_turns=1,
+        max_elicitation_rounds=2,
+        initial_prompt="Create a pipeline",
+        elicitation_hints={
+            "intents": {"pipeline_name": "payments"},
+            "matchers": [{"intent": "pipeline_name", "question_contains": ["pipeline", "name"]}],
+        },
+    )
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("harness_evals.conversation.simulator.asyncio.sleep", fake_sleep)
+
+    calls = 0
+
+    async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if human_input is None:
+            return Message(
+                role="assistant",
+                metadata={
+                    "pending_elicitation": {
+                        "type": "elicitation_free_text",
+                        "payload": {
+                            "review_id": "ask-pipeline-name",
+                            "content": {"question": "What pipeline name should I use?"},
+                        },
+                    }
+                },
+            )
+        return Message(role="assistant", content="Pipeline created.")
+
+    simulator = ConversationSimulator(
+        simulator_llm=StopLLM(),
+        elicitation_simulator=ElicitationSimulator(),
+        elicitation_resume_delay_s=2.0,
+    )
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert sleep_calls == [2.0]
+    assert eval_case.output == "Pipeline created."
+    assert calls == 2
+
+
+@pytest.mark.unit
+async def test_post_elicitation_settle_delay_before_next_scripted_turn(monkeypatch):
+    golden = ConversationGolden(
+        scenario="Create then update a pipeline",
+        expected_outcome="Pipeline created and updated",
+        mode=ConversationMode.SCRIPTED,
+        turns=[
+            Message(role="user", content="Create a pipeline"),
+            Message(role="user", content="Update the pipeline tags"),
+        ],
+        max_elicitation_rounds=2,
+        elicitation_hints={
+            "intents": {"pipeline_name": "payments"},
+            "matchers": [{"intent": "pipeline_name", "question_contains": ["pipeline", "name"]}],
+        },
+    )
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("harness_evals.conversation.simulator.asyncio.sleep", fake_sleep)
+
+    calls = 0
+
+    async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if human_input is not None:
+            return Message(role="assistant", content="Pipeline created.")
+        last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        if "Update" in (last_user or ""):
+            return Message(role="assistant", content="Pipeline updated.")
+        return Message(
+            role="assistant",
+            metadata={
+                "pending_elicitation": {
+                    "type": "elicitation_free_text",
+                    "payload": {
+                        "review_id": "ask-pipeline-name",
+                        "content": {"question": "What pipeline name should I use?"},
+                    },
+                }
+            },
+        )
+
+    simulator = ConversationSimulator(
+        simulator_llm=StopLLM(),
+        elicitation_simulator=ElicitationSimulator(),
+        elicitation_resume_delay_s=2.0,
+        post_elicitation_settle_delay_s=3.0,
+    )
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert sleep_calls == [2.0, 3.0]
+    assert eval_case.output == "Pipeline updated."
+    assert calls == 3
+
+
+@pytest.mark.unit
 async def test_multi_round_sse_tool_calls_are_not_double_counted():
     golden = ConversationGolden(
         scenario="Create a pipeline",
@@ -131,7 +242,10 @@ async def test_multi_round_sse_tool_calls_are_not_double_counted():
     simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
     eval_case = await simulator.simulate(golden, agent_fn)
 
-    expected_names = ["validate_pipeline_yaml", "harness_create"]
+    expected_names = [
+        "mcp__harness_local__validate_pipeline_yaml",
+        "mcp__harness__harness_create",
+    ]
     assert [tool_call.name for tool_call in eval_case.tool_calls or []] == expected_names
     assert len(eval_case.metadata["sse_events"]["assistant_tool_request"]) == 2
     message_tool_names = [
@@ -269,6 +383,114 @@ async def test_plain_text_followup_uses_elicitation_hints():
     assert len(simulated) == 1
     assert simulated[0].content == "eval_cost_category_test"
     assert eval_case.metadata["elicitation_trace"][0]["kind"] == "plain_text_user_reply"
+
+
+@pytest.mark.unit
+async def test_plain_text_followup_confirms_dashboard_widget_create():
+    golden = ConversationGolden(
+        scenario="Build a dashboard widget tracking lead time to change",
+        expected_outcome="Widget emitted",
+        max_turns=1,
+        max_elicitation_rounds=4,
+        initial_prompt="Track lead time to production in a dashboard widget.",
+        elicitation_hints={
+            "intents": {
+                "create_widget": (
+                    "Yes, create the dashboard widget now using that query. "
+                    "Do not wait for another confirmation."
+                ),
+                "time_filter": "No time filter — show all historical data",
+            },
+            "matchers": [
+                {
+                    "intent": "create_widget",
+                    "question_contains": [
+                        "create a dashboard widget",
+                        "would you like me to create",
+                    ],
+                },
+                {
+                    "intent": "time_filter",
+                    "question_contains": ["time filter", "historical data"],
+                },
+            ],
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return Message(
+                role="assistant",
+                content=(
+                    "HQL is valid for lead time to production.\n\n"
+                    "Would you like me to create a dashboard widget with this query?"
+                ),
+            )
+        return Message(role="assistant", content="Emitting the widget now.")
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert calls == 2
+    simulated = [m for m in eval_case.messages if (m.metadata or {}).get("plain_text_followup")]
+    assert len(simulated) == 1
+    assert simulated[0].metadata["intent"] == "create_widget"
+    assert simulated[0].content.startswith("Yes, create the dashboard widget")
+
+
+@pytest.mark.unit
+async def test_plain_text_prose_followup_confirms_dashboard_widget_create():
+    golden = ConversationGolden(
+        scenario="Build a dashboard widget tracking lead time to change",
+        expected_outcome="Widget emitted",
+        max_turns=1,
+        max_elicitation_rounds=4,
+        initial_prompt="Track lead time to production in a dashboard widget.",
+        elicitation_hints={
+            "prose_followup": True,
+            "intents": {
+                "create_widget": (
+                    "Yes, create the dashboard widget now using that query. "
+                    "Do not wait for another confirmation."
+                ),
+            },
+            "matchers": [
+                {
+                    "intent": "create_widget",
+                    "question_contains": [
+                        "query executed but returned no rows",
+                        "hql query for",
+                    ],
+                },
+            ],
+        },
+    )
+    calls = 0
+
+    async def agent_fn(messages: list[Message], system_event: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return Message(
+                role="assistant",
+                content=(
+                    "The query executed but returned no rows.\n\n"
+                    "## HQL Query for Deployment Tag Lead Time Tracking\n\n"
+                    'find entity "cd:stage_execution" | limit 10'
+                ),
+            )
+        return Message(role="assistant", content="Emitting the widget now.")
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert calls == 2
+    simulated = [m for m in eval_case.messages if (m.metadata or {}).get("plain_text_followup")]
+    assert len(simulated) == 1
+    assert simulated[0].metadata["intent"] == "create_widget"
 
 
 @pytest.mark.unit

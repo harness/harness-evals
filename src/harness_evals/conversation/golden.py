@@ -49,13 +49,12 @@ class ConversationGolden:
     # May contain shell-style ``${var}`` placeholders; those are not eval env vars.
     expected: str | dict | list | None = None
     # Optional expected tool trajectory for tool_argument_match (short names, e.g.
-    # validate_pipeline_yaml / harness_create — not mcp__* prefixes).
+    # validate_pipeline_yaml / harness_create — wire-prefixed names also match).
     expected_tool_calls: list[ToolCall] | None = field(default=None)
     mode: ConversationMode | None = None
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
-    expected_tool_calls: list[ToolCall] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.mode is None:

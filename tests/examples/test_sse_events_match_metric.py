@@ -7,6 +7,50 @@ from harness_evals.core.eval_case import EvalCase
 
 
 @pytest.mark.unit
+def test_sse_events_match_optional_skips_missing_event() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "events": ["elicitation_form", "elicitation_confirm"],
+                "optional": True,
+                "match": [{"path": "$.subtitle", "contains": "Bucketing"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(input="ccm", output="done", metadata={"sse_events": {}})
+
+    score = metric.measure(eval_case)
+
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_events_across_types() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "events": ["elicitation_form", "elicitation_confirm"],
+                "match": [{"path": "$.entity_info.entity_type", "equals": "cost_category"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="ccm",
+        output="done",
+        metadata={
+            "sse_events": {
+                "elicitation_confirm": [{"entity_info": {"entity_type": "cost_category"}}],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+
+    assert score.passed
+
+
+@pytest.mark.unit
 def test_sse_events_match_failure_includes_actual_values() -> None:
     metric = SseEventsMatchMetric(
         checks=[{"event": "entity_mutation", "path": "$.resource_type", "equals": "pipeline"}],

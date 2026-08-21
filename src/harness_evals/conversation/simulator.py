@@ -76,12 +76,20 @@ class ConversationSimulator:
         graph: SimulationGraph | None = None,
         human_input_simulator: HumanInputSimulator | None = None,
         elicitation_simulator: HumanInputSimulator | None = None,
+        elicitation_resume_delay_s: float = 0.0,
+        post_elicitation_settle_delay_s: float = 0.0,
     ) -> None:
         self.simulator_llm = simulator_llm
         self.max_concurrent = max_concurrent
         self.graph = graph
         self.human_input_simulator = human_input_simulator or elicitation_simulator
         self.elicitation_simulator = self.human_input_simulator
+        if elicitation_resume_delay_s < 0:
+            raise ValueError("elicitation_resume_delay_s must be >= 0")
+        if post_elicitation_settle_delay_s < 0:
+            raise ValueError("post_elicitation_settle_delay_s must be >= 0")
+        self.elicitation_resume_delay_s = elicitation_resume_delay_s
+        self.post_elicitation_settle_delay_s = post_elicitation_settle_delay_s
 
     def _require_llm(self) -> BaseLLM:
         if self.simulator_llm is None:
@@ -138,6 +146,7 @@ class ConversationSimulator:
 
             assistant_msg = await self._call_agent(agent_fn, history)
             assistant_msg = await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+            await self._post_elicitation_settle(history)
 
             if await self._should_stop(golden, history):
                 break
@@ -200,6 +209,7 @@ class ConversationSimulator:
                 history.append(turn)
                 assistant_msg = await self._call_agent(agent_fn, history)
                 await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+                await self._post_elicitation_settle(history)
         return self._build_eval_case(golden, history)
 
     def _replay(self, golden: ConversationGolden) -> EvalCase:
@@ -263,6 +273,7 @@ class ConversationSimulator:
             history.append(Message(role="user", content=user_text))
             assistant_msg = await self._call_agent(agent_fn, history)
             await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+            await self._post_elicitation_settle(history)
             turns_used += 1
 
             next_id = graph.resolve_next(current, assistant_msg)
@@ -489,6 +500,12 @@ class ConversationSimulator:
                 pending.correlation_id,
                 compact_json(human_input),
             )
+            if self.elicitation_resume_delay_s > 0:
+                _logger.info(
+                    "Waiting %.1fs before HITL resume so defer-pause session can persist",
+                    self.elicitation_resume_delay_s,
+                )
+                await asyncio.sleep(self.elicitation_resume_delay_s)
             assistant_msg = await self._call_agent(agent_fn, history, human_input=human_input)
             _merge_sse_events(accumulated_sse, assistant_msg.metadata)
             history.append(assistant_msg)
@@ -512,6 +529,26 @@ class ConversationSimulator:
             }
         )
         return _finalize_elicitation(assistant_msg, trace, rounds)
+
+    async def _post_elicitation_settle(self, history: list[Message]) -> None:
+        """Wait after HITL elicitation so server-side P2 + session persist can finish."""
+        if self.post_elicitation_settle_delay_s <= 0:
+            return
+        rounds = 0
+        for msg in reversed(history):
+            if msg.role != "assistant" or not msg.metadata:
+                continue
+            raw_rounds = msg.metadata.get("elicitation_rounds")
+            if raw_rounds is not None:
+                rounds = int(raw_rounds)
+            break
+        if rounds <= 0:
+            return
+        _logger.info(
+            "Waiting %.1fs after HITL elicitation so server can finish P2 and persist session",
+            self.post_elicitation_settle_delay_s,
+        )
+        await asyncio.sleep(self.post_elicitation_settle_delay_s)
 
     async def _call_agent(
         self,
@@ -667,10 +704,16 @@ def _plain_text_followup(
         return None
 
     question_scope = _plain_text_question_scope(content)
-    if not question_scope or not _looks_like_user_question(question_scope):
+    match_scope = ""
+    if question_scope and _looks_like_user_question(question_scope):
+        match_scope = question_scope
+    elif (golden.elicitation_hints or {}).get("prose_followup"):
+        match_scope = _plain_text_prose_scope(content)
+
+    if not match_scope:
         return None
 
-    lowered = question_scope.lower()
+    lowered = match_scope.lower()
     if (
         "cost category" in lowered
         and sum(1 for token in ("name", "bucket", "structure", "organize") if token in lowered) >= 2
@@ -679,13 +722,49 @@ def _plain_text_followup(
         if composite is not None:
             return composite
 
-    intent = resolve_intent(question_scope, golden, plain_text=True)
+    intent = resolve_intent(match_scope, golden, plain_text=True)
     if intent and intent not in used_intents:
         answer = intents(golden).get(intent, "")
         if answer:
             return {"intent": intent, "answer": answer, "intents": [intent]}
 
     return None
+
+
+def _plain_text_prose_scope(content: str) -> str:
+    """Return assistant prose that presents an HQL/query outcome without a question mark.
+
+    Used when ``elicitation_hints.prose_followup`` is set on the golden (e.g. dashboard
+    widget flows where the agent stops at a validated query template).
+    """
+    text = content.strip()
+    if not text:
+        return ""
+
+    lowered = text.lower()
+    markers = (
+        "here's a working query",
+        "here is a working query",
+        "hql query for",
+        "query template",
+        "validated hql",
+        "working hql query",
+        "query executed but returned no rows",
+        "the query executed but returned",
+    )
+    for marker in markers:
+        idx = lowered.rfind(marker)
+        if idx >= 0:
+            return text[idx:].strip()
+
+    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
+    if paragraphs:
+        last = paragraphs[-1]
+        last_lower = last.lower()
+        if any(token in last_lower for token in ("find entity", "find event", "```", "hql query")):
+            return last
+
+    return ""
 
 
 def _plain_text_question_scope(content: str) -> str:

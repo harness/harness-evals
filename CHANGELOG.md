@@ -5,6 +5,20 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.5]
+
+### Added
+
+- **Scripted `initial_prompt` conversations**: fixed one-turn agent evals can run
+  without duplicating the prompt as `turns` or configuring a simulator LLM.
+
+### Fixed
+
+- **Harness YAML review rejection**: deny/reject actions now emit
+  `action_cancelled`, preventing mutation after a review-only eval.
+- **Cancellation trajectory labels**: elicitation traces record rejected YAML
+  reviews as rejection rather than acceptance.
+
 ## [0.19.4]
 
 ### Added

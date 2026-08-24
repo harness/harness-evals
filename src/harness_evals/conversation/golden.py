@@ -67,8 +67,10 @@ class ConversationGolden:
                 self.mode = ConversationMode.SIMULATE
 
         mode = self.mode
-        if mode in (ConversationMode.REPLAY, ConversationMode.SCRIPTED) and not self.turns:
-            raise ValueError(f"mode={mode.value!r} requires 'turns' to be provided")
+        if mode == ConversationMode.REPLAY and not self.turns:
+            raise ValueError("mode='replay' requires 'turns' to be provided")
+        if mode == ConversationMode.SCRIPTED and not self.turns and not self.initial_prompt:
+            raise ValueError("mode='scripted' requires 'turns' or 'initial_prompt' to be provided")
 
         if (
             mode == ConversationMode.SCRIPTED

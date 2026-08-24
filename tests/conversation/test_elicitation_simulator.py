@@ -6,6 +6,8 @@ import pytest
 from examples.harness_sse_elicitation_adapter import ElicitationSimulator
 
 from harness_evals.conversation import ConversationGolden, ConversationSimulator
+from harness_evals.conversation.human_input import PendingHumanInput
+from harness_evals.conversation.simulator import _human_input_preview
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
 
@@ -16,6 +18,54 @@ class StopLLM(BaseLLM):
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs) -> dict:
         return {"achieved": True, "reasoning": "done"}
+
+
+@pytest.mark.unit
+def test_cancelled_yaml_preview_reports_rejection():
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_yaml",
+            "payload": {
+                "review_id": "rev-pipeline",
+                "entity_info": {"entity_type": "pipeline_v1"},
+            },
+        }
+    )
+
+    preview = _human_input_preview(
+        pending,
+        {
+            "event_type": "action_cancelled",
+            "capability_id": "rev-pipeline",
+            "result": {},
+        },
+    )
+
+    assert preview == "[Simulated YAML review: reject pipeline_v1]"
+
+
+@pytest.mark.unit
+def test_cancelled_confirm_preview_reports_rejection():
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_confirm",
+            "payload": {
+                "review_id": "rev-ccm",
+                "entity_info": {"entity_type": "cost_category"},
+            },
+        }
+    )
+
+    preview = _human_input_preview(
+        pending,
+        {
+            "event_type": "action_cancelled",
+            "capability_id": "rev-ccm",
+            "result": {},
+        },
+    )
+
+    assert preview == "[Simulated elicitation_confirm review: reject cost_category]"
 
 
 @pytest.mark.unit

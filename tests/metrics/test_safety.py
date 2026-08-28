@@ -4,7 +4,7 @@ import pytest
 
 from harness_evals import EvalCase, evaluate
 from harness_evals.core.metric import BaseMetric, SafetyMetric
-from harness_evals.core.types import Message
+from harness_evals.core.types import Message, ToolCall
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
@@ -497,6 +497,163 @@ class TestHallucinationMetric:
         assert "tool: Deployment status: success" in prompt
         assert "assistant: I will inspect the deployment." not in prompt
 
+    async def test_truncates_large_message_content_as_reference(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Supported by truncated tool output",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        from harness_evals.metrics.safety.hallucination import _SSE_REFERENCE_MAX_CHARS, _truncate_reference_text
+
+        metric = HallucinationMetric(llm=llm, include_messages_as_reference=True)
+        long_content = "x" * 5000
+        ec = EvalCase(
+            input="q",
+            output="Summary of large tool output.",
+            messages=[Message(role="tool", content=long_content)],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        truncated = _truncate_reference_text(long_content)
+        assert len(truncated) == _SSE_REFERENCE_MAX_CHARS
+        assert f"tool: {truncated}" in llm.prompts[0]
+        assert long_content not in llm.prompts[0]
+
+    async def test_includes_configured_sse_events_as_reference(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Grounded in mutation event",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(
+            llm=llm,
+            include_sse_events_as_reference=True,
+            sse_reference_events=["entity_created"],
+        )
+        ec = EvalCase(
+            input="q",
+            output="Resource was created.",
+            metadata={
+                "sse_events": {
+                    "entity_created": [{"identifier": "demo-resource", "status": "SUCCESS"}],
+                }
+            },
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        assert "sse_entity_created[1]" in llm.prompts[0]
+
+    async def test_includes_assistant_tool_inputs_as_reference_when_enabled(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Grounded in tool input",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(llm=llm, include_assistant_tool_inputs_as_reference=True)
+        ec = EvalCase(
+            input="q",
+            output="Pipeline demo-pipeline was created.",
+            messages=[
+                Message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            name="harness_create",
+                            input={"resource_type": "pipeline", "identifier": "demo-pipeline"},
+                        )
+                    ],
+                )
+            ],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        assert "assistant_tool_input (harness_create)" in llm.prompts[0]
+        assert "demo-pipeline" in llm.prompts[0]
+
+    async def test_includes_assistant_tool_results_as_reference_when_enabled(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Grounded in tool result",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(llm=llm, include_assistant_tool_results_as_reference=True)
+        ec = EvalCase(
+            input="q",
+            output="The connector test succeeded.",
+            messages=[
+                Message(
+                    role="tool",
+                    content='{"status": "SUCCESS", "message": "Connection validated"}',
+                    tool_calls=[ToolCall(name="harness_execute", input=None)],
+                )
+            ],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        assert "assistant_tool_result (harness_execute)" in llm.prompts[0]
+        assert "Connection validated" in llm.prompts[0]
+
+    async def test_includes_scenario_metadata_as_reference_when_enabled(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Grounded in scenario metadata",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(llm=llm, include_scenario_metadata_as_reference=True)
+        ec = EvalCase(
+            input="q",
+            output="The agent created the GitHub connector.",
+            metadata={
+                "scenario": "Create a GitHub connector in the default project",
+                "expected_outcome": "Connector exists and connection test passes",
+            },
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        prompt = llm.prompts[0]
+        assert "scenario: Create a GitHub connector in the default project" in prompt
+        assert "expected_outcome: Connector exists and connection test passes" in prompt
+
+    async def test_sse_reference_requires_explicit_event_names(self):
+        llm = MockLLM()
+        metric = HallucinationMetric(llm=llm, include_sse_events_as_reference=True)
+        ec = EvalCase(
+            input="q",
+            output="Resource was created.",
+            metadata={"sse_events": {"entity_created": [{"identifier": "demo-resource"}]}},
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.value == 0.0
+        assert llm.prompts == []
+
     def test_sync_measure(self):
         llm = MockLLM(
             default={
@@ -518,3 +675,11 @@ class TestHallucinationMetric:
     def test_is_safety_metric(self):
         llm = MockLLM()
         assert isinstance(HallucinationMetric(llm=llm), SafetyMetric)
+
+    def test_format_tool_input_truncates_large_payloads(self):
+        from harness_evals.metrics.safety.hallucination import _SSE_REFERENCE_MAX_CHARS, _format_tool_input
+
+        huge = {"yamlPipeline": "x" * 5000}
+        formatted = _format_tool_input(huge)
+        assert len(formatted) == _SSE_REFERENCE_MAX_CHARS
+        assert formatted.endswith("...")

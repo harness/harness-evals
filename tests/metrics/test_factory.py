@@ -340,3 +340,196 @@ class TestBuildLLMProviderMaxTokens:
             }
         )
         assert llm.max_tokens == 16384
+
+
+def _capture_gateway_credentials(monkeypatch):
+    """Patch the gateway HTTP client factory and record the key sent as ``x-api-key``."""
+    import sys
+    from unittest.mock import MagicMock
+
+    import harness_evals.llm.harness_gateway as hg
+
+    mock_openai = MagicMock()
+    mock_openai.AsyncOpenAI.side_effect = lambda **kw: MagicMock()
+    monkeypatch.setitem(sys.modules, "openai", mock_openai)
+
+    keys: list[str] = []
+
+    def fake_http_client(api_key, **_kwargs):
+        keys.append(api_key)
+        return MagicMock()
+
+    monkeypatch.setattr(hg, "_make_x_api_key_http_client", fake_http_client)
+    return keys
+
+
+class TestBuildLLMProviderGatewayRouting:
+    def test_promoted_gateway_prefers_harness_token_when_both_env_keys_exist(self, monkeypatch):
+        keys = _capture_gateway_credentials(monkeypatch)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.harness")
+        monkeypatch.setenv("LLM_GATEWAY_API_KEY", "pat.gateway")
+
+        from harness_evals.metrics.factory import build_llm_provider
+
+        build_llm_provider(
+            {
+                "metadata": {
+                    "provider": "openai",
+                    "use_llm_gateway": True,
+                    "model": "gpt-4o",
+                    "api_key": "sk-vendor",
+                }
+            }
+        )
+
+        assert keys == ["pat.harness"]
+
+    def test_use_llm_gateway_with_anthropic_uses_harness_gateway(self, monkeypatch):
+        keys = _capture_gateway_credentials(monkeypatch)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.acc.tok.secret")
+
+        from harness_evals.llm.harness_gateway import HarnessGatewayOpenAILLM
+        from harness_evals.metrics.factory import build_llm_provider
+
+        llm = build_llm_provider(
+            {
+                "metadata": {
+                    "provider": "anthropic",
+                    "use_llm_gateway": True,
+                    "model": "claude-sonnet-4-5",
+                    "api_key": "sk-ant-test",
+                }
+            }
+        )
+        assert isinstance(llm, HarnessGatewayOpenAILLM)
+        assert llm.model == "online/anthropic/claude-sonnet-4-5"
+        # A promoted connector carries a vendor key; the gateway only accepts the PAT.
+        assert keys == ["pat.acc.tok.secret"]
+
+    def test_promoted_gateway_without_pat_fails_fast_instead_of_using_vendor_key(self, monkeypatch):
+        monkeypatch.delenv("HARNESS_TOKEN", raising=False)
+        monkeypatch.delenv("LLM_GATEWAY_API_KEY", raising=False)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+
+        from harness_evals.metrics.factory import build_llm_provider
+
+        with pytest.raises(ValueError, match="requires HARNESS_BASE_URL and HARNESS_TOKEN"):
+            build_llm_provider(
+                {
+                    "metadata": {
+                        "provider": "openai",
+                        "use_llm_gateway": True,
+                        "model": "gpt-4o",
+                        "api_key": "sk-vendor",
+                    }
+                }
+            )
+
+    def test_explicit_gateway_provider_prefers_configured_pat(self, monkeypatch):
+        keys = _capture_gateway_credentials(monkeypatch)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.env.tok.secret")
+
+        from harness_evals.metrics.factory import build_llm_provider
+
+        build_llm_provider(
+            {
+                "metadata": {
+                    "provider": "harness_gateway",
+                    "model": "online/openai/gpt-4o",
+                    "api_key": "pat.configured.tok.secret",
+                }
+            }
+        )
+        assert keys == ["pat.configured.tok.secret"]
+
+    def test_use_llm_gateway_with_openai_uses_harness_gateway(self, monkeypatch):
+        import sys
+        from unittest.mock import MagicMock
+
+        mock_openai = MagicMock()
+        mock_openai.AsyncOpenAI.side_effect = lambda **kw: MagicMock()
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.acc.tok.secret")
+
+        from harness_evals.llm.harness_gateway import HarnessGatewayOpenAILLM
+        from harness_evals.metrics.factory import build_llm_provider
+
+        llm = build_llm_provider({"metadata": {"provider": "openai", "use_llm_gateway": True, "model": "gpt-4o"}})
+        assert isinstance(llm, HarnessGatewayOpenAILLM)
+
+    def test_bedrock_openai_without_gateway_uses_bedrock_openai_llm(self, monkeypatch):
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer")
+
+        from harness_evals.llm.bedrock import BedrockOpenAILLM
+        from harness_evals.metrics.factory import build_llm_provider
+
+        llm = build_llm_provider(
+            {
+                "metadata": {
+                    "provider": "bedrock_openai",
+                    "model": "openai.gpt-oss-120b-1:0",
+                    "api_key": "bedrock-bearer",
+                }
+            }
+        )
+        assert isinstance(llm, BedrockOpenAILLM)
+
+
+class TestBuildEmbeddingProviderGatewayRouting:
+    def test_use_llm_gateway_returns_harness_gateway_embedding(self, monkeypatch):
+        import sys
+        from unittest.mock import MagicMock
+
+        captured: dict = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        mock_openai = MagicMock()
+        mock_openai.AsyncOpenAI.side_effect = capture
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.acc.tok.secret")
+
+        from harness_evals.llm.harness_gateway import HarnessGatewayOpenAIEmbedding
+        from harness_evals.metrics.factory import build_embedding_provider
+
+        embedding = build_embedding_provider({"use_llm_gateway": True, "provider": "openai"})
+        assert isinstance(embedding, HarnessGatewayOpenAIEmbedding)
+        assert captured["api_key"] == "unused"
+        assert captured["http_client"] is not None
+        assert captured["base_url"] == "https://qa.harness.io/prod1/llm-gw/v1"
+
+    def test_use_llm_gateway_with_anthropic_returns_harness_gateway_embedding(self, monkeypatch):
+        keys = _capture_gateway_credentials(monkeypatch)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.acc.tok.secret")
+
+        from harness_evals.llm.harness_gateway import HarnessGatewayOpenAIEmbedding
+        from harness_evals.metrics.factory import build_embedding_provider
+
+        embedding = build_embedding_provider(
+            {
+                "use_llm_gateway": True,
+                "provider": "anthropic",
+                "embedding_model": "text-embedding-3-small",
+                "api_key": "sk-ant-test",
+            }
+        )
+        assert isinstance(embedding, HarnessGatewayOpenAIEmbedding)
+        assert keys == ["pat.acc.tok.secret"]
+
+    def test_explicit_gateway_provider_embedding_prefers_configured_pat(self, monkeypatch):
+        keys = _capture_gateway_credentials(monkeypatch)
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.env.tok.secret")
+
+        from harness_evals.metrics.factory import build_embedding_provider
+
+        build_embedding_provider({"provider": "harness_gateway", "api_key": "pat.configured.tok.secret"})
+        assert keys == ["pat.configured.tok.secret"]

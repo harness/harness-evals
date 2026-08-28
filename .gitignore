@@ -36,6 +36,10 @@ Thumbs.db
 
 .harness-evals/
 
+# Local eval run artifacts (never commit)
+/output/
+/presentations/
+
 # Example output artifacts
 examples/output/*
 examples/prod-conversation.goldens.manifest.jsonl

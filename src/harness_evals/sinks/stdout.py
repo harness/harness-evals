@@ -3,7 +3,13 @@ from __future__ import annotations
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
-from harness_evals.summary import UNKNOWN_DIMENSION, order_dimensions, summarize
+from harness_evals.summary import (
+    UNKNOWN_DIMENSION,
+    format_judge_spend,
+    order_dimensions,
+    summarize,
+    summarize_judge_spend,
+)
 
 
 def _bar(value: float, width: int = 10) -> str:
@@ -69,4 +75,7 @@ class StdoutSink(BaseSink):
                 print(
                     f"  ({unknown.metric_count} metric(s) with no declared dimension, shown as '{UNKNOWN_DIMENSION}')"
                 )
+        judge_spend = summarize_judge_spend(self._all_scores)
+        if judge_spend is not None:
+            print(format_judge_spend(judge_spend))
         self._all_scores.clear()

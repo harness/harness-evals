@@ -30,6 +30,11 @@ Check keys:
     match_any          list of ``match`` lists; OR semantics on the same item.
     occurrence           ``any`` (default), ``first``, ``second``, ``third``, or ``last``.
                        Ordinals index into captured payloads of that event type (1-based names).
+    events               optional list of event names — payloads are merged across all listed types
+                       (use instead of ``event`` for OR-across-event-type checks). Cannot be
+                       combined with ``occurrence`` other than ``any`` — ordinals are per single
+                       ``event`` only (merged payloads follow ``events`` list order, not stream order).
+    optional             when true, the check passes if no matching events were captured.
 """
 
 from __future__ import annotations
@@ -105,13 +110,41 @@ class SseEventsMatchMetric(BaseMetric):
         )
 
 
+def _normalize_events(events: Any) -> list[Any] | None:
+    if events is None:
+        return None
+    if isinstance(events, str):
+        return [events]
+    if isinstance(events, list):
+        return events
+    return None
+
+
 def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_case: EvalCase) -> dict[str, Any]:
     event = check.get("event")
+    events = _normalize_events(check.get("events"))
     label = _label(check)
-    if not event:
-        return {"passed": False, "label": label, "detail": "check missing 'event'"}
+    if not event and not events:
+        return {"passed": False, "label": label, "detail": "check missing 'event' or 'events'"}
 
-    payloads = sse_events.get(event, [])
+    occurrence = check.get("occurrence", "any")
+    if events and occurrence not in (None, "any"):
+        return {
+            "passed": False,
+            "label": label,
+            "detail": (
+                "occurrence cannot be used with 'events' (merged payloads follow the events "
+                "list order, not stream arrival order); use separate checks with 'event' instead"
+            ),
+        }
+
+    if events:
+        payloads: list[Any] = []
+        for event_name in events:
+            if isinstance(event_name, str):
+                payloads.extend(sse_events.get(event_name, []))
+    else:
+        payloads = sse_events.get(event, [])
 
     if "exists" in check:
         want = bool(check["exists"])
@@ -133,6 +166,12 @@ def _run_check(check: dict[str, Any], sse_events: dict[str, list[Any]], eval_cas
         return _check_forbidden_contains(label, candidates, check.get("path"), str(forbidden))
 
     if not payloads:
+        if check.get("optional"):
+            return {
+                "passed": True,
+                "label": label,
+                "detail": "optional check skipped (no matching events captured)",
+            }
         return {"passed": False, "label": label, "detail": "event not captured"}
 
     candidates = _select(payloads, check.get("occurrence", "any"))
@@ -364,5 +403,8 @@ def _describe_check_expectation(check: dict[str, Any]) -> str:
 
 
 def _label(check: dict[str, Any]) -> str:
-    event = check.get("event", "?")
+    event = check.get("event")
+    if not event:
+        events = _normalize_events(check.get("events"))
+        event = "+".join(str(name) for name in events) if events else "?"
     return f"{event}.{_describe_check_expectation(check)}"

@@ -160,6 +160,32 @@ class TestEvalCase:
 
 @pytest.mark.unit
 class TestAEvaluateTokenCapture:
+    async def test_per_metric_token_isolation_includes_cost(self):
+        from harness_evals.core.metric import BaseMetric, Dimension
+        from harness_evals.llm.usage import record_token_usage
+
+        class TokenMetric(BaseMetric):
+            def __init__(self, name, in_tok, out_tok, cost):
+                super().__init__(name=name, dimension=Dimension.CORRECTNESS, threshold=0.5)
+                self._in, self._out, self._cost = in_tok, out_tok, cost
+
+            def measure(self, eval_case):
+                return Score(name=self.name, value=1.0, threshold=self.threshold)
+
+            async def a_measure(self, eval_case):
+                record_token_usage(
+                    input_tokens=self._in,
+                    output_tokens=self._out,
+                    cost_usd=self._cost,
+                    model="gpt-4o",
+                )
+                return self.measure(eval_case)
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = await a_evaluate(ec, metrics=[TokenMetric("j1", 100, 20, 0.001)])
+        assert scores[0].metadata["cost_usd"] == pytest.approx(0.001)
+        assert scores[0].metadata["llm_model"] == "gpt-4o"
+
     async def test_per_metric_token_isolation(self):
         from harness_evals.core.metric import BaseMetric, Dimension
         from harness_evals.llm.usage import record_token_usage

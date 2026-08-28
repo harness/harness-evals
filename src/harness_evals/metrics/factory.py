@@ -57,6 +57,50 @@ try:
 except ImportError:
     BedrockOpenAILLM = None  # type: ignore[assignment,misc]
 
+try:
+    from harness_evals.llm.harness_gateway import HarnessGatewayOpenAIEmbedding, HarnessGatewayOpenAILLM
+except ImportError:
+    HarnessGatewayOpenAILLM = None  # type: ignore[assignment,misc]
+    HarnessGatewayOpenAIEmbedding = None  # type: ignore[assignment,misc]
+
+_GATEWAY_PROVIDERS = frozenset({"harness_gateway", "harness_llm_gateway"})
+# Providers that may route LLM chat/completions through /llm-gw/v1 when use_llm_gateway is set.
+# Anthropic is included: the gateway proxies Claude via online/anthropic/... model aliases.
+_LLM_GATEWAY_COMPAT_PROVIDERS = frozenset({"openai", "anthropic", *_GATEWAY_PROVIDERS})
+
+
+def _uses_llm_gateway(metadata: dict[str, Any], provider: str) -> bool:
+    """True when metric metadata should build HarnessGatewayOpenAILLM."""
+    if provider in _GATEWAY_PROVIDERS:
+        return True
+    return bool(metadata.get("use_llm_gateway") and provider in _LLM_GATEWAY_COMPAT_PROVIDERS)
+
+
+def _resolve_gateway_key(metadata_api_key: str | None, provider: str) -> str | None:
+    """Pick the credential sent to the gateway as ``x-api-key``.
+
+    ``provider: harness_gateway`` means the configured key *is* the PAT, so it wins.
+    When ``use_llm_gateway`` promotes an openai/anthropic connector, the configured key
+    is that vendor's key (``sk-``/``sk-ant-``) and would be rejected by the gateway,
+    so the PAT from the environment must win instead.
+    """
+    gateway_key = (os.environ.get("HARNESS_TOKEN") or os.environ.get("LLM_GATEWAY_API_KEY") or "").strip() or None
+    if provider in _GATEWAY_PROVIDERS:
+        return metadata_api_key or gateway_key
+    return gateway_key
+
+
+def _uses_embedding_gateway(metadata: dict[str, Any], provider: str) -> bool:
+    """True when embeddings should route through HarnessGatewayOpenAIEmbedding.
+
+    Unlike LLM routing, any ``use_llm_gateway`` connector uses the gateway for
+    embeddings — including Anthropic judges where the gateway is the only
+    OpenAI-compatible embedding backend.
+    """
+    if provider in _GATEWAY_PROVIDERS:
+        return True
+    return bool(metadata.get("use_llm_gateway"))
+
 
 def build_metric(
     metric_type: str,
@@ -382,23 +426,63 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
     max_tokens: int | None = int(metadata["max_tokens"]) if metadata.get("max_tokens") is not None else None
     token_kwargs: dict[str, Any] = {"max_tokens": max_tokens} if max_tokens is not None else {}
 
-    # Harness-managed connectors route through the OpenAI-compatible LLM
-    # gateway (see harness_evals.llm.harness_ai). Only fires when base_url is
-    # absent: callers that already resolved the gateway URL skip this branch.
-    if metadata.get("use_llm_gateway") and not base_url:
-        gateway_path = metadata.get("llm_gateway_path", "/llm-gw/v1")
-        harness_base = os.environ.get("HARNESS_BASE_URL", "").rstrip("/")
-        for suffix in ("/ng", "/gateway"):
-            if harness_base.endswith(suffix):
-                harness_base = harness_base[: -len(suffix)]
-                break
-        base_url = f"{harness_base}{gateway_path}" if harness_base else None
-        api_key = os.environ.get("HARNESS_TOKEN", "")
+    use_gateway = _uses_llm_gateway(metadata, provider)
+    gateway_path = metadata.get("llm_gateway_path", "/llm-gw/v1")
+
+    # Harness-managed connectors route through the OpenAI-compatible LLM gateway
+    # (HarnessGatewayOpenAILLM). Only auto-resolve base_url when absent.
+    if use_gateway:
+        from harness_evals.llm.harness_gateway import resolve_gateway_base_url
+
+        api_key = _resolve_gateway_key(api_key, provider)
+        if not base_url:
+            base_url = resolve_gateway_base_url(gateway_path)
         if not base_url or not api_key:
             raise ValueError(
-                "Harness-managed LLM connector requires HARNESS_BASE_URL and HARNESS_TOKEN env vars "
-                "when base_url is not pre-resolved"
+                "Harness-managed LLM connector requires HARNESS_BASE_URL and HARNESS_TOKEN (or "
+                "LLM_GATEWAY_API_KEY) env vars when base_url is not pre-resolved"
             )
+
+    if use_gateway:
+        if HarnessGatewayOpenAILLM is None:
+            raise ValueError("Harness gateway provider requires: pip install 'harness-evals[llm]'")
+        from harness_evals.llm.harness_gateway import normalize_gateway_routing_model
+
+        gateway_kwargs: dict[str, Any] = {
+            "model": normalize_gateway_routing_model(provider, model),
+            "api_key": api_key,
+            "temperature": temperature,
+            "gateway_path": gateway_path,
+            **token_kwargs,
+        }
+        if base_url:
+            gateway_kwargs["base_url"] = base_url
+        for key in ("x_source", "x_source_class"):
+            if metadata.get(key) is not None:
+                gateway_kwargs[key] = metadata[key]
+        return HarnessGatewayOpenAILLM(**gateway_kwargs)
+
+    if provider == "bedrock_anthropic":
+        if BedrockAnthropicLLM is None:
+            raise ValueError("Bedrock provider requires: pip install 'harness-evals[llm]'")
+        return BedrockAnthropicLLM(
+            model=model,
+            api_key=api_key,
+            aws_region=metadata.get("region"),
+            temperature=temperature,
+            **token_kwargs,
+        )
+
+    if provider == "bedrock_openai":
+        if BedrockOpenAILLM is None:
+            raise ValueError("Bedrock provider requires: pip install 'harness-evals[llm]'")
+        return BedrockOpenAILLM(
+            model=model,
+            api_key=api_key,
+            aws_region=metadata.get("region"),
+            temperature=temperature,
+            **token_kwargs,
+        )
 
     if provider == "anthropic" and metadata.get("bedrock"):
         if BedrockAnthropicLLM is None:
@@ -468,25 +552,35 @@ def build_embedding_provider(metadata: dict[str, Any]) -> OpenAIEmbedding:
 
     provider = metadata.get("provider", "openai")
 
-    # 2. Harness-managed (gateway) — resolve base_url from env, use HARNESS_TOKEN.
-    if metadata.get("use_llm_gateway"):
-        gateway_path = metadata.get("llm_gateway_path", "/llm-gw/v1")
-        harness_base = os.environ.get("HARNESS_BASE_URL", "").rstrip("/")
-        for suffix in ("/ng", "/gateway"):
-            if harness_base.endswith(suffix):
-                harness_base = harness_base[: -len(suffix)]
-                break
-        base_url = f"{harness_base}{gateway_path}" if harness_base else None
-        api_key = os.environ.get("HARNESS_TOKEN", "")
+    use_gateway = _uses_embedding_gateway(metadata, provider)
+    gateway_path = metadata.get("llm_gateway_path", "/llm-gw/v1")
+
+    # 2. Harness-managed (gateway) — PAT via x-api-key.
+    if use_gateway:
+        if HarnessGatewayOpenAIEmbedding is None:
+            raise ValueError("Harness gateway provider requires: pip install 'harness-evals[llm]'")
+        from harness_evals.llm.harness_gateway import resolve_gateway_base_url
+
+        base_url = metadata.get("base_url") or resolve_gateway_base_url(gateway_path)
+        api_key = _resolve_gateway_key(metadata.get("api_key"), provider)
         if not base_url or not api_key:
             raise ValueError(
-                "Harness-managed connector requires HARNESS_BASE_URL and HARNESS_TOKEN env vars "
-                "to route embeddings through the gateway"
+                "Harness-managed connector requires HARNESS_BASE_URL and HARNESS_TOKEN (or "
+                "LLM_GATEWAY_API_KEY) env vars to route embeddings through the gateway"
             )
-        return OpenAIEmbedding(api_key=api_key, base_url=base_url, model=embedding_model)
+        embed_kwargs: dict[str, Any] = {
+            "model": embedding_model,
+            "api_key": api_key,
+            "base_url": base_url,
+            "gateway_path": gateway_path,
+        }
+        for key in ("x_source", "x_source_class"):
+            if metadata.get(key) is not None:
+                embed_kwargs[key] = metadata[key]
+        return HarnessGatewayOpenAIEmbedding(**embed_kwargs)
 
     # 3. OpenAI via Bedrock — same bearer, Bedrock OpenAI-compat endpoint.
-    if provider == "openai" and metadata.get("bedrock"):
+    if provider in ("bedrock_openai", "openai") and (provider == "bedrock_openai" or metadata.get("bedrock")):
         region = metadata.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
         base_url = f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
         api_key = metadata.get("api_key")

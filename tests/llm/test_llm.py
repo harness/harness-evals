@@ -10,6 +10,13 @@ from harness_evals.llm._schema import make_strict_schema
 from harness_evals.llm.base import BaseLLM
 
 
+@pytest.fixture(autouse=True)
+def _disable_dynamic_cost_lookup(monkeypatch):
+    """Keep mocked provider modules isolated from LiteLLM's import graph."""
+    monkeypatch.setattr("harness_evals.llm.openai.estimate_llm_cost", lambda response, model: None)
+    monkeypatch.setattr("harness_evals.llm.anthropic.estimate_llm_cost", lambda response, model: None)
+
+
 class MockLLM(BaseLLM):
     """Mock LLM for testing. Returns configurable responses."""
 
@@ -191,6 +198,184 @@ class TestOpenAILLMParams:
         assert llm.temperature == 0.5
         assert llm.max_tokens == 2048
         assert llm.top_p is None
+
+    def test_pat_key_with_base_url_keeps_bearer_auth_on_openai(self):
+        """OpenAILLM must not auto-route PAT keys to x-api-key; use harness_gateway instead."""
+        captured: dict = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = self.mock_create
+            return mock_client
+
+        import sys
+
+        mock_openai = sys.modules["openai"]
+        mock_openai.AsyncOpenAI.side_effect = capture
+
+        from harness_evals.llm.openai import OpenAILLM
+
+        OpenAILLM(
+            model="online/openai/gpt-4o",
+            api_key="pat.acc.tok.secret",
+            base_url="https://qa.harness.io/prod1/llm-gw/v1",
+        )
+
+        assert captured["api_key"] == "pat.acc.tok.secret"
+        assert "http_client" not in captured
+
+    def test_openai_key_with_base_url_keeps_bearer_auth(self):
+        captured: dict = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = self.mock_create
+            return mock_client
+
+        import sys
+
+        mock_openai = sys.modules["openai"]
+        mock_openai.AsyncOpenAI.side_effect = capture
+
+        from harness_evals.llm.openai import OpenAILLM
+
+        OpenAILLM(
+            model="gpt-4o",
+            api_key="sk-test",
+            base_url="https://proxy.example/v1",
+        )
+
+        assert captured["api_key"] == "sk-test"
+        assert "http_client" not in captured
+
+
+@pytest.mark.unit
+class TestHarnessGatewayOpenAILLM:
+    """Harness LLM gateway uses PAT via x-api-key and budget headers."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_openai(self, monkeypatch):
+        self.mock_create = MagicMock()
+
+        async def fake_create(**kwargs):
+            self.mock_create(**kwargs)
+            choice = MagicMock()
+            choice.message.content = "ok"
+            resp = MagicMock()
+            resp.choices = [choice]
+            return resp
+
+        mock_openai = MagicMock()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = fake_create
+        mock_openai.AsyncOpenAI.return_value = mock_client
+        monkeypatch.setitem(sys.modules, "openai", mock_openai)
+
+    def test_pat_with_base_url_uses_x_api_key_client(self):
+        captured: dict = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = self.mock_create
+            return mock_client
+
+        mock_openai = sys.modules["openai"]
+        mock_openai.AsyncOpenAI.side_effect = capture
+
+        from harness_evals.llm.harness_gateway import HarnessGatewayOpenAILLM
+
+        HarnessGatewayOpenAILLM(
+            model="online/openai/gpt-4o",
+            api_key="pat.acc.tok.secret",
+            base_url="https://qa.harness.io/prod1/llm-gw/v1",
+        )
+
+        assert captured["api_key"] == "unused"
+        assert captured["http_client"] is not None
+
+    @pytest.mark.asyncio
+    async def test_x_api_key_client_rewrite_auth_hook(self):
+        import httpx
+
+        from harness_evals.llm.harness_gateway import _gateway_budget_headers, _make_x_api_key_http_client
+
+        client = _make_x_api_key_http_client(
+            "pat.acc.tok.secret",
+            extra_headers=_gateway_budget_headers(None, None),
+        )
+        request = httpx.Request(
+            "POST",
+            "https://qa.harness.io/prod1/llm-gw/v1/chat/completions",
+            headers={
+                "authorization": "Bearer unused",
+                "content-type": "application/json",
+            },
+        )
+        await client._event_hooks["request"][0](request)
+        assert "authorization" not in request.headers
+        assert request.headers["x-api-key"] == "pat.acc.tok.secret"
+        assert request.headers["x-source"] == "harness-evals"
+        assert request.headers["x-source-class"] == "LocalDev"
+        assert client.timeout.connect == 5.0
+        assert client.timeout.read == 600.0
+        await client.aclose()
+
+    def test_gateway_env_key_prefers_harness_token(self, monkeypatch):
+        from harness_evals.llm.harness_gateway import _resolve_gateway_api_key
+
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.harness")
+        monkeypatch.setenv("LLM_GATEWAY_API_KEY", "pat.gateway")
+
+        assert _resolve_gateway_api_key(None) == "pat.harness"
+
+    def test_gateway_budget_headers_defaults(self):
+        from harness_evals.llm.harness_gateway import _gateway_budget_headers
+
+        headers = _gateway_budget_headers(None, None)
+        assert headers == {"x-source": "harness-evals", "x-source-class": "LocalDev"}
+
+    def test_pricing_model_strips_online_prefix(self):
+        from harness_evals.llm.harness_gateway import normalize_harness_gateway_model_for_pricing
+
+        assert normalize_harness_gateway_model_for_pricing("online/openai/gpt-4o") == "openai/gpt-4o"
+        assert normalize_harness_gateway_model_for_pricing("online/openai/gpt-4o@1.2.3") == "openai/gpt-4o"
+
+    def test_normalize_gateway_routing_model_prefixes_anthropic(self):
+        from harness_evals.llm.harness_gateway import normalize_gateway_routing_model
+
+        assert normalize_gateway_routing_model("anthropic", "claude-sonnet-4-5") == (
+            "online/anthropic/claude-sonnet-4-5"
+        )
+        assert normalize_gateway_routing_model("anthropic", "online/anthropic/claude-sonnet-4-5") == (
+            "online/anthropic/claude-sonnet-4-5"
+        )
+        assert normalize_gateway_routing_model("openai", "gpt-4o") == "gpt-4o"
+
+    def test_build_llm_provider_use_llm_gateway(self, monkeypatch):
+        captured: dict = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            mock_client = MagicMock()
+            mock_client.chat.completions.create = MagicMock()
+            return mock_client
+
+        mock_openai = sys.modules["openai"]
+        mock_openai.AsyncOpenAI.side_effect = capture
+        monkeypatch.setenv("HARNESS_BASE_URL", "https://qa.harness.io/prod1")
+        monkeypatch.setenv("HARNESS_TOKEN", "pat.acc.tok.secret")
+
+        from harness_evals.metrics.factory import build_llm_provider
+
+        llm = build_llm_provider({"metadata": {"use_llm_gateway": True, "model": "gpt-4o"}})
+        from harness_evals.llm.harness_gateway import HarnessGatewayOpenAILLM
+
+        assert isinstance(llm, HarnessGatewayOpenAILLM)
+        assert captured["base_url"] == "https://qa.harness.io/prod1/llm-gw/v1"
+        assert captured["http_client"] is not None
 
 
 @pytest.mark.unit

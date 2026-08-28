@@ -12,8 +12,8 @@ class OpenAIEmbedding(BaseEmbedding):
 
     API key resolution: constructor ``api_key`` > ``OPENAI_API_KEY`` env var.
     Pass ``base_url`` to target an OpenAI-compatible endpoint (e.g. Bedrock's
-    ``https://bedrock-runtime.<region>.amazonaws.com/openai/v1`` or the Harness
-    LLM gateway) instead of ``platform.openai.com``.
+    ``https://bedrock-runtime.<region>.amazonaws.com/openai/v1``). For the Harness
+    LLM gateway, use :class:`~harness_evals.llm.harness_gateway.HarnessGatewayOpenAIEmbedding`.
     """
 
     def __init__(

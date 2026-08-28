@@ -5,7 +5,7 @@ import json
 import pytest
 from examples.harness_sse_elicitation_adapter import ElicitationSimulator
 
-from harness_evals.conversation import ConversationGolden, ConversationSimulator
+from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
 from harness_evals.conversation.human_input import PendingHumanInput
 from harness_evals.conversation.simulator import _human_input_preview
 from harness_evals.core.types import Message
@@ -117,6 +117,117 @@ async def test_simulator_uses_initial_prompt_and_resolves_elicitation():
     assert len(simulated) == 1
     assert simulated[0].content == "testconnector"
     assert eval_case.metadata.get("elicitation_trace")
+
+
+@pytest.mark.unit
+async def test_elicitation_resume_delay_before_human_input_call(monkeypatch):
+    golden = ConversationGolden(
+        scenario="Create a pipeline",
+        expected_outcome="Pipeline created",
+        max_turns=1,
+        max_elicitation_rounds=2,
+        initial_prompt="Create a pipeline",
+        elicitation_hints={
+            "intents": {"pipeline_name": "payments"},
+            "matchers": [{"intent": "pipeline_name", "question_contains": ["pipeline", "name"]}],
+        },
+    )
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("harness_evals.conversation.simulator.asyncio.sleep", fake_sleep)
+
+    calls = 0
+
+    async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if human_input is None:
+            return Message(
+                role="assistant",
+                metadata={
+                    "pending_elicitation": {
+                        "type": "elicitation_free_text",
+                        "payload": {
+                            "review_id": "ask-pipeline-name",
+                            "content": {"question": "What pipeline name should I use?"},
+                        },
+                    }
+                },
+            )
+        return Message(role="assistant", content="Pipeline created.")
+
+    simulator = ConversationSimulator(
+        simulator_llm=StopLLM(),
+        elicitation_simulator=ElicitationSimulator(),
+        elicitation_resume_delay_s=2.0,
+    )
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert sleep_calls == [2.0]
+    assert eval_case.output == "Pipeline created."
+    assert calls == 2
+
+
+@pytest.mark.unit
+async def test_post_elicitation_settle_delay_before_next_scripted_turn(monkeypatch):
+    golden = ConversationGolden(
+        scenario="Create then update a pipeline",
+        expected_outcome="Pipeline created and updated",
+        mode=ConversationMode.SCRIPTED,
+        turns=[
+            Message(role="user", content="Create a pipeline"),
+            Message(role="user", content="Update the pipeline tags"),
+        ],
+        max_elicitation_rounds=2,
+        elicitation_hints={
+            "intents": {"pipeline_name": "payments"},
+            "matchers": [{"intent": "pipeline_name", "question_contains": ["pipeline", "name"]}],
+        },
+    )
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("harness_evals.conversation.simulator.asyncio.sleep", fake_sleep)
+
+    calls = 0
+
+    async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+        nonlocal calls
+        calls += 1
+        if human_input is not None:
+            return Message(role="assistant", content="Pipeline created.")
+        last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        if "Update" in (last_user or ""):
+            return Message(role="assistant", content="Pipeline updated.")
+        return Message(
+            role="assistant",
+            metadata={
+                "pending_elicitation": {
+                    "type": "elicitation_free_text",
+                    "payload": {
+                        "review_id": "ask-pipeline-name",
+                        "content": {"question": "What pipeline name should I use?"},
+                    },
+                }
+            },
+        )
+
+    simulator = ConversationSimulator(
+        simulator_llm=StopLLM(),
+        elicitation_simulator=ElicitationSimulator(),
+        elicitation_resume_delay_s=2.0,
+        post_elicitation_settle_delay_s=3.0,
+    )
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert sleep_calls == [2.0, 3.0]
+    assert eval_case.output == "Pipeline updated."
+    assert calls == 3
 
 
 @pytest.mark.unit

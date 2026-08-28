@@ -22,6 +22,7 @@ from harness_evals.config.schema import (
     MetricSpec,
     SinkSpec,
     TargetSpec,
+    loads_config,
 )
 from harness_evals.core.score import Score
 from harness_evals.errors import BaselineRegressionError, HarnessEvalsError, UnknownMetricError
@@ -85,6 +86,20 @@ class TestBuildMetric:
 # ---------------------------------------------------------------------------
 # env var resolution in model params
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestGatewayProviderAliases:
+    def test_every_factory_gateway_provider_is_resolvable(self) -> None:
+        from harness_evals.config.runner import _LLM_PROVIDERS
+        from harness_evals.metrics.factory import _GATEWAY_PROVIDERS
+
+        assert set(_LLM_PROVIDERS) >= _GATEWAY_PROVIDERS
+
+    def test_gateway_alias_maps_to_same_class(self) -> None:
+        from harness_evals.config.runner import _LLM_PROVIDERS
+
+        assert _LLM_PROVIDERS["harness_llm_gateway"] == _LLM_PROVIDERS["harness_gateway"]
 
 
 @pytest.mark.unit
@@ -383,6 +398,25 @@ class TestGateAgainstBaseline:
 
 @pytest.mark.unit
 class TestRunConfig:
+    @pytest.mark.parametrize(
+        ("field_name", "empty_value"),
+        [("golden_ids", []), ("modules", []), ("golden_tags", {})],
+    )
+    def test_explicit_empty_filter_fails_closed(self, tmp_path, field_name, empty_value) -> None:
+        dataset_path = tmp_path / "goldens.jsonl"
+        dataset_path.write_text('{"id": "row-a", "input": "a", "expected": "A"}\n')
+        cfg = EvalConfig(
+            name="test",
+            dataset=ResourceRef(source="local", id=str(dataset_path)),
+            target=TargetSpec(type="http", params={"url": "http://localhost"}),
+            metrics=[MetricSpec(kind="exact_match")],
+            sinks=[],
+        )
+        setattr(cfg, field_name, empty_value)
+
+        with pytest.raises(HarnessEvalsError, match="must contain at least one"):
+            run_config(cfg)
+
     def test_end_to_end_with_local_dataset(self, tmp_path) -> None:
         dataset_path = tmp_path / "goldens.jsonl"
         dataset_path.write_text('{"input": "2+2?", "expected": "4"}\n')
@@ -415,3 +449,145 @@ class TestRunConfig:
         assert len(scores) == 1
         assert len(scores[0]) == 1
         assert scores[0][0].name == "exact_match"
+
+    def test_filters_by_golden_ids(self, tmp_path) -> None:
+        dataset_path = tmp_path / "goldens.jsonl"
+        dataset_path.write_text(
+            '{"id": "row-a", "input": "a", "expected": "A"}\n{"id": "row-b", "input": "b", "expected": "B"}\n'
+        )
+
+        prompt_path = tmp_path / "prompt.txt"
+        prompt_path.write_text("Answer: {{input}}", encoding="utf-8")
+
+        from tests.conftest import MockLLM
+
+        mock = MockLLM()
+        captured: list = []
+
+        async def capture_evaluate_dataset(goldens, *args, **kwargs):
+            captured.extend(goldens)
+            from harness_evals.core.score import Score
+
+            return [[Score(name="exact_match", value=1.0, threshold=1.0)] for _ in goldens]
+
+        cfg = EvalConfig(
+            name="test",
+            dataset=ResourceRef(source="local", id=str(dataset_path)),
+            target=TargetSpec(
+                type="prompt",
+                params={
+                    "prompt": str(prompt_path),
+                    "model": mock,
+                },
+            ),
+            metrics=[MetricSpec(kind="exact_match")],
+            sinks=[],
+            golden_ids=["row-b"],
+        )
+
+        with patch("harness_evals.config.runner.build_llm") as mock_build_llm:
+            mock_build_llm.return_value = mock
+            with patch("harness_evals.config.runner.evaluate_dataset", side_effect=capture_evaluate_dataset):
+                scores = run_config(cfg)
+
+        assert len(scores) == 1
+        assert len(captured) == 1
+        assert captured[0].id == "row-b"
+
+    def test_filters_by_modules(self, tmp_path) -> None:
+        dataset_path = tmp_path / "goldens.jsonl"
+        dataset_path.write_text(
+            '{"id": "a", "input": "a", "expected": "A", "tags": {"module": "ci"}}\n'
+            '{"id": "b", "input": "b", "expected": "B", "tags": {"module": "ce"}}\n'
+            '{"id": "c", "input": "c", "expected": "C", "tags": {"module": "cd"}}\n'
+        )
+
+        prompt_path = tmp_path / "prompt.txt"
+        prompt_path.write_text("Answer: {{input}}", encoding="utf-8")
+
+        from tests.conftest import MockLLM
+
+        mock = MockLLM()
+        captured: list = []
+
+        async def capture_evaluate_dataset(goldens, *args, **kwargs):
+            captured.extend(goldens)
+            from harness_evals.core.score import Score
+
+            return [[Score(name="exact_match", value=1.0, threshold=1.0)] for _ in goldens]
+
+        cfg = EvalConfig(
+            name="test",
+            dataset=ResourceRef(source="local", id=str(dataset_path)),
+            target=TargetSpec(
+                type="prompt",
+                params={
+                    "prompt": str(prompt_path),
+                    "model": mock,
+                },
+            ),
+            metrics=[MetricSpec(kind="exact_match")],
+            sinks=[],
+            modules=["ci", "ce"],
+        )
+
+        with patch("harness_evals.config.runner.build_llm") as mock_build_llm:
+            mock_build_llm.return_value = mock
+            with patch("harness_evals.config.runner.evaluate_dataset", side_effect=capture_evaluate_dataset):
+                scores = run_config(cfg)
+
+        assert len(scores) == 2
+        assert [g.id for g in captured] == ["a", "b"]
+
+
+@pytest.mark.unit
+class TestGoldenIdsConfig:
+    def test_loads_comma_separated_golden_ids(self) -> None:
+        cfg = loads_config(
+            """
+name: test
+dataset: ./data.jsonl
+target:
+  type: http
+  url: http://localhost
+metrics:
+  - exact_match
+golden_ids: alpha, beta
+"""
+        )
+        assert cfg.golden_ids == ["alpha", "beta"]
+
+    def test_loads_golden_ids_list(self) -> None:
+        cfg = loads_config(
+            """
+name: test
+dataset: ./data.jsonl
+target:
+  type: http
+  url: http://localhost
+metrics:
+  - exact_match
+golden_ids:
+  - one
+  - two
+"""
+        )
+        assert cfg.golden_ids == ["one", "two"]
+
+    def test_loads_modules_and_golden_tags(self) -> None:
+        cfg = loads_config(
+            """
+name: test
+dataset: ./data.jsonl
+target:
+  type: http
+  url: http://localhost
+metrics:
+  - exact_match
+modules: ci, ce
+golden_tags:
+  scenario_type: write
+"""
+        )
+        assert cfg.modules == ["ci", "ce"]
+        assert cfg.golden_tags == {"scenario_type": "write"}

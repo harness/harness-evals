@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from harness_evals.llm.usage import (
     TokenUsage,
     collect_token_usage,
@@ -10,6 +12,14 @@ from harness_evals.llm.usage import (
 
 
 class TestTokenUsage:
+    def test_records_cost_and_model(self):
+        u = TokenUsage()
+        u.add(input_tokens=10, output_tokens=2, cost_usd=0.001, model="gpt-4o")
+        u.add(input_tokens=5, output_tokens=3, cost_usd=0.002, model="gpt-4o")
+        assert u.cost_usd == pytest.approx(0.003)
+        assert u.by_model["gpt-4o"].input_tokens == 15
+        assert u.by_model["gpt-4o"].call_count == 2
+
     def test_add_accumulates(self):
         u = TokenUsage()
         u.add(input_tokens=10, output_tokens=2)

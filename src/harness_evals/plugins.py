@@ -41,6 +41,7 @@ _METRICS: dict[str, type] = {}
 _BASELINE_STORES: dict[str, type] = {}
 _SINKS: dict[str, type] = {}
 _ELICITATION_ADAPTERS: dict[str, type] = {}
+_PLAIN_TEXT_FOLLOWUP_RESOLVERS: list[object] = []
 
 _REGISTRIES: dict[str, dict[str, type]] = {
     DATASET_SOURCES: _DATASET_SOURCES,
@@ -129,6 +130,41 @@ def register_elicitation_adapter(name: str) -> Callable[[T], T]:
         return cls
 
     return decorator
+
+
+def register_plain_text_followup_resolver(resolver: T) -> T:
+    """Register a domain-specific plain-text elicitation follow-up resolver.
+
+    Resolvers run before generic ``elicitation_hints`` intent matching in
+    :class:`~harness_evals.conversation.simulator.ConversationSimulator`.
+    Import the module under ``plugins:`` in eval YAML to activate.
+    """
+
+    if resolver not in _PLAIN_TEXT_FOLLOWUP_RESOLVERS:
+        _PLAIN_TEXT_FOLLOWUP_RESOLVERS.append(resolver)
+    return resolver
+
+
+def plain_text_followup_resolvers(modules: list[str] | None = None) -> tuple[object, ...]:
+    """Return registered plain-text follow-up resolvers.
+
+    When *modules* is supplied, only resolvers defined or re-exported by those
+    explicitly configured plugin modules are returned. This prevents a resolver
+    loaded by one eval from leaking into later evals in the same process.
+    """
+    if modules is None:
+        return tuple(_PLAIN_TEXT_FOLLOWUP_RESOLVERS)
+
+    selected: list[object] = []
+    for module_name in modules:
+        module = importlib.import_module(module_name)
+        exported_ids = {id(value) for value in vars(module).values()}
+        for resolver in _PLAIN_TEXT_FOLLOWUP_RESOLVERS:
+            resolver_module = getattr(resolver, "__module__", "")
+            belongs_to_module = resolver_module == module_name or resolver_module.startswith(f"{module_name}.")
+            if (belongs_to_module or id(resolver) in exported_ids) and resolver not in selected:
+                selected.append(resolver)
+    return tuple(selected)
 
 
 def elicitation_adapter(name: str) -> type:
@@ -288,6 +324,7 @@ def _snapshot() -> dict:
         "registries": {family: registry.copy() for family, registry in _REGISTRIES.items()},
         "entry_points": {family: discovered.copy() for family, discovered in _ENTRY_POINTS.items()},
         "elicitation_adapters": _ELICITATION_ADAPTERS.copy(),
+        "plain_text_followup_resolvers": list(_PLAIN_TEXT_FOLLOWUP_RESOLVERS),
         "discovered": _ENTRY_POINTS_DISCOVERED,
     }
 
@@ -304,4 +341,6 @@ def _restore(snapshot: dict) -> None:
         discovered.update(snapshot["entry_points"][family])
     _ELICITATION_ADAPTERS.clear()
     _ELICITATION_ADAPTERS.update(snapshot.get("elicitation_adapters", {}))
+    _PLAIN_TEXT_FOLLOWUP_RESOLVERS.clear()
+    _PLAIN_TEXT_FOLLOWUP_RESOLVERS.extend(snapshot.get("plain_text_followup_resolvers", []))
     _ENTRY_POINTS_DISCOVERED = snapshot["discovered"]

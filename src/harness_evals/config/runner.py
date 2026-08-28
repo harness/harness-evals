@@ -37,6 +37,7 @@ from harness_evals.plugins import (
 )
 from harness_evals.plugins import (
     load_plugins,
+    plain_text_followup_resolvers,
     registered_metrics,
 )
 from harness_evals.plugins import (
@@ -54,6 +55,11 @@ _LLM_PROVIDERS: dict[str, str] = {
     "openai": "harness_evals.llm.openai.OpenAILLM",
     "anthropic": "harness_evals.llm.anthropic.AnthropicLLM",
     "harness": "harness_evals.llm.harness_ai.HarnessAILLM",
+    "harness_gateway": "harness_evals.llm.harness_gateway.HarnessGatewayOpenAILLM",
+    # Alias accepted by metrics.factory._GATEWAY_PROVIDERS; both surfaces must resolve it.
+    "harness_llm_gateway": "harness_evals.llm.harness_gateway.HarnessGatewayOpenAILLM",
+    "bedrock_anthropic": "harness_evals.llm.bedrock.BedrockAnthropicLLM",
+    "bedrock_openai": "harness_evals.llm.bedrock.BedrockOpenAILLM",
 }
 
 logger = logging.getLogger(__name__)
@@ -390,6 +396,25 @@ async def _run_config_async(
         source = source_cls.from_ref(cfg.dataset)
         async with source:
             goldens = await source.fetch(cfg.dataset)
+    from harness_evals.datasets.filter import (
+        filter_goldens_by_ids,
+        filter_goldens_by_tags,
+        merge_golden_tag_filter,
+        parse_golden_ids,
+        parse_golden_tags,
+        parse_modules,
+    )
+
+    golden_ids = parse_golden_ids(cfg.golden_ids) if cfg.golden_ids is not None else None
+    if golden_ids is not None:
+        goldens = filter_goldens_by_ids(goldens, golden_ids)
+
+    modules = parse_modules(cfg.modules) if cfg.modules is not None else None
+    golden_tags = parse_golden_tags(cfg.golden_tags) if cfg.golden_tags is not None else None
+    tag_filter = merge_golden_tag_filter(modules=modules, golden_tags=golden_tags)
+    if tag_filter is not None:
+        goldens = filter_goldens_by_tags(goldens, tag_filter)
+
     logger.debug(
         "Loaded dataset %s://%s: %d goldens (samples: %s)",
         cfg.dataset.source,
@@ -424,6 +449,16 @@ async def _run_config_async(
             simulator_llm = _resolve_simulator_llm(cfg.conversation, judge_llm)
             human_input_simulator = _build_human_input_simulator(cfg.conversation, simulator_llm)
 
+            resume_delay = (
+                cfg.conversation.elicitation_resume_delay_s
+                if cfg.conversation.elicitation_resume_delay_s is not None
+                else 0.0
+            )
+            settle_delay = (
+                cfg.conversation.post_elicitation_settle_delay_s
+                if cfg.conversation.post_elicitation_settle_delay_s is not None
+                else 0.0
+            )
             scores = await evaluate_dataset(
                 goldens,
                 agent_fn,
@@ -432,6 +467,9 @@ async def _run_config_async(
                 concurrency=cfg.concurrency,
                 simulator_llm=simulator_llm,
                 human_input_simulator=human_input_simulator,
+                elicitation_resume_delay_s=resume_delay,
+                post_elicitation_settle_delay_s=settle_delay,
+                plain_text_followup_resolvers=plain_text_followup_resolvers(cfg.plugins),
                 on_progress=on_progress,
                 on_result=on_result,
             )

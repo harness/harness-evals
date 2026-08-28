@@ -27,19 +27,9 @@ FAMILY_HELPERS = [
 
 @pytest.fixture(autouse=True)
 def restore_plugin_state() -> None:
-    saved_registries = {family: registry.copy() for family, registry in plugins._REGISTRIES.items()}
-    saved_entry_points = {family: discovered.copy() for family, discovered in plugins._ENTRY_POINTS.items()}
-    saved_discovered = plugins._ENTRY_POINTS_DISCOVERED
-
+    snapshot = plugins._snapshot()
     yield
-
-    for family, registry in plugins._REGISTRIES.items():
-        registry.clear()
-        registry.update(saved_registries[family])
-    for family, discovered in plugins._ENTRY_POINTS.items():
-        discovered.clear()
-        discovered.update(saved_entry_points[family])
-    plugins._ENTRY_POINTS_DISCOVERED = saved_discovered
+    plugins._restore(snapshot)
 
 
 @pytest.mark.unit
@@ -162,6 +152,37 @@ def test_load_plugins_imports_module_and_triggers_registration(
 def test_load_plugins_unknown_module_raises_clear_error() -> None:
     with pytest.raises(HarnessEvalsError, match="Failed to load plugin module"):
         plugins.load_plugins(["definitely_missing_harness_evals_plugin"])
+
+
+@pytest.mark.unit
+def test_plain_text_resolvers_are_scoped_to_configured_plugins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for module_name, resolver_name in (("plugin_a", "resolver_a"), ("plugin_b", "resolver_b")):
+        (tmp_path / f"{module_name}.py").write_text(
+            "\n".join(
+                [
+                    "from harness_evals.plugins import register_plain_text_followup_resolver",
+                    "",
+                    "@register_plain_text_followup_resolver",
+                    f"def {resolver_name}(golden, match_scope, *, used_intents):",
+                    "    return None",
+                ]
+            )
+        )
+        sys.modules.pop(module_name, None)
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    plugins.load_plugins(["plugin_a"])
+    resolver_a = plugins.plain_text_followup_resolvers(["plugin_a"])
+
+    plugins.load_plugins(["plugin_b"])
+    resolver_b = plugins.plain_text_followup_resolvers(["plugin_b"])
+
+    assert [resolver.__name__ for resolver in resolver_a] == ["resolver_a"]
+    assert [resolver.__name__ for resolver in resolver_b] == ["resolver_b"]
+    assert plugins.plain_text_followup_resolvers([]) == ()
 
 
 @pytest.mark.unit

@@ -21,6 +21,9 @@ class Golden:
     expected_tool_calls: list[ToolCall] | None = None
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
+    # Appended last so existing positional callers — Golden("2+2?", "4") — keep
+    # binding "4" to expected.
+    id: str | None = None
 
     def meta(self, key: str, default: Any = None) -> Any:
         """Safely retrieve a metadata value without ``(self.metadata or {})`` boilerplate."""

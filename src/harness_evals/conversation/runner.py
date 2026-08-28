@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from harness_evals.conversation.golden import ConversationGolden
 from harness_evals.conversation.simulator import ConversationSimulator
@@ -22,9 +22,13 @@ async def evaluate_conversation(
     *,
     simulator_llm: BaseLLM,
     sinks: list[BaseSink] | None = None,
+    plain_text_followup_resolvers: Sequence[object] | None = None,
 ) -> list[Score]:
     """Simulate a conversation from a golden, then evaluate with metrics."""
-    simulator = ConversationSimulator(simulator_llm)
+    simulator = ConversationSimulator(
+        simulator_llm,
+        plain_text_followup_resolvers=plain_text_followup_resolvers,
+    )
     eval_case = await simulator.simulate(golden, agent_fn)
     return await a_evaluate(eval_case, metrics, sinks)
 
@@ -37,9 +41,14 @@ async def evaluate_conversations(
     simulator_llm: BaseLLM,
     sinks: list[BaseSink] | None = None,
     concurrency: int = 5,
+    plain_text_followup_resolvers: Sequence[object] | None = None,
 ) -> list[list[Score]]:
     """Simulate and evaluate multiple conversation goldens concurrently."""
-    simulator = ConversationSimulator(simulator_llm, max_concurrent=concurrency)
+    simulator = ConversationSimulator(
+        simulator_llm,
+        max_concurrent=concurrency,
+        plain_text_followup_resolvers=plain_text_followup_resolvers,
+    )
     eval_cases = await simulator.simulate_batch(goldens, agent_fn)
 
     scored = await asyncio.gather(*[a_evaluate(ec, metrics) for ec in eval_cases])

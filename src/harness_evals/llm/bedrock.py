@@ -185,7 +185,11 @@ class BedrockOpenAILLM(OpenAILLM):
             max_completion_tokens=self.max_tokens,
             **self._optional_params(),
         )
-        _record_openai_usage(response)
+        _record_openai_usage(
+            response,
+            model=self.model,
+            pricing_model=self._pricing_model(),
+        )
         text = response.choices[0].message.content or ""
         finish_reason = response.choices[0].finish_reason
         try:

@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from harness_evals.datasets.filter import parse_golden_ids, parse_golden_tags, parse_modules
 from harness_evals.errors import HarnessEvalsError
 from harness_evals.refs import ResourceRef, resolve
 
@@ -55,6 +56,8 @@ class ConversationSpec:
     max_elicitation_rounds: int | None = None
     simulator_llm: ModelSpec | None = None
     elicitation_adapter: str | None = None
+    elicitation_resume_delay_s: float | None = None
+    post_elicitation_settle_delay_s: float | None = None
 
 
 @dataclass
@@ -81,6 +84,9 @@ class EvalConfig:
     baseline: BaselineSpec | None = None
     plugins: list[str] = field(default_factory=list)
     concurrency: int | None = None
+    golden_ids: list[str] | None = None
+    modules: list[str] | None = None
+    golden_tags: dict[str, str | list[str]] | None = None
 
 
 _KNOWN_TOP_LEVEL_KEYS = frozenset(
@@ -95,6 +101,9 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset(
         "baseline",
         "plugins",
         "concurrency",
+        "golden_ids",
+        "modules",
+        "golden_tags",
     }
 )
 
@@ -165,6 +174,10 @@ def loads_config(text: str, *, base_dir: Path | None = None) -> EvalConfig:
     ):
         raise HarnessEvalsError("'concurrency' must be an integer >= 1")
 
+    golden_ids = parse_golden_ids(raw["golden_ids"]) if raw.get("golden_ids") is not None else None
+    modules = parse_modules(raw["modules"]) if raw.get("modules") is not None else None
+    golden_tags = parse_golden_tags(raw["golden_tags"]) if raw.get("golden_tags") is not None else None
+
     return EvalConfig(
         name=name,
         dataset=dataset,
@@ -176,6 +189,9 @@ def loads_config(text: str, *, base_dir: Path | None = None) -> EvalConfig:
         baseline=baseline,
         plugins=plugins,
         concurrency=concurrency,
+        golden_ids=golden_ids,
+        modules=modules,
+        golden_tags=golden_tags,
     )
 
 
@@ -249,12 +265,26 @@ def _parse_conversation(raw: dict, *, judge_llm: ModelSpec | None) -> Conversati
     if max_elicitation_rounds is not None and int(max_elicitation_rounds) < 1:
         raise HarnessEvalsError("'conversation.max_elicitation_rounds' must be >= 1")
 
+    elicitation_resume_delay_s = raw.get("elicitation_resume_delay_s")
+    if elicitation_resume_delay_s is not None and float(elicitation_resume_delay_s) < 0:
+        raise HarnessEvalsError("'conversation.elicitation_resume_delay_s' must be >= 0")
+
+    post_elicitation_settle_delay_s = raw.get("post_elicitation_settle_delay_s")
+    if post_elicitation_settle_delay_s is not None and float(post_elicitation_settle_delay_s) < 0:
+        raise HarnessEvalsError("'conversation.post_elicitation_settle_delay_s' must be >= 0")
+
     return ConversationSpec(
         mode=str(mode) if mode is not None else None,
         max_turns=int(max_turns) if max_turns is not None else None,
         max_elicitation_rounds=int(max_elicitation_rounds) if max_elicitation_rounds is not None else None,
         simulator_llm=simulator_llm,
         elicitation_adapter=str(raw["elicitation_adapter"]) if raw.get("elicitation_adapter") else None,
+        elicitation_resume_delay_s=(
+            float(elicitation_resume_delay_s) if elicitation_resume_delay_s is not None else None
+        ),
+        post_elicitation_settle_delay_s=(
+            float(post_elicitation_settle_delay_s) if post_elicitation_settle_delay_s is not None else None
+        ),
     )
 
 

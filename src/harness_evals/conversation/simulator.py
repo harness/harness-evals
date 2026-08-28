@@ -6,9 +6,9 @@ import asyncio
 import inspect
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, replace
-from typing import Any
+from typing import Any, Protocol
 
 from harness_evals._async_compat import _run_async
 from harness_evals.conversation.golden import ConversationGolden, ConversationMode
@@ -65,6 +65,18 @@ _STOP_SCHEMA = {
 }
 
 
+class PlainTextFollowupResolver(Protocol):
+    """Plugin resolver for plain-text assistant questions during elicitation."""
+
+    def __call__(
+        self,
+        golden: ConversationGolden,
+        match_scope: str,
+        *,
+        used_intents: set[str],
+    ) -> dict[str, Any] | None: ...
+
+
 class ConversationSimulator:
     """Drives a multi-turn conversation between a simulated user and agent-under-test."""
 
@@ -76,12 +88,22 @@ class ConversationSimulator:
         graph: SimulationGraph | None = None,
         human_input_simulator: HumanInputSimulator | None = None,
         elicitation_simulator: HumanInputSimulator | None = None,
+        elicitation_resume_delay_s: float = 0.0,
+        post_elicitation_settle_delay_s: float = 0.0,
+        plain_text_followup_resolvers: Sequence[PlainTextFollowupResolver] | None = None,
     ) -> None:
         self.simulator_llm = simulator_llm
         self.max_concurrent = max_concurrent
         self.graph = graph
         self.human_input_simulator = human_input_simulator or elicitation_simulator
         self.elicitation_simulator = self.human_input_simulator
+        self.plain_text_followup_resolvers = tuple(plain_text_followup_resolvers or ())
+        if elicitation_resume_delay_s < 0:
+            raise ValueError("elicitation_resume_delay_s must be >= 0")
+        if post_elicitation_settle_delay_s < 0:
+            raise ValueError("post_elicitation_settle_delay_s must be >= 0")
+        self.elicitation_resume_delay_s = elicitation_resume_delay_s
+        self.post_elicitation_settle_delay_s = post_elicitation_settle_delay_s
 
     def _require_llm(self) -> BaseLLM:
         if self.simulator_llm is None:
@@ -138,6 +160,7 @@ class ConversationSimulator:
 
             assistant_msg = await self._call_agent(agent_fn, history)
             assistant_msg = await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+            await self._post_elicitation_settle(history)
 
             if await self._should_stop(golden, history):
                 break
@@ -204,6 +227,7 @@ class ConversationSimulator:
                 history.append(turn)
                 assistant_msg = await self._call_agent(agent_fn, history)
                 await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+                await self._post_elicitation_settle(history)
         return self._build_eval_case(golden, history)
 
     def _replay(self, golden: ConversationGolden) -> EvalCase:
@@ -267,6 +291,7 @@ class ConversationSimulator:
             history.append(Message(role="user", content=user_text))
             assistant_msg = await self._call_agent(agent_fn, history)
             await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+            await self._post_elicitation_settle(history)
             turns_used += 1
 
             next_id = graph.resolve_next(current, assistant_msg)
@@ -396,6 +421,7 @@ class ConversationSimulator:
                     golden,
                     assistant_msg,
                     used_intents=used_plain_text_intents,
+                    resolvers=self.plain_text_followup_resolvers,
                 )
                 if followup is not None:
                     for intent_key in followup.get("intents") or [followup["intent"]]:
@@ -493,6 +519,12 @@ class ConversationSimulator:
                 pending.correlation_id,
                 compact_json(human_input),
             )
+            if self.elicitation_resume_delay_s > 0:
+                _logger.info(
+                    "Waiting %.1fs before HITL resume for session persistence",
+                    self.elicitation_resume_delay_s,
+                )
+                await asyncio.sleep(self.elicitation_resume_delay_s)
             assistant_msg = await self._call_agent(agent_fn, history, human_input=human_input)
             _merge_sse_events(accumulated_sse, assistant_msg.metadata)
             history.append(assistant_msg)
@@ -516,6 +548,26 @@ class ConversationSimulator:
             }
         )
         return _finalize_elicitation(assistant_msg, trace, rounds)
+
+    async def _post_elicitation_settle(self, history: list[Message]) -> None:
+        """Wait after HITL elicitation so server-side P2 + session persist can finish."""
+        if self.post_elicitation_settle_delay_s <= 0:
+            return
+        rounds = 0
+        for msg in reversed(history):
+            if msg.role != "assistant" or not msg.metadata:
+                continue
+            raw_rounds = msg.metadata.get("elicitation_rounds")
+            if raw_rounds is not None:
+                rounds = int(raw_rounds)
+            break
+        if rounds <= 0:
+            return
+        _logger.info(
+            "Waiting %.1fs after HITL elicitation so server can finish P2 and persist session",
+            self.post_elicitation_settle_delay_s,
+        )
+        await asyncio.sleep(self.post_elicitation_settle_delay_s)
 
     async def _call_agent(
         self,
@@ -670,6 +722,7 @@ def _plain_text_followup(
     assistant_msg: Message,
     *,
     used_intents: set[str],
+    resolvers: Sequence[PlainTextFollowupResolver] = (),
 ) -> dict[str, Any] | None:
     """Answer plain-text assistant questions using golden elicitation_hints."""
     content = assistant_msg.content or ""
@@ -680,16 +733,13 @@ def _plain_text_followup(
     if not question_scope or not _looks_like_user_question(question_scope):
         return None
 
-    lowered = question_scope.lower()
-    if (
-        "cost category" in lowered
-        and sum(1 for token in ("name", "bucket", "structure", "organize") if token in lowered) >= 2
-    ):
-        composite = _composite_cost_category_answer(golden, used_intents)
-        if composite is not None:
-            return composite
+    match_scope = question_scope
+    for resolver in resolvers:
+        resolved = resolver(golden, match_scope, used_intents=used_intents)
+        if resolved is not None:
+            return resolved
 
-    intent = resolve_intent(question_scope, golden, plain_text=True)
+    intent = resolve_intent(match_scope, golden, plain_text=True)
     if intent and intent not in used_intents:
         answer = intents(golden).get(intent, "")
         if answer:
@@ -728,35 +778,6 @@ def _plain_text_question_scope(content: str) -> str:
         return paragraphs[-1]
 
     return text if _looks_like_user_question(text) else ""
-
-
-def _composite_cost_category_answer(
-    golden: ConversationGolden,
-    used_intents: set[str],
-) -> dict[str, Any] | None:
-    parts: list[str] = []
-    consumed: list[str] = []
-    templates = [
-        ("category_name", "Name it {value}."),
-        ("name_template", "Use the template name {value}."),
-        ("bucketing_criteria", "Organize costs by {value}."),
-        ("filter_type", "Use filter type {value}."),
-    ]
-    intent_values = intents(golden)
-    for key, template in templates:
-        if key in used_intents:
-            continue
-        value = intent_values.get(key, "")
-        if value:
-            parts.append(template.format(value=value))
-            consumed.append(key)
-    if not parts:
-        return None
-    return {
-        "intent": "composite",
-        "answer": " ".join(parts),
-        "intents": consumed,
-    }
 
 
 def _looks_like_user_question(content: str) -> bool:

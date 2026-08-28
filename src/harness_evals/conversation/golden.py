@@ -55,7 +55,6 @@ class ConversationGolden:
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
     tags: dict[str, str] | None = field(default=None)
-    expected_tool_calls: list[ToolCall] | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.mode is None:

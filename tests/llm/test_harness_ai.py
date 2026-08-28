@@ -13,6 +13,12 @@ from harness_evals.llm.harness_ai import HarnessAILLM, _extract_json, _generate_
 TEST_JWT_SECRET = b"test-secret-must-be-at-least-32-bytes"
 
 
+@pytest.fixture(autouse=True)
+def _disable_dynamic_cost_lookup(monkeypatch):
+    """Keep patched httpx clients from importing LiteLLM/OpenAI during these unit tests."""
+    monkeypatch.setattr("harness_evals.llm.harness_ai.estimate_llm_cost", lambda data, model: None)
+
+
 @pytest.mark.unit
 class TestGenerateJwt:
     def test_returns_string(self):

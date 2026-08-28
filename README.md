@@ -90,6 +90,9 @@ baseline: {store: json, path: .evals/baseline.json}
 
 ```bash
 harness-evals run my-eval.eval.yaml                # run the eval
+harness-evals run my-eval.eval.yaml --golden-ids case-a,case-b  # run subset by golden id
+harness-evals run my-eval.eval.yaml --modules ci,ce             # run goldens tagged module=ci or ce
+harness-evals run my-eval.eval.yaml --golden-tags scenario_type=write,environment=qa
 harness-evals run my-eval.eval.yaml --baseline     # compare against stored baseline
 harness-evals run my-eval.eval.yaml --fail-under 0.8  # CI gate on absolute score
 harness-evals list-metrics                         # see all available metrics
@@ -390,6 +393,14 @@ plugins:
 conversation:
   elicitation_adapter: harness_sse
 ```
+
+**Harness LLM gateway** (OpenAI-compatible ``/llm-gw/v1``, PAT via ``x-api-key``) uses
+``provider: harness_gateway`` — not ``provider: openai`` with a gateway URL. Model names
+such as ``online/anthropic/claude-sonnet-4-5`` are gateway routing aliases; the provider
+selects the client, not the model vendor. Domain-specific plain-text elicitation matchers load via ``plugins:`` in eval YAML
+(``register_plain_text_followup_resolver``); ``harness-evals run`` scopes those resolvers to the configured plugin modules.
+SDK callers pass resolvers explicitly via ``evaluate_conversation(..., plain_text_followup_resolvers=[...])``.
+``provider: harness`` is the separate Harness AI Service ``/chat`` client (JWT auth).
 
 ```yaml
 name: my-agent-conversation

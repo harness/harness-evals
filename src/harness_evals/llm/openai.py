@@ -8,22 +8,35 @@ from typing import Any
 
 from harness_evals.llm._schema import make_strict_schema
 from harness_evals.llm.base import BaseLLM
+from harness_evals.llm.cost import estimate_llm_cost
 from harness_evals.llm.usage import record_token_usage
 
 
-def _record_openai_usage(response: Any) -> None:
+def _record_openai_usage(
+    response: Any,
+    *,
+    model: str,
+    pricing_model: str | None = None,
+) -> None:
     usage = getattr(response, "usage", None)
-    if usage is not None:
-        record_token_usage(
-            input_tokens=getattr(usage, "prompt_tokens", None),
-            output_tokens=getattr(usage, "completion_tokens", None),
-        )
+    input_tokens = getattr(usage, "prompt_tokens", None) if usage is not None else None
+    output_tokens = getattr(usage, "completion_tokens", None) if usage is not None else None
+    cost_usd = estimate_llm_cost(response, model=pricing_model or model)
+    record_token_usage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+        model=model,
+    )
 
 
 class OpenAILLM(BaseLLM):
     """OpenAI-backed LLM. Requires ``pip install harness-evals[llm]``.
 
     API key resolution: constructor ``api_key`` > ``OPENAI_API_KEY`` env var.
+
+    For the Harness LLM gateway (PAT via ``x-api-key``), use
+    :class:`~harness_evals.llm.harness_gateway.HarnessGatewayOpenAILLM` instead.
     """
 
     def __init__(
@@ -60,6 +73,10 @@ class OpenAILLM(BaseLLM):
             client_kwargs["organization"] = organization
         self._client = openai.AsyncOpenAI(**client_kwargs)
 
+    def _pricing_model(self) -> str:
+        """Model name passed to cost estimation (may differ from routing alias)."""
+        return self.model
+
     def _optional_params(self) -> dict[str, Any]:
         # Send only params that are explicitly set; omit the rest so the model applies its own
         # defaults. Some newer models reject/deprecate sampling knobs like ``temperature``.
@@ -88,7 +105,11 @@ class OpenAILLM(BaseLLM):
             max_completion_tokens=self.max_tokens,
             **self._optional_params(),
         )
-        _record_openai_usage(response)
+        _record_openai_usage(
+            response,
+            model=self.model,
+            pricing_model=self._pricing_model(),
+        )
         return response.choices[0].message.content or ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
@@ -107,6 +128,10 @@ class OpenAILLM(BaseLLM):
                 },
             },
         )
-        _record_openai_usage(response)
+        _record_openai_usage(
+            response,
+            model=self.model,
+            pricing_model=self._pricing_model(),
+        )
         text = response.choices[0].message.content or "{}"
         return json.loads(text)

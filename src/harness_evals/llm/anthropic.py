@@ -8,16 +8,21 @@ from typing import Any
 
 from harness_evals.llm._schema import ANTHROPIC_UNSUPPORTED, make_strict_schema
 from harness_evals.llm.base import BaseLLM
+from harness_evals.llm.cost import estimate_llm_cost
 from harness_evals.llm.usage import record_token_usage
 
 
-def _record_anthropic_usage(response: Any) -> None:
+def _record_anthropic_usage(response: Any, *, model: str) -> None:
     usage = getattr(response, "usage", None)
-    if usage is not None:
-        record_token_usage(
-            input_tokens=getattr(usage, "input_tokens", None),
-            output_tokens=getattr(usage, "output_tokens", None),
-        )
+    input_tokens = getattr(usage, "input_tokens", None) if usage is not None else None
+    output_tokens = getattr(usage, "output_tokens", None) if usage is not None else None
+    cost_usd = estimate_llm_cost(response, model=model)
+    record_token_usage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+        model=model,
+    )
 
 
 class AnthropicLLM(BaseLLM):
@@ -79,7 +84,7 @@ class AnthropicLLM(BaseLLM):
             max_tokens=self.max_tokens,
             **optional_params,
         )
-        _record_anthropic_usage(response)
+        _record_anthropic_usage(response, model=self.model)
         return response.content[0].text if response.content else ""
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
@@ -100,6 +105,6 @@ class AnthropicLLM(BaseLLM):
                 }
             },
         )
-        _record_anthropic_usage(response)
+        _record_anthropic_usage(response, model=self.model)
         text = response.content[0].text if response.content else "{}"
         return json.loads(text)

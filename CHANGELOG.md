@@ -5,6 +5,69 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.6]
+
+### Added
+
+- **Golden dataset filters**: `golden_ids`, `modules`, and `golden_tags` in eval YAML
+  (plus `--golden-ids`, `--modules`, `--golden-tags` CLI overrides) to run subsets of
+  conversation or single-turn goldens. `modules` and `golden_tags.module` address the
+  same tag key, so they are intersected; a disjoint pair is rejected rather than
+  silently resolved in favor of one.
+- **`Golden.id`**: optional stable identifier for single-turn goldens, used by
+  `--golden-ids`. Declared after `tags` so existing positional construction
+  (`Golden("2+2?", "4")`) still binds `expected`.
+- **HITL simulator timing**: `elicitation_resume_delay_s` and
+  `post_elicitation_settle_delay_s` on conversation config — delays before HITL
+  resume and before the next scripted user turn.
+- **`HallucinationMetric` reference sources**: optional assistant tool inputs/results,
+  scenario metadata, and configurable SSE event summaries (`sse_reference_events`)
+  for mutation-grounded judging.
+- **`sse_events_match`**: `events` (OR across event types) and `optional` check flag.
+- **Judge LLM spend reporting**: per-metric `cost_usd` / `llm_spend_by_model` score metadata,
+  aggregated into a `judge_spend` block in the JSON summary record and stdout summary
+  (`summarize_judge_spend`, `format_judge_spend`, `judge_spend_to_dict`, and
+  `summary_to_dict(judge_spend=...)`). Dynamic pricing uses the optional `[cost]` extra
+  (`litellm`) or cost fields embedded in provider responses.
+- **Harness LLM gateway provider**: ``HarnessGatewayOpenAILLM`` / ``HarnessGatewayOpenAIEmbedding``
+  for the OpenAI-compatible ``/llm-gw/v1`` gateway (PAT via ``x-api-key``, budget headers).
+  Use ``provider: harness_gateway`` in eval YAML; ``use_llm_gateway`` in metric metadata
+  routes through the same provider. Generic ``OpenAILLM`` no longer auto-detects Harness PAT keys.
+  Harness gateway ``online/`` model aliases are normalized for pricing only in
+  ``HarnessGatewayOpenAILLM._pricing_model()``, not in the shared cost helper.
+- **Plain-text follow-up plugins**: domain-specific matchers register via
+  ``register_plain_text_followup_resolver`` and load from ``plugins:`` in eval YAML
+  instead of living in ``ConversationSimulator``.
+- **Bedrock providers in eval YAML**: `provider: bedrock_anthropic` and `provider: bedrock_openai`.
+- **`[cost]` optional extra**: `litellm` for judge spend USD estimation.
+
+### Changed
+
+- **Harness LLM gateway auth (breaking)**: ``OpenAILLM`` no longer auto-detects Harness PAT
+  keys (``pat.`` / ``sat.`` / ``st.``) when ``base_url`` is set. Use
+  ``provider: harness_gateway`` in eval YAML (or ``use_llm_gateway: true`` in OpenAI-compatible
+  metric metadata) so PATs are sent via ``x-api-key`` with budget headers. Direct OpenAI
+  users (``sk-`` keys, no gateway URL) are unchanged.
+
+### Fixed
+
+- **`build_llm_provider`**: ``provider: anthropic`` with ``use_llm_gateway: true`` routes through
+  ``HarnessGatewayOpenAILLM`` (OpenAI-shaped ``/v1/chat/completions``) with
+  ``online/anthropic/...`` model aliases instead of falling back to direct ``AnthropicLLM``.
+- **`build_embedding_provider`**: ``use_llm_gateway: true`` routes all judge connectors
+  (including Anthropic) through ``HarnessGatewayOpenAIEmbedding``; ``provider: bedrock_openai``
+  maps to ``BedrockOpenAILLM`` without gateway fallback.
+- **Gateway credential precedence**: when ``use_llm_gateway`` promotes an openai/anthropic
+  connector, the PAT from ``HARNESS_TOKEN`` / ``LLM_GATEWAY_API_KEY`` wins over the decrypted
+  vendor key in metric metadata, which the gateway would reject with a 401. Explicit
+  ``provider: harness_gateway`` still prefers the configured key, since that key *is* the PAT.
+  Applies to both ``build_llm_provider`` and ``build_embedding_provider``.
+- **`ConversationGolden`**: remove duplicate `expected_tool_calls` dataclass field.
+- **`filter_goldens_by_ids`**: only reject duplicate ids when a requested id is
+  ambiguous; unrelated duplicates elsewhere in the dataset no longer fail the run.
+- **`HallucinationMetric`**: cap assistant tool input/result references at 4000 chars,
+  matching the SSE reference truncation limit.
+
 ## [0.19.5]
 
 ### Added

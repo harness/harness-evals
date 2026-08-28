@@ -20,6 +20,7 @@ import os
 import time
 
 from harness_evals.llm.base import BaseLLM
+from harness_evals.llm.cost import estimate_llm_cost
 from harness_evals.llm.usage import record_token_usage
 from harness_evals.utils.json_output import JSON_PARSE_FAILED, parse_json_value
 
@@ -36,32 +37,36 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
-def _record_gateway_usage(data: dict) -> None:
-    """Best-effort token-usage extraction from a Harness AI ``/chat`` response.
+def _record_gateway_usage(data: dict, *, model: str) -> None:
+    """Best-effort token/cost extraction from a Harness AI ``/chat`` response.
 
     The gateway's token-count field names and nesting are not pinned down
     across providers, so this checks the shapes seen in practice and never
     raises — a malformed usage block must not break a live judge call.
     """
     try:
+        input_tokens: int | None = None
+        output_tokens: int | None = None
         usage = data.get("usage")
         if isinstance(usage, dict):
             input_tokens = _coerce_int(usage.get("prompt_tokens", usage.get("input_tokens")))
             output_tokens = _coerce_int(usage.get("completion_tokens", usage.get("output_tokens")))
-            if input_tokens is not None or output_tokens is not None:
-                record_token_usage(input_tokens=input_tokens, output_tokens=output_tokens)
-                return
-        top_in = _coerce_int(data.get("input_tokens"))
-        top_out = _coerce_int(data.get("output_tokens"))
-        if top_in is not None or top_out is not None:
-            record_token_usage(input_tokens=top_in, output_tokens=top_out)
-            return
-        meta = data.get("usageMetadata")
-        if isinstance(meta, dict):
-            meta_in = _coerce_int(meta.get("promptTokenCount"))
-            meta_out = _coerce_int(meta.get("candidatesTokenCount"))
-            if meta_in is not None or meta_out is not None:
-                record_token_usage(input_tokens=meta_in, output_tokens=meta_out)
+        if input_tokens is None and output_tokens is None:
+            input_tokens = _coerce_int(data.get("input_tokens"))
+            output_tokens = _coerce_int(data.get("output_tokens"))
+        if input_tokens is None and output_tokens is None:
+            meta = data.get("usageMetadata")
+            if isinstance(meta, dict):
+                input_tokens = _coerce_int(meta.get("promptTokenCount"))
+                output_tokens = _coerce_int(meta.get("candidatesTokenCount"))
+        cost_usd = estimate_llm_cost(data, model=model)
+        if input_tokens is not None or output_tokens is not None or cost_usd is not None:
+            record_token_usage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                model=model,
+            )
     except Exception:
         logger.debug("Failed to parse token usage from Harness AI gateway response", exc_info=True)
 
@@ -168,7 +173,7 @@ class HarnessAILLM(BaseLLM):
         if data.get("blocked"):
             raise RuntimeError("Harness AI Service blocked the response")
 
-        _record_gateway_usage(data)
+        _record_gateway_usage(data, model=self.model)
         return data
 
     async def generate(self, prompt: str, **kwargs: object) -> str:

@@ -28,25 +28,56 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ModelSpend:
+    """Per-model token and cost totals within one ``collect_token_usage`` block."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    call_count: int = 0
 
 
 @dataclass
 class TokenUsage:
-    """Token counts accumulated within a ``collect_token_usage`` block.
+    """Token and cost totals accumulated within a ``collect_token_usage`` block.
 
     Values sum across every LLM call made inside the block. A count stays
     ``None`` if no call reported it, distinguishing "unknown" from "zero".
+    ``by_model`` breaks down usage when a metric calls more than one model.
     """
 
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cost_usd: float | None = None
+    by_model: dict[str, ModelSpend] = field(default_factory=dict)
 
-    def add(self, *, input_tokens: int | None = None, output_tokens: int | None = None) -> None:
+    def add(
+        self,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cost_usd: float | None = None,
+        model: str | None = None,
+    ) -> None:
         if input_tokens is not None:
             self.input_tokens = (self.input_tokens or 0) + input_tokens
         if output_tokens is not None:
             self.output_tokens = (self.output_tokens or 0) + output_tokens
+        if cost_usd is not None:
+            self.cost_usd = (self.cost_usd or 0.0) + cost_usd
+        if model:
+            bucket = self.by_model.setdefault(model, ModelSpend())
+            bucket.call_count += 1
+            if input_tokens is not None:
+                bucket.input_tokens += input_tokens
+            if output_tokens is not None:
+                bucket.output_tokens += output_tokens
+            if cost_usd is not None:
+                bucket.cost_usd += cost_usd
 
 
 _usage_var: ContextVar[TokenUsage | None] = ContextVar("harness_evals_token_usage", default=None)
@@ -68,8 +99,19 @@ def collect_token_usage() -> Iterator[TokenUsage]:
         _usage_var.reset(token)
 
 
-def record_token_usage(*, input_tokens: int | None = None, output_tokens: int | None = None) -> None:
-    """Report token counts to the active collector, if any. No-op otherwise."""
+def record_token_usage(
+    *,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cost_usd: float | None = None,
+    model: str | None = None,
+) -> None:
+    """Report token/cost usage to the active collector, if any. No-op otherwise."""
     usage = _usage_var.get()
     if usage is not None:
-        usage.add(input_tokens=input_tokens, output_tokens=output_tokens)
+        usage.add(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
+            model=model,
+        )

@@ -1,9 +1,80 @@
 """Tests for the example sse_events_match metric."""
 
+from typing import Any
+
 import pytest
 from examples.sse_events_match_metric import SseEventsMatchMetric
 
 from harness_evals.core.eval_case import EvalCase
+
+
+@pytest.mark.unit
+def test_sse_events_match_optional_skips_missing_event() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "events": ["form_prompt", "confirmation"],
+                "optional": True,
+                "match": [{"path": "$.subtitle", "contains": "Choose an option"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(input="example", output="done", metadata={"sse_events": {}})
+
+    score = metric.measure(eval_case)
+
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_scalar_events_string() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "events": "form_prompt",
+                "match": [{"path": "$.subtitle", "contains": "Choose an option"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="example",
+        output="done",
+        metadata={
+            "sse_events": {
+                "form_prompt": [{"subtitle": "Choose an option for your resource"}],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+
+    assert score.passed
+
+
+@pytest.mark.unit
+def test_sse_events_match_events_across_types() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "events": ["form_prompt", "confirmation"],
+                "match": [{"path": "$.entity_info.entity_type", "equals": "resource"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="example",
+        output="done",
+        metadata={
+            "sse_events": {
+                "confirmation": [{"entity_info": {"entity_type": "resource"}}],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+
+    assert score.passed
 
 
 @pytest.mark.unit
@@ -274,6 +345,36 @@ def test_sse_events_match_entity_mutation_third_fails_when_only_two() -> None:
 
 
 @pytest.mark.unit
+def test_sse_events_match_rejects_occurrence_with_events_list() -> None:
+    metric = SseEventsMatchMetric(
+        checks=[
+            {
+                "events": ["form_prompt", "confirmation"],
+                "occurrence": "last",
+                "match": [{"path": "$.entity_info.entity_type", "equals": "resource"}],
+            }
+        ],
+    )
+    eval_case = EvalCase(
+        input="example",
+        output="done",
+        metadata={
+            "sse_events": {
+                "form_prompt": [{"entity_info": {"entity_type": "resource"}}],
+                "confirmation": [{"entity_info": {"entity_type": "resource"}}],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+
+    assert not score.passed
+    assert score.value == 0.0
+    failed = score.metadata["checks"][0]
+    assert "occurrence cannot be used with 'events'" in failed["detail"]
+
+
+@pytest.mark.unit
 def test_sse_events_match_forbidden_contains_passes_when_event_absent() -> None:
     metric = SseEventsMatchMetric(
         checks=[
@@ -313,3 +414,81 @@ def test_sse_events_match_ordinal_presence_only_fails_when_missing() -> None:
     assert not score.passed
     failed = score.metadata["checks"][0]
     assert "occurrence='third'" in failed["detail"]
+
+
+_HD_WRITE_EVIDENCE_CHECK: dict[str, Any] = {
+    "events": ["assistant_tool_request", "capability_execution"],
+    "match_any": [
+        [{"path": "$.v[*].name", "contains": "emit_capability"}],
+        [{"path": "$.capabilityName", "equals": "create_dashboard"}],
+        [{"path": "$.capabilityName", "equals": "add_widget"}],
+        [{"path": "$.capabilityName", "equals": "edit_widget"}],
+    ],
+}
+
+
+@pytest.mark.unit
+def test_sse_events_match_hd_write_evidence_accepts_emit_capability_tool() -> None:
+    metric = SseEventsMatchMetric(checks=[_HD_WRITE_EVIDENCE_CHECK])
+    eval_case = EvalCase(
+        input="dashboard",
+        output="done",
+        metadata={
+            "sse_events": {
+                "assistant_tool_request": [
+                    {
+                        "v": [
+                            {
+                                "name": "mcp__harness_local__emit_capability",
+                                "arguments": {"capability_id": "add_widget"},
+                            }
+                        ]
+                    }
+                ],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_hd_write_evidence_accepts_capability_execution() -> None:
+    metric = SseEventsMatchMetric(checks=[_HD_WRITE_EVIDENCE_CHECK])
+    eval_case = EvalCase(
+        input="dashboard",
+        output="done",
+        metadata={
+            "sse_events": {
+                "capability_execution": [
+                    {"capabilityName": "add_widget", "status": "SUCCESS"},
+                ],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert score.passed
+    assert score.value == 1.0
+
+
+@pytest.mark.unit
+def test_sse_events_match_hd_write_evidence_fails_without_either_path() -> None:
+    metric = SseEventsMatchMetric(checks=[_HD_WRITE_EVIDENCE_CHECK])
+    eval_case = EvalCase(
+        input="dashboard",
+        output="done",
+        metadata={
+            "sse_events": {
+                "assistant_tool_request": [
+                    {"v": [{"name": "harness_list", "arguments": {"resource_type": "kg_queryable_type_summary"}}]}
+                ],
+            }
+        },
+    )
+
+    score = metric.measure(eval_case)
+    assert not score.passed
+    assert score.value == 0.0

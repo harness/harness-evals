@@ -9,7 +9,7 @@ from typing import Any
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
-from harness_evals.summary import summarize, summary_to_dict
+from harness_evals.summary import summarize, summarize_judge_spend, summary_to_dict
 
 _MAX_TOOL_RESULT_CHARS = 500
 _DEBUG_METADATA_KEYS = (
@@ -228,7 +228,10 @@ class JsonSink(BaseSink):
         if self._write_count == 0:
             return
         if self.include_summary and self._all_scores:
-            summary_record = summary_to_dict(summarize(self._all_scores))
+            summary_record = summary_to_dict(
+                summarize(self._all_scores),
+                judge_spend=summarize_judge_spend(self._all_scores),
+            )
             with open(self.path, "a") as f:
                 f.write(json.dumps(summary_record, default=str) + "\n")
                 f.flush()

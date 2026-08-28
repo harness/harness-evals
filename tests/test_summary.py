@@ -9,6 +9,7 @@ from harness_evals.summary import (
     ScoreSummary,
     build_dimension_summary,
     dimension_of,
+    summarize_judge_spend,
     summary_to_dict,
 )
 
@@ -276,3 +277,46 @@ class TestSummaryToDict:
         assert payload["metrics"]["exact_match"]["mean"] == 1.0
         assert "correctness" in payload["dimensions"]
         assert payload["dimensions"]["safety"]["is_safety"] is True
+
+    def test_summary_to_dict_includes_judge_spend(self):
+        scores = [
+            Score(
+                name="llm_judge",
+                value=1.0,
+                threshold=0.5,
+                metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cost_usd": 0.003,
+                    "llm_model": "gpt-4o",
+                    "llm_spend_by_model": {
+                        "gpt-4o": {
+                            "input_tokens": 100,
+                            "output_tokens": 20,
+                            "cost_usd": 0.003,
+                            "call_count": 1,
+                        }
+                    },
+                },
+            )
+        ]
+        payload = summary_to_dict(
+            summarize([scores]),
+            judge_spend=summarize_judge_spend([scores]),
+        )
+        assert payload["judge_spend"]["total_cost_usd"] == 0.003
+        assert payload["judge_spend"]["by_model"]["gpt-4o"]["input_tokens"] == 100
+
+    def test_summarize_judge_spend_ignores_non_judge_cost_usd(self):
+        scores = [
+            [
+                Score(
+                    name="cost_efficiency",
+                    value=1.0,
+                    threshold=0.5,
+                    metadata={"cost_usd": 0.02, "max_cost_usd": 0.1},
+                )
+            ]
+            for _ in range(3)
+        ]
+        assert summarize_judge_spend(scores) is None

@@ -146,6 +146,11 @@ class EvalCase:
             merged_meta = {**(golden.metadata or {}), **(metadata_extra or {})}
         else:
             merged_meta = None
+        if golden.id:
+            if merged_meta is None:
+                merged_meta = {"golden_id": golden.id}
+            else:
+                merged_meta.setdefault("golden_id", golden.id)
         return cls(
             input=golden.input,
             output=output,

@@ -278,6 +278,16 @@ class TestAEvaluateTokenCapture:
         ec = EvalCase.from_golden(g, output="a")
         assert ec.metadata is None
 
+    def test_from_golden_copies_golden_id_to_metadata(self):
+        g = Golden(input="q", expected="a", id="my-golden-id")
+        ec = EvalCase.from_golden(g, output="a")
+        assert ec.metadata == {"golden_id": "my-golden-id"}
+
+    def test_from_golden_preserves_existing_golden_id_in_metadata(self):
+        g = Golden(input="q", expected="a", id="golden-id", metadata={"golden_id": "existing"})
+        ec = EvalCase.from_golden(g, output="a")
+        assert ec.metadata["golden_id"] == "existing"
+
     def test_from_golden_copies_expected_tools(self):
         g = Golden(input="q", expected="a", expected_tools=["search", "read"])
         ec = EvalCase.from_golden(g, output="a")

@@ -200,6 +200,22 @@ class TestJsonSink:
         assert len(record["scores"]) == 2
         assert record["scores"][0]["name"] == "exact_match"
 
+    def test_write_includes_id_and_tags(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        eval_case = EvalCase(
+            input="List pipelines",
+            output="Found 3 pipelines",
+            tags={"module": "cd", "scenario_type": "read_only"},
+            metadata={"golden_id": "golden-abc-list-pipelines"},
+        )
+        sink = JsonSink(str(path))
+
+        sink.write(scores, eval_case)
+
+        record = json.loads(path.read_text().strip())
+        assert record["id"] == "golden-abc-list-pipelines"
+        assert record["tags"] == {"module": "cd", "scenario_type": "read_only"}
+
     def test_write_appends(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"
         sink = JsonSink(str(path))

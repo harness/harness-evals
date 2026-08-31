@@ -110,6 +110,19 @@ def _messages_for_json(messages: list[dict[str, Any]] | None) -> list[dict[str, 
     return cleaned
 
 
+def _record_identity(eval_case: EvalCase) -> dict[str, Any]:
+    """Stable case id and golden tags for downstream reporting (CI, Slack, dashboards)."""
+    identity: dict[str, Any] = {}
+    if eval_case.tags:
+        identity["tags"] = dict(eval_case.tags)
+    metadata = eval_case.metadata
+    if isinstance(metadata, dict):
+        record_id = metadata.get("golden_id") or metadata.get("id")
+        if record_id:
+            identity["id"] = record_id
+    return identity
+
+
 def _debug_metadata(metadata: dict[str, Any] | None, messages: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Small eval-run context for debugging; golden config (sse_checks) stays in the dataset."""
     debug: dict[str, Any] = {}
@@ -201,6 +214,7 @@ class JsonSink(BaseSink):
             "input": eval_case.input,
             "scores": [s.to_dict() for s in scores],
         }
+        record.update(_record_identity(eval_case))
         if self.include_eval_case:
             if self.omit_messages:
                 record["output"] = eval_case.output

@@ -42,3 +42,16 @@ class TestEstimateLlmCost:
         )
         response = MagicMock(model="gpt-4o")
         assert estimate_llm_cost(response, model="gpt-4o") == pytest.approx(0.0099)
+
+    def test_token_based_fallback_when_completion_cost_unavailable(self, monkeypatch):
+        monkeypatch.setattr(
+            "harness_evals.llm.cost._litellm_completion_cost",
+            lambda response, model: None,
+        )
+        usage = MagicMock(prompt_tokens=1000, completion_tokens=100)
+        response = MagicMock(usage=usage, model="gpt-4o")
+        monkeypatch.setattr(
+            "harness_evals.llm.cost._litellm_token_based_cost",
+            lambda model, input_tokens, output_tokens: 0.0123,
+        )
+        assert estimate_llm_cost(response, model="openai/gpt-4o") == pytest.approx(0.0123)

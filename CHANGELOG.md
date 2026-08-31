@@ -13,6 +13,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `metadata.golden_id`) on every result record so CI/reporting can group failures by
   golden tags without parsing IDs.
 - **`EvalCase.from_golden`**: copies `Golden.id` into `metadata.golden_id` when set.
+- **Judge cost fallback**: when LiteLLM ``completion_cost`` cannot parse a gateway
+  response, estimate USD from usage token counts × LiteLLM ``model_cost`` rates.
 
 ## [0.19.6]
 

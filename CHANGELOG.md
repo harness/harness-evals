@@ -81,6 +81,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `metadata.golden_id`) on every result record so CI/reporting can group failures by
   golden tags without parsing IDs.
 - **`EvalCase.from_golden`**: copies `Golden.id` into `metadata.golden_id` when set.
+- **Observed-usage pricing**: `harness_evals.cost` prices provider-reported
+  input, output, cache-read, and cache-write usage from a serializable UDP
+  resolved-rate-card snapshot. Resolution is backend-neutral and offline, with
+  explicit incomplete results and provenance when identity, usage, or rates
+  cannot be resolved unambiguously.
 
 ## [0.19.6]
 

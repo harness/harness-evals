@@ -46,6 +46,36 @@ pytest tests/ --cov=harness_evals --cov-report=html  # With coverage
 
 **ALWAYS run `pytest tests/ -v` before committing.**
 
+### Optional dependencies in tests
+
+`httpx`, `pyjwt`, `langfuse`, the OpenTelemetry packages, `openai`, `anthropic`,
+and `nltk` are optional extras. A test that exercises one must declare it, so the
+suite still runs after a plain `pip install -e .`:
+
+```python
+from tests.optional_deps import requires
+
+@requires("opentelemetry.sdk", extra="otlp")   # test, or whole class
+class TestOtlpSink: ...
+```
+
+When the test *module* cannot even be imported without the dependency, guard it at
+module scope instead — a bare module-level `import httpx` is a collection error,
+and pytest aborts the entire session rather than skipping the one module:
+
+```python
+httpx = pytest.importorskip("httpx", reason="... pip install 'harness-evals[harness]'")
+```
+
+**CI installs `--all-extras`, so none of these guards may fire there.** A skipped
+`requires(...)` test in a CI run means the install step regressed and coverage for
+the affected modules is being under-counted — fix the install, do not accept the
+skip. Verify locally with:
+
+```bash
+pytest tests/ -q -rs   # expect only the OPENAI_API_KEY integration skips
+```
+
 ## Linting & Formatting
 
 ```bash

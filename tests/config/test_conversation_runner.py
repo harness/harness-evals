@@ -16,6 +16,7 @@ from harness_evals.plugins import register_metric
 from harness_evals.refs import ResourceRef
 from harness_evals.targets.conversational_streaming_http import ConversationalStreamingHttpTarget
 from tests.conversation.k8s_connector_sse_fixtures import k8s_connector_turn_responses
+from tests.optional_deps import requires
 
 
 class StopLLM(BaseLLM):
@@ -38,6 +39,7 @@ class AlwaysPassMetric(BaseMetric):
 
 
 @pytest.mark.unit
+@requires("httpx", extra="harness")
 def test_config_runner_replays_k8s_connector_flow_through_conversation_target(tmp_path, monkeypatch):
     responses = iter(k8s_connector_turn_responses())
     requests: list[dict] = []

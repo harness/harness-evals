@@ -13,6 +13,12 @@ from harness_evals.sinks.csv_sink import CsvSink
 from harness_evals.sinks.json_sink import JsonSink
 from harness_evals.sinks.junit_sink import JUnitSink
 from harness_evals.sinks.stdout import StdoutSink
+from tests.optional_deps import requires
+
+# OtlpSink and LangfuseSink both raise a directed ImportError when their optional
+# packages are absent, so the classes exercising them carry the matching guard.
+requires_otlp = requires("opentelemetry.sdk", extra="otlp")
+requires_langfuse = requires("langfuse", extra="langfuse")
 
 # ---------------------------------------------------------------------------
 # StdoutSink
@@ -729,6 +735,7 @@ def otlp_mocks():
 
 
 @pytest.mark.unit
+@requires_otlp
 class TestOtlpSink:
     """Tests for OtlpSink metrics emission."""
 
@@ -978,6 +985,7 @@ class TestOtlpSink:
 
 
 @pytest.mark.unit
+@requires_otlp
 class TestOtlpSinkTraces:
     """Tests for OtlpSink trace emission."""
 
@@ -1188,6 +1196,7 @@ class TestOtlpSinkTraces:
 
 
 @pytest.mark.unit
+@requires_otlp
 class TestHttpOtlpEndpoints:
     """Tests for _http_otlp_endpoints URL normalization."""
 
@@ -1221,6 +1230,7 @@ class TestHttpOtlpEndpoints:
 
 
 @pytest.mark.unit
+@requires_otlp
 class TestOtlpSinkTruncate:
     """Tests for the _truncate helper."""
 
@@ -1263,6 +1273,7 @@ class TestOtlpSinkTruncate:
 
 
 @pytest.mark.unit
+@requires_otlp
 class TestOtlpSinkContextPropagation:
     """Tests for parent_context, tracer_provider, and meter_provider injection."""
 
@@ -1414,6 +1425,7 @@ class TestOtlpSinkContextPropagation:
 
 
 @pytest.mark.unit
+@requires_otlp
 class TestOtlpSinkItemContext:
     """Tests for write() with item_context — decorating engine-owned spans."""
 
@@ -1559,6 +1571,7 @@ class TestOtlpSinkItemContext:
 
 
 @pytest.mark.unit
+@requires_langfuse
 class TestLangfuseSink:
     @patch("harness_evals.sinks.langfuse_sink.Langfuse")
     def test_write_sends_scores(self, mock_langfuse_cls):

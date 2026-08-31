@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
-from harness_evals.llm.harness_ai import HarnessAILLM, _extract_json, _generate_jwt
+# HarnessAILLM needs httpx for transport and pyjwt to sign its service token, so
+# the whole module goes with the optional extra. Without this the module-scope
+# import below is a collection error, which aborts the entire session rather than
+# skipping these tests. See tests/optional_deps.py.
+httpx = pytest.importorskip("httpx", reason="HarnessAILLM needs pip install 'harness-evals[harness]'")
+pytest.importorskip("jwt", reason="HarnessAILLM needs pip install 'harness-evals[harness]'")
+
+from harness_evals.llm.harness_ai import HarnessAILLM, _extract_json, _generate_jwt  # noqa: E402
 
 TEST_JWT_SECRET = b"test-secret-must-be-at-least-32-bytes"
 

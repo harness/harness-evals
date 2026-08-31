@@ -5,12 +5,16 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
-from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.score import Score
-from harness_evals.metrics.deterministic.webhook import WebhookMetric
+# WebhookMetric is httpx-only, so the whole module goes with the optional extra.
+# Without this the module-scope import below is a collection error, which aborts
+# the entire session rather than skipping these tests. See tests/optional_deps.py.
+httpx = pytest.importorskip("httpx", reason="WebhookMetric needs pip install 'harness-evals[harness]'")
+
+from harness_evals.core.eval_case import EvalCase  # noqa: E402
+from harness_evals.core.score import Score  # noqa: E402
+from harness_evals.metrics.deterministic.webhook import WebhookMetric  # noqa: E402
 
 
 def _mock_httpx_response(payload: dict, status_code: int = 200) -> httpx.Response:

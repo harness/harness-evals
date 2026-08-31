@@ -9,6 +9,7 @@ from harness_evals import EvalCase
 from harness_evals.metrics import factory
 from harness_evals.metrics.factory import build_metric, heuristic_options_schema, normalize_metric_config
 from harness_evals.metrics.safety.role_violation import RoleViolationMetric
+from tests.optional_deps import requires
 
 
 class TestBuildMetric:
@@ -137,6 +138,7 @@ class TestBuildMetric:
         score = metric.measure(EvalCase(input="x", output="x", expected="x"))
         assert score.value == 1.0
 
+    @requires("openai", extra="llm")
     def test_llm_build_injects_judge_metadata(self):
         m = build_metric(
             "llm",
@@ -155,6 +157,7 @@ class TestBuildMetric:
         )
         assert m.name == "geval_correctness"
 
+    @requires("openai", extra="llm")
     def test_llm_unknown_kind_falls_back_to_geval(self):
         m = build_metric(
             "llm",
@@ -445,6 +448,7 @@ class TestBuildLLMProviderGatewayRouting:
         )
         assert keys == ["pat.configured.tok.secret"]
 
+    @requires("httpx", extra="harness")
     def test_use_llm_gateway_with_openai_uses_harness_gateway(self, monkeypatch):
         import sys
         from unittest.mock import MagicMock
@@ -461,6 +465,7 @@ class TestBuildLLMProviderGatewayRouting:
         llm = build_llm_provider({"metadata": {"provider": "openai", "use_llm_gateway": True, "model": "gpt-4o"}})
         assert isinstance(llm, HarnessGatewayOpenAILLM)
 
+    @requires("openai", extra="llm")
     def test_bedrock_openai_without_gateway_uses_bedrock_openai_llm(self, monkeypatch):
         monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "test-bearer")
 
@@ -480,6 +485,7 @@ class TestBuildLLMProviderGatewayRouting:
 
 
 class TestBuildEmbeddingProviderGatewayRouting:
+    @requires("httpx", extra="harness")
     def test_use_llm_gateway_returns_harness_gateway_embedding(self, monkeypatch):
         import sys
         from unittest.mock import MagicMock

@@ -8,6 +8,7 @@ import pytest
 from harness_evals._async_compat import _run_async
 from harness_evals.llm._schema import make_strict_schema
 from harness_evals.llm.base import BaseLLM
+from tests.optional_deps import requires
 
 
 @pytest.fixture(autouse=True)
@@ -273,6 +274,7 @@ class TestHarnessGatewayOpenAILLM:
         mock_openai.AsyncOpenAI.return_value = mock_client
         monkeypatch.setitem(sys.modules, "openai", mock_openai)
 
+    @requires("httpx", extra="harness")
     def test_pat_with_base_url_uses_x_api_key_client(self):
         captured: dict = {}
 
@@ -297,6 +299,7 @@ class TestHarnessGatewayOpenAILLM:
         assert captured["http_client"] is not None
 
     @pytest.mark.asyncio
+    @requires("httpx", extra="harness")
     async def test_x_api_key_client_rewrite_auth_hook(self):
         import httpx
 
@@ -354,6 +357,7 @@ class TestHarnessGatewayOpenAILLM:
         )
         assert normalize_gateway_routing_model("openai", "gpt-4o") == "gpt-4o"
 
+    @requires("httpx", extra="harness")
     def test_build_llm_provider_use_llm_gateway(self, monkeypatch):
         captured: dict = {}
 

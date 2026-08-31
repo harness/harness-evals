@@ -5,6 +5,15 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.7]
+
+### Added
+
+- **JSONL result identity**: `JsonSink` now writes top-level `tags` and `id` (from
+  `metadata.golden_id`) on every result record so CI/reporting can group failures by
+  golden tags without parsing IDs.
+- **`EvalCase.from_golden`**: copies `Golden.id` into `metadata.golden_id` when set.
+
 ## [0.19.6]
 
 ### Added

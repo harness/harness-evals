@@ -5,6 +5,8 @@ Pricing is resolved at runtime — never hard-coded per model. Resolution order:
 1. Cost fields embedded in the provider response (when the gateway or provider returns them).
 2. ``litellm.completion_cost()`` when ``litellm`` is installed (same helper the Harness
    LLM gateway uses internally).
+3. Token counts from the response usage object × LiteLLM ``model_cost`` rates when (2) fails
+   but the model is in LiteLLM's pricing table (common for gateway-routed OpenAI responses).
 
 Returns ``None`` when cost cannot be determined (unknown model, litellm missing, zero tokens).
 """
@@ -65,6 +67,71 @@ def _extract_cost_from_response(response: Any) -> float | None:
     return None
 
 
+def _usage_token_counts(response: Any) -> tuple[int | None, int | None]:
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    if usage is None:
+        return None, None
+    if isinstance(usage, dict):
+        input_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
+        output_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
+    else:
+        input_tokens = getattr(usage, "prompt_tokens", None)
+        if input_tokens is None:
+            input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "completion_tokens", None)
+        if output_tokens is None:
+            output_tokens = getattr(usage, "output_tokens", None)
+    try:
+        in_t = int(input_tokens) if input_tokens is not None else None
+    except (TypeError, ValueError):
+        in_t = None
+    try:
+        out_t = int(output_tokens) if output_tokens is not None else None
+    except (TypeError, ValueError):
+        out_t = None
+    return in_t, out_t
+
+
+def _model_cost_candidates(model: str) -> list[str]:
+    normalized = normalize_model_for_pricing(model)
+    candidates = [normalized]
+    if "/" in normalized:
+        candidates.append(normalized.split("/", 1)[1])
+    if not normalized.startswith("gpt-"):
+        tail = normalized.rsplit("/", 1)[-1]
+        if tail not in candidates:
+            candidates.append(tail)
+    return candidates
+
+
+def _litellm_token_based_cost(
+    model: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> float | None:
+    if not model or not input_tokens:
+        return None
+    try:
+        import litellm
+    except ImportError:
+        return None
+
+    out_tokens = output_tokens or 0
+    for candidate in _model_cost_candidates(model):
+        info = litellm.model_cost.get(candidate)
+        if not info:
+            continue
+        in_rate = info.get("input_cost_per_token")
+        out_rate = info.get("output_cost_per_token")
+        if in_rate is None and out_rate is None:
+            continue
+        cost = float(in_rate or 0.0) * input_tokens + float(out_rate or 0.0) * out_tokens
+        return cost if cost > 0 else None
+    return None
+
+
 def _litellm_completion_cost(response: Any, model: str | None) -> float | None:
     try:
         import litellm
@@ -99,4 +166,10 @@ def estimate_llm_cost(response: Any, *, model: str | None = None) -> float | Non
         return litellm_cost
     if litellm_cost == 0.0 and embedded == 0.0:
         return 0.0
+
+    if resolved_model:
+        input_tokens, output_tokens = _usage_token_counts(response)
+        token_cost = _litellm_token_based_cost(resolved_model, input_tokens, output_tokens)
+        if token_cost is not None and token_cost > 0:
+            return token_cost
     return None

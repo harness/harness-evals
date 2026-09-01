@@ -1,10 +1,31 @@
 """Shared test fixtures for harness-evals."""
 
+from __future__ import annotations
+
 import pytest
+
+# Optional extras stay out of the default install.
+# `[llm]` can pull in httpx without pyjwt; `[harness]` is both.
+try:
+    import httpx  # noqa: F401
+except ImportError:
+    httpx = None
+try:
+    import jwt  # noqa: F401
+except ImportError:
+    jwt = None
 
 from harness_evals import plugins
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.llm.base import BaseLLM
+
+# Skip collection of modules that import a missing extra at top level so
+# `pytest --cov` still writes coverage.xml.
+collect_ignore = []
+if httpx is None:
+    collect_ignore.append("metrics/test_webhook.py")
+if httpx is None or jwt is None:
+    collect_ignore.append("llm/test_harness_ai.py")
 
 
 @pytest.fixture(autouse=True)

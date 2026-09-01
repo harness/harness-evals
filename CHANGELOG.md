@@ -5,6 +5,27 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.8]
+
+### Added
+
+- **Spec-grounding scoring**: deterministic `coverage` / `faithfulness` / `consistency`
+  rollup (`compute_score`, `render_reason`, `build_metadata`) with default weights
+  0.4 / 0.3 / 0.3. Empty applicable-requirement or claim dimensions are dropped from
+  the rollup rather than treated as a perfect 1.0. Optional `contradiction_is_fatal`
+  caps the score at 0. Catalog registration and judge extraction follow in a later
+  release.
+
+### Fixed
+
+- Test modules that import the optional `[harness]` extra at top level are skipped
+  when it is not installed, so a default install still collects the suite and
+  `pytest --cov` writes a coverage report scoped to the package.
+- The optional `[cost]` extra requires LiteLLM `>=1.84.0` (Python `>=3.10,<3.15`),
+  excluding releases with known HIGH and CRITICAL vulnerabilities. On Python
+  3.15+ the extra installs nothing; cost tracking then returns no data instead
+  of failing at install time, because LiteLLM itself does not support 3.15 yet.
+
 ## [0.19.7]
 
 ### Added

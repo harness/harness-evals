@@ -274,6 +274,7 @@ class TestHarnessGatewayOpenAILLM:
         monkeypatch.setitem(sys.modules, "openai", mock_openai)
 
     def test_pat_with_base_url_uses_x_api_key_client(self):
+        pytest.importorskip("httpx")
         captured: dict = {}
 
         def capture(**kwargs):
@@ -298,7 +299,7 @@ class TestHarnessGatewayOpenAILLM:
 
     @pytest.mark.asyncio
     async def test_x_api_key_client_rewrite_auth_hook(self):
-        import httpx
+        httpx = pytest.importorskip("httpx")
 
         from harness_evals.llm.harness_gateway import _gateway_budget_headers, _make_x_api_key_http_client
 
@@ -355,6 +356,7 @@ class TestHarnessGatewayOpenAILLM:
         assert normalize_gateway_routing_model("openai", "gpt-4o") == "gpt-4o"
 
     def test_build_llm_provider_use_llm_gateway(self, monkeypatch):
+        pytest.importorskip("httpx")
         captured: dict = {}
 
         def capture(**kwargs):

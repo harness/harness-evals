@@ -5,6 +5,30 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.9]
+
+### Added
+
+- **Negative assertions for deterministic comparison metrics**: `contains`,
+  `exact_match`, and `regex` accept `negate: true` with a metric-level
+  `forbidden` value. Missing outputs fail before inversion, invalid forbidden
+  configuration fails metric construction, and score names remain
+  caller-controlled so positive and negative variants can be distinguished.
+  `forbidden` must be a string, so an unquoted YAML scalar (`forbidden: 404`)
+  is rejected at config load instead of comparing unequal to every output and
+  never failing. A negated metric whose threshold is at or below `0` — which
+  `build_metric()` produces whenever a caller omits one, including for
+  composite sub-metrics — falls back to `1.0` rather than rejecting the
+  configuration; the omitted-threshold case logs at debug, since no threshold
+  can be supplied to a composite sub-metric, and only a hand-written negative
+  threshold warns. `negate` must be a real boolean: a Harness
+  pipeline expression interpolates to a string, so `negate: "false"` would
+  otherwise be truthy and silently enable the inversion the author was
+  turning off. `case_sensitive` applies to `forbidden` as well, where its
+  `true` default fails open — a recased forbidden value passes — so leak-style
+  checks should set `case_sensitive: false` (`regex` has no such option; use an
+  inline `(?i)` flag).
+
 ## [0.19.8]
 
 ### Added

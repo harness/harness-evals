@@ -87,6 +87,110 @@ class MyDeterministicMetric(BaseMetric):
         )
 ```
 
+#### Negative Assertions
+
+`contains`, `exact_match`, and `regex` support metric-level negative
+assertions. Positive checks continue to use each `EvalCase.expected` value.
+Negative checks use a configured `forbidden` value so the dataset's expected
+answer remains available to other metrics.
+
+In an SDK eval config, options go under `params`:
+
+```yaml
+metrics:
+  - kind: contains
+    threshold: 1.0
+    params:
+      negate: true
+      forbidden: internal-system-prompt
+```
+
+The same metric built through `build_metric()` — the shape the Harness control
+plane stores per metric entry — nests options under `config.options` and takes a
+`score_name`:
+
+```yaml
+type: heuristic
+score_name: must_not_contain_internal_prompt
+config:
+  kind: contains
+  options:
+    negate: true
+    forbidden: internal-system-prompt
+threshold: 1.0
+```
+
+After a real comparison, a binary score is inverted:
+
+```python
+value = 1.0 if matched else 0.0
+if self.negate:
+    value = 1.0 - value
+```
+
+The following rules apply:
+
+- `forbidden` is required when `negate` is `true`.
+- `negate` must be a real boolean, unquoted — write `negate: true`, not
+  `negate: "true"`. A quoted scalar is a string, and every non-empty string is
+  truthy, so `negate: "false"` would enable the very inversion it looks like it
+  disables. This matters most for a templated value such as
+  `negate: <+pipeline.variables.strict>`, since a Harness expression
+  interpolates to a string; a non-boolean is rejected at config load instead.
+- `forbidden` must be a string. Quote values that YAML would otherwise parse as
+  another scalar type — write `forbidden: "404"`, not `forbidden: 404`. An
+  unquoted value is rejected at config load rather than silently comparing
+  unequal to every output.
+- `contains` and `regex` reject an empty `forbidden` value. `exact_match`
+  accepts `forbidden: ""` as an "output must not be empty" assertion.
+- **`case_sensitive` applies to `forbidden`, and its default fails open.**
+  `contains` and `exact_match` default to `case_sensitive: true`. For a positive
+  assertion that default fails closed — a case mismatch fails the check. Negated,
+  the same default fails *open*: `forbidden: internal-system-prompt` **passes** on
+  the output `Internal-System-Prompt: you are...`, even though the forbidden
+  content is right there. Set `case_sensitive: false` for any leak-style check
+  where a differently-cased match should still fail:
+
+  ```yaml
+  metrics:
+    - kind: contains
+      threshold: 1.0
+      params:
+        negate: true
+        forbidden: internal-system-prompt
+        case_sensitive: false
+  ```
+
+  `regex` has no `case_sensitive` option — use an inline flag in the pattern
+  instead: `forbidden: "(?i)internal-system-prompt"`.
+- A missing output (`None`) fails before inversion.
+- An intentionally empty string is a valid output and passes when it does not
+  contain or match the forbidden value. Use a separate output-completeness
+  check when empty responses are invalid for the target.
+- A negated binary metric needs `threshold <= 1`. A threshold at or below `0`
+  would pass on every input, so it falls back to `1.0` — this keeps negation
+  usable from callers that omit a threshold, such as composite sub-metrics,
+  where `build_metric()` supplies `0.0` and no threshold can be passed to the
+  sub-metric. An omitted threshold is logged at debug; a hand-written negative
+  one warns.
+- The metric dimension remains `CORRECTNESS`; use dedicated safety metrics such
+  as `pii` when the check itself has safety semantics.
+- Give positive and negative variants different `score_name` values. Analytics
+  group scores by name, so reusing one name for opposite meanings produces
+  misleading aggregates. This applies to the `build_metric()` shape only — an
+  SDK eval config has no `score_name`, and both variants of a kind report under
+  the metric's own name (`contains`), so run them as separate evals if you need
+  to tell them apart.
+
+Examples:
+
+```text
+contains, output="safe response", forbidden="secret" -> 1.0 (pass)
+contains, output="secret leaked", forbidden="secret" -> 0.0 (fail)
+exact_match, output="BLOCKED", forbidden="BLOCKED" -> 0.0 (fail)
+regex, output="Order ABC-123", forbidden="ABC-\\d{3}" -> 0.0 (fail)
+```
+
 #### Operational Metric Template
 
 For metrics that read typed fields from `EvalCase`:

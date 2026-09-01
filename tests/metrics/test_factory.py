@@ -16,6 +16,111 @@ class TestBuildMetric:
         m = build_metric("heuristic", {"kind": "regex"}, score_name="regex_match", threshold=1.0)
         assert m.name == "regex_match"
 
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_negated_heuristic_from_catalog(self, kind):
+        metric = build_metric(
+            "heuristic",
+            {"kind": kind, "options": {"negate": True, "forbidden": "blocked"}},
+            score_name="must_not_match_blocked",
+            threshold=1.0,
+        )
+
+        assert metric.negate is True
+        assert metric.forbidden == "blocked"
+        assert metric.name == "must_not_match_blocked"
+
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_negated_heuristic_builds_when_threshold_omitted(self, kind):
+        """``build_metric`` defaults threshold to 0.0, which must not reject negation.
+
+        A negated metric at 0.0 would pass on every input, so it is clamped to
+        1.0 rather than raising — otherwise every caller that omits ``threshold``
+        could not use negation at all.
+        """
+        metric = build_metric("heuristic", {"kind": kind, "options": {"negate": True, "forbidden": "blocked"}})
+
+        assert metric.threshold == 1.0
+        assert metric.measure(EvalCase(input="q", output="blocked")).passed is False
+
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_negated_heuristic_allowed_as_composite_sub_metric(self, kind):
+        """``_build_composite_metric`` does not forward a threshold to sub-metrics."""
+        metric = build_metric(
+            "composite",
+            {
+                "metrics": [
+                    {
+                        "ref": "must_not_say_blocked",
+                        "type": "heuristic",
+                        "config": {"kind": kind, "options": {"negate": True, "forbidden": "blocked"}},
+                    }
+                ]
+            },
+            threshold=1.0,
+        )
+
+        assert metric is not None
+
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_negated_composite_sub_metric_builds_without_warning(self, kind, caplog):
+        """The no-threshold composite path is supported, so it must build quietly.
+
+        ``_build_composite_metric`` never forwards a threshold to sub-metrics,
+        and adding ``threshold`` to the sub-metric's ``options`` raises a
+        conflict with a factory-supplied argument. A warning here would be
+        impossible for the author to act on.
+        """
+        with caplog.at_level(logging.WARNING):
+            build_metric(
+                "composite",
+                {
+                    "metrics": [
+                        {
+                            "ref": "must_not_say_blocked",
+                            "type": "heuristic",
+                            "config": {"kind": kind, "options": {"negate": True, "forbidden": "blocked"}},
+                        }
+                    ]
+                },
+                score_name="c",
+            )
+
+        assert caplog.text == ""
+
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_threshold_in_options_is_rejected_so_warning_would_be_unactionable(self, kind):
+        """Documents why the unspecified-threshold path must not warn."""
+        with pytest.raises(TypeError, match="conflict with factory-supplied arguments: threshold"):
+            build_metric(
+                "heuristic",
+                {"kind": kind, "options": {"negate": True, "forbidden": "blocked", "threshold": 1.0}},
+            )
+
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_negated_heuristic_rejects_non_string_forbidden(self, kind):
+        """An unquoted YAML scalar must fail config load, not silently always pass."""
+        with pytest.raises(ValueError, match="forbidden must be a string"):
+            build_metric(
+                "heuristic",
+                {"kind": kind, "options": {"negate": True, "forbidden": 404}},
+                threshold=1.0,
+            )
+
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    @pytest.mark.parametrize("negate", ["false", "true", 1, 0])
+    def test_negated_heuristic_rejects_non_bool_negate(self, kind, negate):
+        """A Harness expression renders to a string, so "false" must not enable negation.
+
+        Truthiness alone would turn negation *on* for the string "false" and
+        silently invert the assertion, with no error for the author to see.
+        """
+        with pytest.raises(ValueError, match="negate must be a boolean"):
+            build_metric(
+                "heuristic",
+                {"kind": kind, "options": {"negate": negate, "forbidden": "blocked"}},
+                threshold=1.0,
+            )
+
     def test_heuristic_unknown_kind_rejected(self):
         with pytest.raises(ValueError, match="Unknown heuristic kind"):
             build_metric("heuristic", {"kind": "nope"}, score_name="x")
@@ -176,6 +281,23 @@ class TestBuildMetric:
 
 
 class TestHeuristicCompatibility:
+    @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
+    def test_negate_is_declared_in_schema_and_normalizes_without_warning(self, kind, caplog):
+        config = {"kind": kind, "options": {"negate": True, "forbidden": "blocked"}}
+        with caplog.at_level(logging.WARNING, logger="harness_evals.metrics.factory"):
+            normalized = normalize_metric_config("heuristic", config)
+
+        assert normalized == config
+        assert heuristic_options_schema(kind)["properties"]["negate"] == {
+            "type": "boolean",
+            "default": False,
+        }
+        assert heuristic_options_schema(kind)["properties"]["forbidden"] == {
+            "type": ["string", "null"],
+            "default": None,
+        }
+        assert "not declared by the SDK" not in caplog.text
+
     @pytest.mark.parametrize(("kind", "option_names"), factory._LEGACY_HEURISTIC_OPTIONS.items())
     def test_legacy_heuristic_alias_targets_declared_option(self, kind, option_names):
         _, option_name = option_names

@@ -1,4 +1,5 @@
 from harness_evals.cost.pricing import (
+    GLOBAL_SCOPE,
     CostObservation,
     ModelAliasRow,
     ObservedUsage,
@@ -14,6 +15,7 @@ from harness_evals.cost.pricing import (
 )
 
 __all__ = [
+    "GLOBAL_SCOPE",
     "CostObservation",
     "ModelAliasRow",
     "ObservedUsage",

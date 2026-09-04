@@ -660,7 +660,7 @@ class ResolvedRateCardProvider:
         signatures = {
             (
                 row.unit_price,
-                row.currency,
+                row.currency.upper(),
                 row.unit_block_size,
                 row.base_request_fee,
                 billable,
@@ -703,9 +703,11 @@ class ResolvedRateCardProvider:
             ("CacheWrite", usage.cache_write_tokens),
         )
         subtotal = Decimal(0)
-        known_component = False
+        priced_component = False
         unknown: list[str] = []
         matched_rates: list[ResolvedRateRow] = []
+        fee_candidates: set[Decimal] = set()
+        unresolved_fee = False
         for usage_type, token_count in usage_values:
             if not _valid_token_count(token_count):
                 unknown.append(usage_type)
@@ -721,29 +723,29 @@ class ResolvedRateCardProvider:
             matched_rates.extend(equivalent_winners)
             if winner is None or billable is None or winner.currency.upper() != "USD":
                 unknown.append(usage_type)
+                # A candidate we could not price may still carry a fee we cannot confirm.
+                unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
                 continue
             subtotal += Decimal(billable) * winner.unit_price / Decimal(winner.unit_block_size)
-            known_component = True
+            priced_component = True
+            fee_candidates.add(winner.base_request_fee)
 
-        fees = {row.base_request_fee for row in matched_rates if row.currency.upper() == "USD"}
-        if len(fees) == 1:
-            subtotal += next(iter(fees))
-            known_component = True
-        elif len(fees) > 1:
+        # The request-level fee is charged once, and only when every applicable row agrees on it.
+        if unresolved_fee or len(fee_candidates) > 1:
             unknown.append("BaseRequestFee")
-        if any(row.currency.upper() != "USD" and row.base_request_fee != 0 for row in matched_rates):
-            unknown.append("BaseRequestFee")
+        elif fee_candidates:
+            subtotal += next(iter(fee_candidates))
 
         provenance = self._provenance(alias_winners, tuple(matched_rates))
         return CostObservation(
-            usd=subtotal if known_component else None,
+            usd=subtotal if priced_component else None,
             complete=not unknown,
             provider=normalized_provider,
             requested_model=requested_model,
             resolved_model=resolved_model,
             source=UDP_PRICING_SOURCE,
             catalog_version=",".join(provenance.sync_ids),
-            unknown_components=tuple(unknown),
+            unknown_components=_unique(unknown),
             provenance=provenance,
         )
 

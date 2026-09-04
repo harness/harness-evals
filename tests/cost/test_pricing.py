@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from harness_evals.cost.pricing import (
+    GLOBAL_SCOPE,
     CostObservation,
     ModelAliasRow,
     ObservedUsage,
@@ -20,7 +21,7 @@ from harness_evals.cost.pricing import (
 )
 
 NOW = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
-GLOBAL = "__GLOBAL__"
+GLOBAL = GLOBAL_SCOPE
 DEFAULT_USAGE = ObservedUsage(1000, 1000, 0, 0)
 
 
@@ -387,6 +388,58 @@ def test_equal_precedence_conflicting_rates_are_ambiguous() -> None:
     assert observation.unknown_components == ("Input",)
     assert observation.provenance is not None
     assert observation.provenance.rate_ids == ("one", "two", "rate-output", "rate-cacheread", "rate-cachewrite")
+
+
+@pytest.mark.unit
+def test_conflicting_rates_with_no_other_usage_do_not_manufacture_zero_cost() -> None:
+    rows = (
+        rate("Input", rate_id="one", unit_price="1"),
+        rate("Input", rate_id="two", unit_price="2"),
+    )
+    observation = price(snapshot(rates=rows), ObservedUsage(1000, None, None, None))
+    assert observation.usd is None
+    assert observation.complete is False
+    assert observation.unknown_components == ("Input", "Output", "CacheRead", "CacheWrite")
+
+
+@pytest.mark.unit
+def test_agreed_nonzero_fee_on_ambiguous_usage_does_not_produce_cost() -> None:
+    rows = (
+        rate("Input", rate_id="one", unit_price="1", base_request_fee="0.25"),
+        rate("Input", rate_id="two", unit_price="2", base_request_fee="0.25"),
+    )
+    observation = price(snapshot(rates=rows), ObservedUsage(1000, None, None, None))
+    assert observation.usd is None
+    assert observation.complete is False
+    assert observation.unknown_components.count("BaseRequestFee") == 1
+
+
+@pytest.mark.unit
+def test_currency_case_differences_are_equivalent_rather_than_ambiguous() -> None:
+    rows = (
+        rate("Input", rate_id="upper", currency="USD"),
+        rate("Input", rate_id="lower", currency="usd"),
+        rate("Output"),
+        rate("CacheRead"),
+        rate("CacheWrite"),
+    )
+    observation = price(snapshot(rates=rows))
+    assert observation.usd == Decimal("2")
+    assert observation.complete is True
+
+
+@pytest.mark.unit
+def test_unpriceable_currency_fee_marks_fee_unknown_once_and_excludes_every_fee() -> None:
+    rows = (
+        rate("Input", currency="EUR", base_request_fee="0.50"),
+        rate("Output", base_request_fee="0.25"),
+        rate("CacheRead", base_request_fee="0.25"),
+        rate("CacheWrite", base_request_fee="0.25"),
+    )
+    observation = price(snapshot(rates=rows))
+    assert observation.usd == Decimal("1")
+    assert observation.complete is False
+    assert observation.unknown_components == ("Input", "BaseRequestFee")
 
 
 @pytest.mark.unit

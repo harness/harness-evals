@@ -29,7 +29,7 @@ def alias(
     *,
     alias_id: str = "alias-1",
     account_id: str = GLOBAL,
-    provider: str = "openai",
+    provider: str | None = "openai",
     value: str = "gpt-4o",
     model: str = "gpt-4o-2024-08-06",
     match_kind: str = "EXACT",
@@ -162,6 +162,15 @@ def test_snapshot_rows_round_trip_as_strict_json_safe_payloads() -> None:
 
 
 @pytest.mark.unit
+def test_snapshot_round_trip_accepts_provider_wildcard_alias() -> None:
+    card = snapshot(aliases=(alias(provider=None),))
+    payload = card.to_dict()
+
+    assert payload["aliases"][0]["provider"] is None
+    assert PricingSnapshot.from_dict(payload) == card
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("path", "bad_value", "exception"),
     [
@@ -235,6 +244,72 @@ def test_prefix_alias_matching_is_case_insensitive() -> None:
         pricing_provider=ResolvedRateCardProvider(card),
     )
     assert observation.resolved_model == "gpt-4o-2024-08-06"
+
+
+@pytest.mark.unit
+def test_provider_wildcard_alias_resolves_for_normalized_provider() -> None:
+    model = "claude-sonnet"
+    card = snapshot(
+        aliases=(alias(provider=None, model=model),),
+        rates=tuple(rate(kind, provider="aws", model=model) for kind in ("Input", "Output", "CacheRead", "CacheWrite")),
+    )
+    observation = price_observed_usage(
+        "bedrock",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(card),
+    )
+
+    assert observation.complete is True
+    assert observation.provider == "aws"
+    assert observation.resolved_model == model
+
+
+@pytest.mark.unit
+def test_exact_provider_alias_beats_wildcard_at_equal_rank() -> None:
+    aliases = (
+        alias(alias_id="wildcard", provider=None, model="wildcard-model"),
+        alias(alias_id="exact", provider="openai", model="exact-model"),
+    )
+    rates = tuple(rate(kind, model="exact-model") for kind in ("Input", "Output", "CacheRead", "CacheWrite"))
+    observation = price(snapshot(aliases=aliases, rates=rates))
+
+    assert observation.complete is True
+    assert observation.resolved_model == "exact-model"
+    assert observation.provenance is not None
+    assert observation.provenance.alias_ids == ("exact",)
+
+
+@pytest.mark.unit
+def test_provider_wildcard_does_not_make_unknown_provider_priceable() -> None:
+    card = snapshot(aliases=(alias(provider=None),))
+    observation = price_observed_usage(
+        "unknown-provider",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(card),
+    )
+
+    assert observation.complete is False
+    assert observation.usd is None
+    assert observation.resolved_model is None
+    assert observation.unknown_components == ("Identity",)
+
+
+@pytest.mark.unit
+def test_conflicting_wildcard_aliases_retain_ambiguity_provenance() -> None:
+    aliases = (
+        alias(alias_id="wild-a", provider=None, model="model-a", sync_id="sync-a"),
+        alias(alias_id="wild-b", provider=None, model="model-b", sync_id="sync-b"),
+    )
+    observation = price(snapshot(aliases=aliases))
+
+    assert observation.complete is False
+    assert observation.provenance is not None
+    assert observation.provenance.alias_ids == ("wild-a", "wild-b")
+    assert observation.provenance.sync_ids == ("sync-a", "sync-b")
 
 
 @pytest.mark.unit

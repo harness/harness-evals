@@ -23,6 +23,7 @@ _PROVIDER_ALIASES = {
     "vertex": "gcp",
     "google": "gcp",
 }
+_KNOWN_PROVIDERS = frozenset(_PROVIDER_ALIASES.values())
 
 
 def _strict_fields(payload: Mapping[str, Any], expected: frozenset[str], type_name: str) -> None:
@@ -140,7 +141,7 @@ class ModelAliasRow:
 
     alias_id: str
     account_id: str
-    provider: str
+    provider: str | None
     alias: str
     canonical_model: str
     match_kind: str
@@ -171,8 +172,9 @@ class ModelAliasRow:
     )
 
     def __post_init__(self) -> None:
-        for field in ("alias_id", "account_id", "provider", "alias", "canonical_model", "sync_id"):
+        for field in ("alias_id", "account_id", "alias", "canonical_model", "sync_id"):
             _string(getattr(self, field), f"ModelAliasRow.{field}")
+        _string(self.provider, "ModelAliasRow.provider", optional=True)
         if self.match_kind not in _ALIAS_KINDS:
             raise ValueError(f"unsupported alias match kind: {self.match_kind}")
         _integer(self.scope_priority, "ModelAliasRow.scope_priority")
@@ -216,7 +218,7 @@ class ModelAliasRow:
         return cls(
             alias_id=_string(payload["alias_id"], "ModelAliasRow.alias_id"),  # type: ignore[arg-type]
             account_id=_string(payload["account_id"], "ModelAliasRow.account_id"),  # type: ignore[arg-type]
-            provider=_string(payload["provider"], "ModelAliasRow.provider"),  # type: ignore[arg-type]
+            provider=_string(payload["provider"], "ModelAliasRow.provider", optional=True),
             alias=_string(payload["alias"], "ModelAliasRow.alias"),  # type: ignore[arg-type]
             canonical_model=_string(payload["canonical_model"], "ModelAliasRow.canonical_model"),  # type: ignore[arg-type]
             match_kind=match_kind,
@@ -583,7 +585,7 @@ class ResolvedRateCardProvider:
         candidates = [
             row
             for row in self.snapshot.aliases
-            if normalize_provider(row.provider) == provider
+            if (row.provider is None or normalize_provider(row.provider) == provider)
             and row.active
             and _active_at(row.effective_from, row.effective_to, occurred_at)
             and _alias_matches(row, requested_model)
@@ -593,9 +595,13 @@ class ResolvedRateCardProvider:
         candidates = account_candidates or [row for row in candidates if row.account_id == GLOBAL_SCOPE]
         if not candidates:
             return None, ()
-        best_rank = max((row.scope_priority, row.alias_tier, row.match_specificity) for row in candidates)
+        best_rank = max(
+            (row.scope_priority, row.alias_tier, row.match_specificity, row.provider is not None) for row in candidates
+        )
         winners = tuple(
-            row for row in candidates if (row.scope_priority, row.alias_tier, row.match_specificity) == best_rank
+            row
+            for row in candidates
+            if (row.scope_priority, row.alias_tier, row.match_specificity, row.provider is not None) == best_rank
         )
         models = {row.canonical_model.casefold() for row in winners}
         if len(models) != 1:
@@ -689,7 +695,7 @@ class ResolvedRateCardProvider:
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in request_dimensions.items()):
             raise TypeError("pricing dimensions must map strings to strings")
 
-        if normalized_provider is None or requested_model is None:
+        if normalized_provider not in _KNOWN_PROVIDERS or requested_model is None:
             return self._identity_incomplete(normalized_provider, requested_model)
 
         resolved_model, alias_winners = self._resolve_alias(normalized_provider, requested_model, occurred)

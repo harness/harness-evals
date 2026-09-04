@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -223,6 +224,19 @@ def test_pattern_alias_kinds_use_documented_matching(kind: str, value: str, repo
 
 
 @pytest.mark.unit
+def test_prefix_alias_matching_is_case_insensitive() -> None:
+    card = snapshot(aliases=(alias(value="GPT-4", match_kind="PREFIX"),))
+    observation = price_observed_usage(
+        "openai",
+        "gPt-4O-us",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(card),
+    )
+    assert observation.resolved_model == "gpt-4o-2024-08-06"
+
+
+@pytest.mark.unit
 def test_alias_filters_inactive_expired_and_incompatible_provider_rows() -> None:
     aliases = (
         alias(alias_id="inactive", model="wrong-1", active=False, scope_priority=99),
@@ -261,12 +275,35 @@ def test_alias_winner_uses_scope_priority_then_tier_then_specificity() -> None:
 
 @pytest.mark.unit
 def test_equal_rank_conflicting_aliases_are_ambiguous() -> None:
-    card = snapshot(aliases=(alias(alias_id="a"), alias(alias_id="b", model="other")))
+    card = snapshot(
+        aliases=(
+            alias(alias_id="a", sync_id="sync-a"),
+            alias(alias_id="b", model="other", sync_id="sync-b"),
+        )
+    )
     observation = price(card)
     assert observation.complete is False
     assert observation.usd is None
     assert observation.resolved_model is None
     assert observation.unknown_components == ("Identity",)
+    assert observation.provenance is not None
+    assert observation.provenance.account_key == "acct-1"
+    assert observation.provenance.alias_type == "ccm:model_alias"
+    assert observation.provenance.rate_type == "ccm:resolved_rate"
+    assert observation.provenance.alias_ids == ("a", "b")
+    assert observation.provenance.sync_ids == ("sync-a", "sync-b")
+    assert observation.provenance.snapshot_start == NOW - timedelta(hours=1)
+    assert observation.provenance.snapshot_end == NOW + timedelta(hours=1)
+
+
+@pytest.mark.unit
+def test_global_only_alias_and_rates_fall_back_for_account_snapshot() -> None:
+    observation = price(snapshot())
+    assert observation.complete is True
+    assert observation.usd == Decimal("2")
+    assert observation.provenance is not None
+    assert observation.provenance.account_key == "acct-1"
+    assert observation.provenance.scopes == (GLOBAL,)
 
 
 @pytest.mark.unit
@@ -302,6 +339,21 @@ def test_effective_intervals_are_half_open_for_aliases_and_rates() -> None:
     observation = price(snapshot(aliases=aliases, rates=rates))
     assert observation.resolved_model == "new"
     assert observation.usd == Decimal("5")
+
+
+@pytest.mark.unit
+def test_rate_effective_end_equal_to_occurrence_is_excluded() -> None:
+    rows = (
+        rate("Input", rate_id="expired", unit_price="99", effective_to=NOW),
+        rate("Input", rate_id="active", unit_price="2", effective_from=NOW, effective_to=None),
+        rate("Output"),
+        rate("CacheRead"),
+        rate("CacheWrite"),
+    )
+    observation = price(snapshot(rates=rows))
+    assert observation.usd == Decimal("3")
+    assert observation.provenance is not None
+    assert "expired" not in observation.provenance.rate_ids
 
 
 @pytest.mark.unit
@@ -393,6 +445,7 @@ def test_missing_usage_or_rate_preserves_known_subtotal_and_provenance() -> None
     card = snapshot(rates=(rate("Input"), rate("Output")))
     observation = price(card, ObservedUsage(1000, None, 50, 0))
     assert observation.usd == Decimal("1")
+    assert observation.known_subtotal_usd == Decimal("1")
     assert observation.complete is False
     assert observation.unknown_components == ("Output", "CacheRead", "CacheWrite")
     assert observation.provenance is not None
@@ -427,6 +480,68 @@ def test_omitted_occurrence_time_uses_snapshot_start_inside_half_open_interval()
 
 
 @pytest.mark.unit
+def test_injected_snapshot_provider_is_used() -> None:
+    provider = ResolvedRateCardProvider(snapshot())
+    observation = price_observed_usage(
+        "openai",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=provider,
+    )
+    assert observation.source == "udp-resolved-rate-card"
+    assert observation.usd == Decimal("2")
+
+
+@pytest.mark.unit
+def test_legacy_provider_without_dimensions_keyword_is_used_when_dimensions_are_none() -> None:
+    class LegacyProvider:
+        def price_observed_usage(
+            self,
+            provider: str | None,
+            model: str | None,
+            usage: ObservedUsage,
+            *,
+            occurred_at: datetime | None = None,
+        ) -> CostObservation:
+            assert (provider, model, usage, occurred_at) == ("openai", "gpt-4o", DEFAULT_USAGE, NOW)
+            return CostObservation(Decimal("7"), True, provider, model, model, "legacy", "v1")
+
+    observation = price_observed_usage(
+        "openai",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=LegacyProvider(),
+        dimensions=None,
+    )
+    assert observation.usd == Decimal("7")
+    assert observation.source == "legacy"
+
+
+@pytest.mark.unit
+def test_typeerror_raised_inside_legacy_provider_is_not_swallowed() -> None:
+    class BrokenLegacyProvider:
+        def price_observed_usage(
+            self,
+            provider: str | None,
+            model: str | None,
+            usage: ObservedUsage,
+            *,
+            occurred_at: datetime | None = None,
+        ) -> CostObservation:
+            raise TypeError("provider bug")
+
+    with pytest.raises(TypeError, match="provider bug"):
+        price_observed_usage(
+            "openai",
+            "gpt-4o",
+            DEFAULT_USAGE,
+            pricing_provider=BrokenLegacyProvider(),
+        )
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("provider", "model", "aliases", "rates", "unknown"),
     [
@@ -457,6 +572,12 @@ def test_missing_identity_alias_or_rates_are_incomplete(
     )
     assert observation.complete is False
     assert observation.unknown_components == unknown
+    assert observation.provenance is not None
+    assert observation.provenance.account_key == "acct-1"
+    assert observation.provenance.alias_type == "ccm:model_alias"
+    assert observation.provenance.rate_type == "ccm:resolved_rate"
+    assert observation.provenance.snapshot_start == NOW - timedelta(hours=1)
+    assert observation.provenance.snapshot_end == NOW + timedelta(hours=1)
 
 
 @pytest.mark.unit
@@ -484,3 +605,26 @@ def test_no_injected_provider_returns_udp_unavailable_without_network_fallback()
     assert observation.source == "udp-unavailable"
     assert "genai_prices" not in source.read_text()
     assert "genai_prices" not in package.read_text()
+
+
+@pytest.mark.unit
+def test_pricing_has_no_catalog_dependency_or_backend_imports() -> None:
+    root = Path(__file__).parents[2]
+    source = root / "src" / "harness_evals" / "cost" / "pricing.py"
+    pyproject = root / "pyproject.toml"
+    lock = root / "poetry.lock"
+    tree = ast.parse(source.read_text())
+    imported_roots = {
+        name.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for name in node.names
+    }
+    imported_roots.update(
+        node.module.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    )
+
+    assert "genai-prices" not in pyproject.read_text()
+    assert "genai-prices" not in lock.read_text()
+    assert imported_roots.isdisjoint({"genai_prices", "httpx", "requests", "urllib"})
+    assert "harness_evals.api" not in source.read_text()
+    assert "service." not in source.read_text()

@@ -418,6 +418,7 @@ class PricingSnapshot:
 class PricingProvenance:
     """Compact provenance for the rows contributing to an observation."""
 
+    account_key: str
     alias_type: str
     rate_type: str
     scopes: tuple[str, ...]
@@ -430,6 +431,7 @@ class PricingProvenance:
 
     _FIELDS = frozenset(
         {
+            "account_key",
             "alias_type",
             "rate_type",
             "scopes",
@@ -443,7 +445,7 @@ class PricingProvenance:
     )
 
     def __post_init__(self) -> None:
-        for field in ("alias_type", "rate_type"):
+        for field in ("account_key", "alias_type", "rate_type"):
             _string(getattr(self, field), f"PricingProvenance.{field}")
         for field in ("scopes", "alias_ids", "rate_ids", "price_ids", "sync_ids"):
             value = getattr(self, field)
@@ -456,6 +458,7 @@ class PricingProvenance:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "account_key": self.account_key,
             "alias_type": self.alias_type,
             "rate_type": self.rate_type,
             "scopes": list(self.scopes),
@@ -478,6 +481,7 @@ class PricingProvenance:
             return tuple(_string(item, f"PricingProvenance.{field} item") for item in value)  # type: ignore[misc]
 
         return cls(
+            account_key=_string(payload["account_key"], "PricingProvenance.account_key"),  # type: ignore[arg-type]
             alias_type=_string(payload["alias_type"], "PricingProvenance.alias_type"),  # type: ignore[arg-type]
             rate_type=_string(payload["rate_type"], "PricingProvenance.rate_type"),  # type: ignore[arg-type]
             scopes=strings("scopes"),
@@ -554,6 +558,24 @@ class ResolvedRateCardProvider:
 
     def __init__(self, snapshot: PricingSnapshot):
         self.snapshot = snapshot
+
+    def _provenance(
+        self,
+        alias_rows: tuple[ModelAliasRow, ...] = (),
+        rate_rows: tuple[ResolvedRateRow, ...] = (),
+    ) -> PricingProvenance:
+        return PricingProvenance(
+            account_key=self.snapshot.account_id,
+            alias_type=self.snapshot.alias_type,
+            rate_type=self.snapshot.rate_type,
+            scopes=_unique([row.account_id for row in (*alias_rows, *rate_rows)]),
+            alias_ids=_unique([row.alias_id for row in alias_rows]),
+            rate_ids=_unique([row.rate_id for row in rate_rows]),
+            price_ids=_unique([row.price_id for row in rate_rows]),
+            sync_ids=_unique([row.sync_id for row in (*alias_rows, *rate_rows)]),
+            snapshot_start=self.snapshot.interval_start,
+            snapshot_end=self.snapshot.interval_end,
+        )
 
     def _resolve_alias(
         self, provider: str, requested_model: str, occurred_at: datetime
@@ -672,7 +694,7 @@ class ResolvedRateCardProvider:
 
         resolved_model, alias_winners = self._resolve_alias(normalized_provider, requested_model, occurred)
         if resolved_model is None:
-            return self._identity_incomplete(normalized_provider, requested_model)
+            return self._identity_incomplete(normalized_provider, requested_model, alias_winners)
 
         usage_values = (
             ("Input", usage.input_tokens),
@@ -712,17 +734,7 @@ class ResolvedRateCardProvider:
         if any(row.currency.upper() != "USD" and row.base_request_fee != 0 for row in matched_rates):
             unknown.append("BaseRequestFee")
 
-        provenance = PricingProvenance(
-            alias_type=self.snapshot.alias_type,
-            rate_type=self.snapshot.rate_type,
-            scopes=_unique([row.account_id for row in (*alias_winners, *matched_rates)]),
-            alias_ids=_unique([row.alias_id for row in alias_winners]),
-            rate_ids=_unique([row.rate_id for row in matched_rates]),
-            price_ids=_unique([row.price_id for row in matched_rates]),
-            sync_ids=_unique([row.sync_id for row in (*alias_winners, *matched_rates)]),
-            snapshot_start=self.snapshot.interval_start,
-            snapshot_end=self.snapshot.interval_end,
-        )
+        provenance = self._provenance(alias_winners, tuple(matched_rates))
         return CostObservation(
             usd=subtotal if known_component else None,
             complete=not unknown,
@@ -735,7 +747,13 @@ class ResolvedRateCardProvider:
             provenance=provenance,
         )
 
-    def _identity_incomplete(self, provider: str | None, requested_model: str | None) -> CostObservation:
+    def _identity_incomplete(
+        self,
+        provider: str | None,
+        requested_model: str | None,
+        alias_candidates: tuple[ModelAliasRow, ...] = (),
+    ) -> CostObservation:
+        provenance = self._provenance(alias_candidates)
         return CostObservation(
             usd=None,
             complete=False,
@@ -743,8 +761,9 @@ class ResolvedRateCardProvider:
             requested_model=requested_model,
             resolved_model=None,
             source=UDP_PRICING_SOURCE,
-            catalog_version="",
+            catalog_version=",".join(provenance.sync_ids),
             unknown_components=("Identity",),
+            provenance=provenance,
         )
 
 

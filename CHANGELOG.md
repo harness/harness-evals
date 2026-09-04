@@ -5,6 +5,16 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1]
+
+### Added
+
+- **Observed-usage pricing**: `harness_evals.cost` prices provider-reported
+  input, output, cache-read, and cache-write usage from a serializable UDP
+  resolved-rate-card snapshot. Resolution is backend-neutral and offline, with
+  explicit incomplete results and provenance when identity, usage, or rates
+  cannot be resolved unambiguously.
+
 ## [0.20.0]
 
 ### Added
@@ -81,11 +91,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `metadata.golden_id`) on every result record so CI/reporting can group failures by
   golden tags without parsing IDs.
 - **`EvalCase.from_golden`**: copies `Golden.id` into `metadata.golden_id` when set.
-- **Observed-usage pricing**: `harness_evals.cost` prices provider-reported
-  input, output, cache-read, and cache-write usage from a serializable UDP
-  resolved-rate-card snapshot. Resolution is backend-neutral and offline, with
-  explicit incomplete results and provenance when identity, usage, or rates
-  cannot be resolved unambiguously.
 
 ## [0.19.6]
 

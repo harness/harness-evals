@@ -8,6 +8,7 @@ import pytest
 from harness_evals import EvalCase
 from harness_evals.metrics import factory
 from harness_evals.metrics.factory import build_metric, heuristic_options_schema, normalize_metric_config
+from harness_evals.metrics.grounding.spec_grounding import SpecGroundingMetric
 from harness_evals.metrics.safety.role_violation import RoleViolationMetric
 
 
@@ -167,6 +168,24 @@ class TestBuildMetric:
         )
         assert metric.name == "turn_faithfulness"
 
+    def test_spec_grounding_weights_and_fatal_flag(self):
+        metric = build_metric(
+            "llm",
+            {
+                "kind": "spec_grounding",
+                "options": {
+                    "weights": {"coverage": 0.5, "faithfulness": 0.5, "consistency": 0.0},
+                    "contradiction_is_fatal": True,
+                },
+                "metadata": {"llm": object()},
+            },
+            threshold=0.7,
+        )
+        assert isinstance(metric, SpecGroundingMetric)
+        assert metric.contradiction_is_fatal is True
+        assert metric.weights["coverage"] == 0.5
+        assert metric.requirements == ()
+
     def test_geval_dimension_option_accepted(self):
         metric = build_metric(
             "llm",
@@ -181,13 +200,25 @@ class TestBuildMetric:
         assert metric.name == "geval_groundedness"
 
     def test_injected_llm_options_cannot_be_overridden(self):
-        with pytest.raises(TypeError, match="criteria"):
+        with pytest.raises(TypeError, match="conflict with factory-supplied arguments: criteria"):
             build_metric(
                 "llm",
                 {
                     "kind": "conversational_geval",
                     "criteria": "a",
                     "options": {"criteria": "b"},
+                    "metadata": {"llm": object()},
+                },
+            )
+
+    def test_geval_options_criteria_is_not_runtime_only(self):
+        with pytest.raises(TypeError, match="conflict with factory-supplied arguments: criteria"):
+            build_metric(
+                "llm",
+                {
+                    "kind": "geval",
+                    "criteria": "Is it correct?",
+                    "options": {"criteria": "Is it grounded?"},
                     "metadata": {"llm": object()},
                 },
             )

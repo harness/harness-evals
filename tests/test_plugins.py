@@ -186,6 +186,16 @@ def test_plain_text_resolvers_are_scoped_to_configured_plugins(
 
 
 @pytest.mark.unit
+def test_catalog_includes_spec_grounding() -> None:
+    by_kind = {entry.kind: entry for entry in catalog()}
+    entry = by_kind["spec_grounding"]
+    assert entry.name == "spec_grounding"
+    assert entry.category == "grounding"
+    assert entry.requires_llm is True
+    assert entry.dimension == Dimension.GROUNDEDNESS
+
+
+@pytest.mark.unit
 def test_catalog_includes_turn_level_rag_metrics() -> None:
     # Regression (PR #38 medium finding): the four turn-level RAG metrics must
     # be discoverable via the catalog, categorized under RAG and flagged as

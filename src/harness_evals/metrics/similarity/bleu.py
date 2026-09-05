@@ -15,7 +15,7 @@ def _get_ngrams(tokens: list[str], n: int) -> Counter:
 
 
 def _bleu_pure_python(reference_tokens: list[str], hypothesis_tokens: list[str], max_n: int = 4) -> float:
-    """Pure Python BLEU implementation as fallback when nltk is unavailable."""
+    """Compute sentence BLEU with method-1 smoothing and uniform weights."""
     if not hypothesis_tokens or not reference_tokens:
         return 0.0
 
@@ -26,14 +26,14 @@ def _bleu_pure_python(reference_tokens: list[str], hypothesis_tokens: list[str],
         hyp_ngrams = _get_ngrams(hypothesis_tokens, n)
 
         clipped = sum(min(count, ref_ngrams.get(ng, 0)) for ng, count in hyp_ngrams.items())
-        total = sum(hyp_ngrams.values())
-
-        if total == 0:
-            precisions.append(0.0)
-        else:
-            precisions.append(clipped / total)
-
-    precisions = [max(p, 1e-10) for p in precisions]
+        # NLTK's sentence_bleu returns zero before smoothing when there is no
+        # unigram overlap at all.
+        if n == 1 and clipped == 0:
+            return 0.0
+        total = max(1, sum(hyp_ngrams.values()))
+        # Match NLTK's method-1 smoothing: add epsilon only when an n-gram
+        # precision numerator is zero.
+        precisions.append(clipped / total if clipped else 0.1 / total)
 
     log_avg = sum(math.log(p) for p in precisions) / len(precisions)
 
@@ -47,8 +47,8 @@ def _bleu_pure_python(reference_tokens: list[str], hypothesis_tokens: list[str],
 class BLEUMetric(BaseMetric):
     """BLEU score between output and expected text.
 
-    Uses nltk when available, falls back to a pure Python implementation.
-    Score is in [0.0, 1.0] where 1.0 indicates perfect n-gram overlap.
+    Uses a dependency-free sentence BLEU implementation with method-1
+    smoothing. Score is in [0.0, 1.0], where 1.0 is perfect n-gram overlap.
     """
 
     def __init__(self, threshold: float = 0.5, max_n: int = 4, **kwargs: object) -> None:
@@ -75,18 +75,7 @@ class BLEUMetric(BaseMetric):
                 reason="Expected answer is empty, so BLEU score cannot be computed",
             )
 
-        try:
-            from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
-
-            weights = tuple(1.0 / self.max_n for _ in range(self.max_n))
-            value = sentence_bleu(
-                [ref_tokens],
-                hyp_tokens,
-                weights=weights,
-                smoothing_function=SmoothingFunction().method1,
-            )
-        except ImportError:
-            value = _bleu_pure_python(ref_tokens, hyp_tokens, self.max_n)
+        value = _bleu_pure_python(ref_tokens, hyp_tokens, self.max_n)
 
         return Score(
             name=self.name,

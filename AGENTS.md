@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and structured outputs. It provides a `pip install`-able scoring engine with 70+ metrics across deterministic, structural, operational, reliability, predictability, MCP, similarity, LLM-judged, RAG, safety, agent, conversation, and security categories.
+**harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and structured outputs. It provides a `pip install`-able scoring engine with 70+ metrics across deterministic, structural, operational, reliability, predictability, MCP, similarity, LLM-judged, RAG, grounding, safety, agent, conversation, and security categories.
 
 **Core principle**: An eval always produces a `Score`. Every metric is a single class with a `measure()` method.
 
@@ -20,7 +20,6 @@ pip install -e "."                # Core only (deterministic metrics, no LLM key
 pip install -e ".[llm]"           # + OpenAI, Anthropic for LLM-judged metrics
 pip install -e ".[otlp]"          # + OTLP metrics & traces export
 pip install -e ".[langfuse]"      # + Langfuse source/sink
-pip install -e ".[similarity]"    # + BLEU metric (nltk)
 pip install -e ".[harness]"       # + Harness AI Service LLM provider
 pip install -e ".[benchmarks]"    # + Academic benchmarks (MMLU, GSM8K, HumanEval, etc.)
 pip install -e ".[all]"           # Everything
@@ -149,6 +148,7 @@ harness-evals/
 │   │   │                            # BrierScore, Calibration, Discrimination
 │   │   ├── similarity/              # Levenshtein, BLEU, ROUGE, EmbeddingSimilarity
 │   │   ├── llm_judge/              # GEval, RubricJudge, Pairwise, DAG, PromptAlignment, Summarization
+│   │   ├── grounding/               # SpecGrounding (plus pure scoring helpers)
 │   │   ├── rag/                     # Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall,
 │   │   │                            # AnswerCorrectness, AnswerSimilarity, ContextEntityRecall,
 │   │   │                            # ContextRelevancy, Conversational (turn-level RAG)
@@ -291,7 +291,7 @@ harness-evals/
 
 This is the most common task an AI agent will do. Follow these steps:
 
-1. **Pick the category** — deterministic, structural, operational, reliability, similarity, llm_judge, rag, safety, agent, conversation, mcp, security, or composite.
+1. **Pick the category** — deterministic, structural, operational, reliability, similarity, llm_judge, rag, grounding, safety, agent, conversation, mcp, security, or composite.
 2. **Create the file** — `src/harness_evals/metrics/<category>/<metric_name>.py`
 3. **Implement the class** — extend `BaseMetric` (or `ReliabilityMetric` for multi-run, `SafetyMetric` for safety):
 
@@ -470,7 +470,7 @@ class SafetyMetric(BaseMetric):
 **Core**: `deepdiff>=7.0`, `jsonschema>=4.0`, `jsonpath-ng>=1.6`, `pyyaml>=6.0`
 **LLM**: `openai>=1.40`, `anthropic>=0.30` — optional `[llm]`
 **OTLP**: `opentelemetry-sdk>=1.20`, `opentelemetry-exporter-otlp-proto-grpc>=1.20`, `opentelemetry-exporter-otlp-proto-http>=1.20` — optional `[otlp]`
-**Similarity**: `nltk>=3.9.4` — optional `[similarity]`
+**Similarity**: BLEU is dependency-free and included in the core install; `[similarity]` remains a compatibility no-op
 **Harness**: `httpx>=0.27`, `pyjwt>=2.13.0` — optional `[harness]`
 **Benchmarks**: `httpx>=0.27` — optional `[benchmarks]` (datasets fetched from HuggingFace Hub)
 **Langfuse**: `langfuse>=2.0` — optional `[langfuse]`

@@ -23,13 +23,13 @@ The control plane invokes this metric once per applicable binding and performs t
 
 | PR | Status | Notes |
 |---|---|---|
-| HE-1 | **In review** (PR #84) | Pure scoring + tests |
-| HE-2 | Not started | Blocked on HE-1 merge + version/tag |
+| HE-1 | **Merged** (PR #84) | Pure scoring + tests |
+| HE-2 | In progress | Metric, catalog, factory, `0.20.0` |
 | HE-3 | Not started | Independent |
 
 ### HE-1 — Pure scoring model and reason rendering
 
-**Status:** in review (PR #84) on `feat/spec-grounding-scoring`. Unit tests pass. No catalog, factory, or LLM code.
+**Status:** merged (PR #84).
 
 **Goal:** lock down arithmetic and edge-case semantics independently of prompts and model variability.
 
@@ -175,9 +175,9 @@ Catalog/factory work:
   override and set this metric to `spec_grounding` so downstream consumers persist the expected score label
   without renaming every existing built-in.
 - Verify catalog dimension, default threshold, and `requires_llm=True`.
-- No `metrics/factory.py` source change is expected: `_catalog_registry()` discovers LLM metrics and
-  `_build_llm_metric()` already validates/passes `options`. Add a factory regression test proving `weights` and
-  `contradiction_is_fatal` construct successfully.
+- `_catalog_registry()` discovers the LLM metric. The factory reserves the
+  metric's declared runtime-only options so persisted `requirements` are
+  rejected, while `weights` and `contradiction_is_fatal` pass through.
 - Do not expose `requirements` as persisted metric config; the control plane binds it at runtime.
 - Do not import `FaithfulnessMetric`; `docs/metrics-guide.md` forbids cross-metric imports.
 

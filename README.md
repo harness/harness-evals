@@ -11,7 +11,6 @@ pip install harness-evals            # core only
 pip install harness-evals[llm]       # + LLM-judged metrics (OpenAI, Anthropic)
 pip install harness-evals[otlp]      # + OTLP metrics & traces export
 pip install harness-evals[langfuse]  # + Langfuse source/sink
-pip install harness-evals[similarity]# + BLEU metric (nltk)
 pip install harness-evals[harness]   # + Harness AI Service LLM provider
 pip install harness-evals[benchmarks]# + academic benchmarks (MMLU, GSM8K, etc.)
 pip install harness-evals[all]       # everything
@@ -24,7 +23,7 @@ Every metric belongs to one of five evaluation dimensions. Together they answer:
 | Dimension | Question | Example Metrics |
 |-----------|----------|----------------|
 | **Correctness** | Is it right? | ExactMatch, TaskCompletion, GEval, GoalAccuracy |
-| **Groundedness** | Is it supported by evidence? | Faithfulness, ContextPrecision, AnswerRelevancy |
+| **Groundedness** | Is it supported by evidence? | Faithfulness, SpecGrounding, ContextPrecision, AnswerRelevancy |
 | **Safety** | Did it violate policy? | PII, Toxicity, PromptInjection, Hallucination |
 | **Trajectory** | Did it take a good path? | PlanAdherence, StepEfficiency, ToolCorrectness |
 | **Performance** | Was it fast and cheap? | Latency, TokenCost, CostEfficiency |
@@ -789,6 +788,7 @@ All benchmarks support: `shots=N` override, `limit=N` for quick runs, `offline=T
 | **Similarity** | Levenshtein, BLEU, ROUGE, EmbeddingSimilarity | String distance, n-gram overlap, ROUGE recall-oriented scoring, and semantic vector similarity |
 | **LLM-Judged** | GEval, RubricJudge, Pairwise, DAG, PromptAlignment, Summarization | LLM scores output against criteria, rubric, or A/B comparison. `GEval` supports free-form criteria, numbered `evaluation_steps`, and integer score-band rubrics via `list[RubricLevel]`; `RubricJudge` uses a flat level → description rubric; `DAG` composes judgement nodes into a decision graph; `PromptAlignment` checks instruction-following; `Summarization` scores summary faithfulness and coverage. (requires `[llm]`) |
 | **RAG** | Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, AnswerCorrectness, AnswerSimilarity, ContextEntityRecall, ContextRelevancy | Retrieval-augmented generation quality (requires `[llm]`) |
+| **Grounding** | SpecGrounding | Coverage, faithfulness, and consistency of output against one spec in `context[0]` (requires `[llm]`) |
 | **Safety** | PII, Toxicity, PromptInjection, Hallucination, Bias, Compliance, HarmSeverity, HarmfulAdvice, MisuseDetection, RoleViolation | PII leaks, toxic content, prompt injection, hallucination, bias, policy compliance, harm severity, harmful advice, misuse, and role/system-prompt violations (reported separately, never averaged) |
 | **Agent** | ToolCorrectness, ToolArgumentMatch, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, deterministic argument match, task completion, LLM-judged argument validation, plan quality/adherence, step efficiency (some require `[llm]`) |
 | **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |

@@ -72,7 +72,7 @@ class TestBLEUMetric:
     def test_completely_different(self):
         ec = EvalCase(input="q", output="xyz abc", expected="the cat sat on the mat")
         score = BLEUMetric().measure(ec)
-        assert score.value < 0.1
+        assert score.value == 0.0
 
     def test_expected_none(self):
         ec = EvalCase(input="q", output="hello world")
@@ -97,7 +97,7 @@ class TestBLEUMetric:
     def test_short_hypothesis_smoothing_nonzero(self):
         ec = EvalCase(input="q", output="the cat", expected="the cat sat on the mat")
         score = BLEUMetric().measure(ec)
-        assert score.value > 0.0
+        assert score.value == pytest.approx(0.04279677428117006)
 
 
 @pytest.mark.unit

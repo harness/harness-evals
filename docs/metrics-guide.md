@@ -51,6 +51,7 @@ If your metric doesn't clearly fit one dimension, it may be compound — conside
 | `reliability/` | Multi-run consistency, robustness | `ReliabilityMetric` |
 | `llm_judge/` | LLM scores against criteria | `BaseMetric` (takes `llm` param) |
 | `rag/` | Faithfulness, relevancy, context | `BaseMetric` (takes `llm` and/or `embedding` param) |
+| `grounding/` | Spec grounding vs one spec | `BaseMetric` (takes `llm` param) |
 | `similarity/` | Levenshtein, BLEU, embedding similarity | `BaseMetric` (optionally takes `embedding` param) |
 | `safety/` | PII, toxicity, injection, hallucination | `BaseMetric` |
 | `agent/` | Tool correctness, task completion | `BaseMetric` |

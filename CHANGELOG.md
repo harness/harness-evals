@@ -5,6 +5,29 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0]
+
+### Added
+
+- **`spec_grounding` metric**: `SpecGroundingMetric` classifies requirements and
+  claims with a judge LLM, then uses the HE-1 rollup for coverage / faithfulness /
+  consistency. `extract_requirements(spec_text, llm)` is a separate call;
+  `with_requirements(...)` binds a copy without mutating the original. Catalog
+  `name` is `spec_grounding` (same as `kind`). Factory options: `weights`,
+  `contradiction_is_fatal`. Pre-extracted `requirements` are bound at runtime, not
+  persisted as metric config. Requirement echoes are normalized before matching,
+  with unmatched and duplicate row counts reported under `metadata.extra.call_a`.
+
+### Changed
+
+- **BLEU metric**: Replace the optional NLTK runtime dependency with the
+  dependency-free sentence BLEU implementation, preserving the prior NLTK
+  method-1 behavior, including a zero score when there is no unigram overlap.
+  BLEU is included in core; `[similarity]` remains an empty compatibility extra
+  and NLTK is no longer installed by `[all]`. Core installs (which never used
+  NLTK) now apply method-1 smoothing instead of the previous `1e-10` floor, so
+  BLEU scores rise for hypotheses shorter than `max_n`.
+
 ## [0.19.9]
 
 ### Added

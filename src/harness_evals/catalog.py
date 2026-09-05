@@ -70,6 +70,14 @@ def _get_dimension(cls: type) -> Dimension:
     return Dimension.CORRECTNESS  # fallback
 
 
+def _catalog_name(cls: type[BaseMetric]) -> str:
+    """Score/catalog label. Opt in with ``catalog_name``; default is the class name."""
+    override = getattr(cls, "catalog_name", None)
+    if isinstance(override, str) and override:
+        return override
+    return cls.__name__
+
+
 def _get_default_threshold(cls: type) -> float:
     """Extract default threshold from __init__ signature."""
     import inspect
@@ -148,6 +156,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ROUGEMetric,
         RubricJudgeMetric,
         SchemaValidationMetric,
+        SpecGroundingMetric,
         StepEfficiencyMetric,
         StructuralSimilarityMetric,
         SummarizationMetric,
@@ -224,6 +233,8 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "turn_contextual_precision": TurnContextualPrecisionMetric,
         "turn_contextual_recall": TurnContextualRecallMetric,
         "turn_contextual_relevancy": TurnContextualRelevancyMetric,
+        # Grounding
+        "spec_grounding": SpecGroundingMetric,
         # Safety
         "pii": PIIMetric,
         "toxicity": ToxicityMetric,
@@ -298,7 +309,7 @@ def catalog() -> list[CatalogEntry]:
         entries.append(
             CatalogEntry(
                 kind=kind,
-                name=cls.__name__,
+                name=_catalog_name(cls),
                 metric_class=cls,
                 dimension=_get_dimension(cls),
                 category=_category_from_module(cls),

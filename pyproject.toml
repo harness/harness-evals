@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "harness-evals"
-version = "0.19.9"
+version = "0.20.0"
 description = "Open-source AI evaluation framework for LLM agents, prompts, and structured outputs"
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,7 +36,6 @@ anthropic = { version = ">=0.60", optional = true }  # >=0.60 for AWS Bedrock AP
 opentelemetry-sdk = { version = ">=1.20", optional = true }
 opentelemetry-exporter-otlp-proto-grpc = { version = ">=1.20", optional = true }
 opentelemetry-exporter-otlp-proto-http = { version = ">=1.20", optional = true }
-nltk = { version = ">=3.10.0", optional = true }
 httpx = { version = ">=0.27", optional = true }
 pyjwt = { version = ">=2.13.0", optional = true }
 langfuse = { version = ">=2.0", optional = true }
@@ -46,11 +45,11 @@ litellm = { version = ">=1.84.0", optional = true, python = ">=3.10,<3.15" }
 llm = ["openai", "anthropic"]
 cost = ["litellm"]
 otlp = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-exporter-otlp-proto-http"]
-similarity = ["nltk"]
+similarity = []  # Compatibility no-op: BLEU is dependency-free and included in core.
 harness = ["httpx", "pyjwt"]
 langfuse = ["langfuse"]
 benchmarks = ["httpx"]
-all = ["openai", "anthropic", "litellm", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-exporter-otlp-proto-http", "nltk", "httpx", "pyjwt", "langfuse"]
+all = ["openai", "anthropic", "litellm", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-exporter-otlp-proto-http", "httpx", "pyjwt", "langfuse"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"

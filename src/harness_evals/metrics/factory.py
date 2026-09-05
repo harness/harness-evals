@@ -375,6 +375,7 @@ def _validate_constructor_options(
     metric_class: type[BaseMetric],
     options: dict[str, Any],
     reserved: set[str] | None = None,
+    runtime_only: set[str] | frozenset[str] | None = None,
 ) -> None:
     """Reject misspelled metric options before constructors can swallow them."""
     accepted: set[str] = set()
@@ -401,10 +402,23 @@ def _validate_constructor_options(
     # name/dimension are BaseMetric-only kwargs unless the metric declares them itself
     factory_supplied = {"llm", "embedding", "threshold"} | ({"name", "dimension"} - declared_by_metric)
 
-    conflicts = sorted(set(options) & (factory_supplied | (reserved or set())))
-    if conflicts:
+    factory_conflicts = sorted(set(options) & factory_supplied)
+    if factory_conflicts:
         raise TypeError(
-            f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: {', '.join(conflicts)}"
+            f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: "
+            f"{', '.join(factory_conflicts)}"
+        )
+    reserved_conflicts = sorted(set(options) & (reserved or set()))
+    if reserved_conflicts:
+        raise TypeError(
+            f"{metric_class.__name__} option(s) conflict with factory-supplied arguments: "
+            f"{', '.join(reserved_conflicts)}"
+        )
+    runtime_conflicts = sorted(set(options) & set(runtime_only or ()))
+    if runtime_conflicts:
+        raise TypeError(
+            f"{metric_class.__name__} option(s) are runtime-only and cannot be persisted: "
+            f"{', '.join(runtime_conflicts)}"
         )
     unknown = sorted(set(options) - accepted)
     if unknown:
@@ -657,7 +671,9 @@ def _build_llm_metric(
                 kind_kwargs["allowed_topics"] = config["allowed_topics"]
             if kind == "role_violation" and "role_description" in config:
                 kind_kwargs["role_description"] = config["role_description"]
-            _validate_constructor_options(metric_class, options, set(kind_kwargs))
+            reserved_options = set(kind_kwargs)
+            runtime_only = set(getattr(metric_class, "factory_reserved_options", ()))
+            _validate_constructor_options(metric_class, options, reserved_options, runtime_only=runtime_only)
             try:
                 metric = metric_class(llm=llm, threshold=threshold, **kind_kwargs, **options)
             except TypeError as e:

@@ -35,6 +35,7 @@ from harness_evals.metrics.deterministic.list_contains import ListContainsMetric
 from harness_evals.metrics.deterministic.numeric_diff import NumericDiffMetric
 from harness_evals.metrics.deterministic.regex_match import RegexMetric
 from harness_evals.metrics.deterministic.webhook import WebhookMetric
+from harness_evals.metrics.grounding.spec_grounding import SpecGroundingMetric
 from harness_evals.metrics.llm_judge.dag import (
     BinaryJudgementNode,
     DAGMetric,
@@ -133,6 +134,7 @@ __all__ = [
     "GEvalMetric",
     "RubricJudgeMetric",
     "FaithfulnessMetric",
+    "SpecGroundingMetric",
     "AnswerRelevancyMetric",
     "ContextPrecisionMetric",
     "ContextRecallMetric",

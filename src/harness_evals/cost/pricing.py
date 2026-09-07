@@ -152,6 +152,8 @@ class ModelAliasRow:
     effective_from: datetime
     effective_to: datetime | None
     sync_id: str
+    # Service/context dimensions the alias itself resolves (e.g. region, sub_provider_id).
+    dimensions: tuple[RateDimension, ...] = ()
 
     _FIELDS = frozenset(
         {
@@ -168,6 +170,7 @@ class ModelAliasRow:
             "effective_from",
             "effective_to",
             "sync_id",
+            "dimensions",
         }
     )
 
@@ -188,6 +191,12 @@ class ModelAliasRow:
             raise TypeError("ModelAliasRow.effective_to must be a datetime or null")
         if self.effective_to is not None and _as_utc(self.effective_to) <= _as_utc(self.effective_from):
             raise ValueError("ModelAliasRow effective interval must be increasing")
+        if not isinstance(self.dimensions, tuple) or not all(
+            isinstance(item, RateDimension) for item in self.dimensions
+        ):
+            raise TypeError("ModelAliasRow.dimensions must be a tuple of RateDimension")
+        if len({item.name for item in self.dimensions}) != len(self.dimensions):
+            raise ValueError("ModelAliasRow dimensions must have unique names")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +213,7 @@ class ModelAliasRow:
             "effective_from": _datetime_wire(self.effective_from),
             "effective_to": _datetime_wire(self.effective_to) if self.effective_to is not None else None,
             "sync_id": self.sync_id,
+            "dimensions": [item.to_dict() for item in self.dimensions],
         }
 
     @classmethod
@@ -215,6 +225,9 @@ class ModelAliasRow:
         match_kind = _string(payload["match_kind"], "ModelAliasRow.match_kind")
         if match_kind not in _ALIAS_KINDS:
             raise ValueError(f"unsupported alias match kind: {match_kind}")
+        dimensions = payload["dimensions"]
+        if not isinstance(dimensions, list):
+            raise TypeError("ModelAliasRow.dimensions must be a list")
         return cls(
             alias_id=_string(payload["alias_id"], "ModelAliasRow.alias_id"),  # type: ignore[arg-type]
             account_id=_string(payload["account_id"], "ModelAliasRow.account_id"),  # type: ignore[arg-type]
@@ -229,6 +242,7 @@ class ModelAliasRow:
             effective_from=_utc_datetime(payload["effective_from"], "ModelAliasRow.effective_from"),  # type: ignore[arg-type]
             effective_to=_utc_datetime(payload["effective_to"], "ModelAliasRow.effective_to", optional=True),
             sync_id=_string(payload["sync_id"], "ModelAliasRow.sync_id"),  # type: ignore[arg-type]
+            dimensions=tuple(RateDimension.from_dict(item) for item in dimensions),
         )
 
 
@@ -555,6 +569,30 @@ def _unique(values: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def _merge_dimensions(
+    alias_winners: tuple[ModelAliasRow, ...],
+    request_dimensions: Mapping[str, str],
+) -> dict[str, str] | None:
+    """Fold alias-derived dimensions into the caller's, or return None when they disagree.
+
+    Alias rows carry the service context the backend already resolved (region, sub-provider),
+    so they are authoritative defaults for rate selection. A caller value that contradicts one,
+    or equal-rank aliases that contradict each other, is a conflict we refuse to guess through.
+    Null alias values stay unobserved so `_dimension_rank` keeps requiring a NULL rate row.
+    """
+    merged: dict[str, str] = {}
+    for row in alias_winners:
+        for item in row.dimensions:
+            if item.value is None:
+                continue
+            if merged.setdefault(item.name, item.value) != item.value:
+                return None
+    for name, value in request_dimensions.items():
+        if merged.setdefault(name, value) != value:
+            return None
+    return merged
+
+
 class ResolvedRateCardProvider:
     """Resolve and price usage solely from an injected UDP snapshot."""
 
@@ -702,6 +740,10 @@ class ResolvedRateCardProvider:
         if resolved_model is None:
             return self._identity_incomplete(normalized_provider, requested_model, alias_winners)
 
+        merged_dimensions = _merge_dimensions(alias_winners, request_dimensions)
+        if merged_dimensions is None:
+            return self._dimensions_incomplete(normalized_provider, requested_model, resolved_model, alias_winners)
+
         usage_values = (
             ("Input", usage.input_tokens),
             ("Output", usage.output_tokens),
@@ -724,7 +766,7 @@ class ResolvedRateCardProvider:
                 usage_type,
                 token_count,
                 occurred,
-                request_dimensions,
+                merged_dimensions,
             )
             matched_rates.extend(equivalent_winners)
             if winner is None or billable is None or winner.currency.upper() != "USD":
@@ -771,6 +813,26 @@ class ResolvedRateCardProvider:
             source=UDP_PRICING_SOURCE,
             catalog_version=",".join(provenance.sync_ids),
             unknown_components=("Identity",),
+            provenance=provenance,
+        )
+
+    def _dimensions_incomplete(
+        self,
+        provider: str,
+        requested_model: str,
+        resolved_model: str,
+        alias_winners: tuple[ModelAliasRow, ...],
+    ) -> CostObservation:
+        provenance = self._provenance(alias_winners)
+        return CostObservation(
+            usd=None,
+            complete=False,
+            provider=provider,
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+            source=UDP_PRICING_SOURCE,
+            catalog_version=",".join(provenance.sync_ids),
+            unknown_components=("Dimensions",),
             provenance=provenance,
         )
 

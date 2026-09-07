@@ -900,6 +900,7 @@ Registered metrics appear in `catalog()` and are referenceable by `kind:` in YAM
 - [Architecture](docs/architecture.md) — system design, data flow, extension points
 - [Metrics Guide](docs/metrics-guide.md) — how to write a new metric, templates for every category
 - [Integration Guide](docs/integration-guide.md) — pytest, GitHub Actions, Harness CI, GitLab CI
+- [Cost Guide](docs/cost-guide.md) — pricing observed token usage from a caller-supplied rate card
 - [Contributing](docs/CONTRIBUTING.md) — development workflow, code style, PR process
 - [Framework Integrations](examples/integrations/) — runnable examples for LangChain, CrewAI, DSPy, LlamaIndex, OpenAI Agents, Pydantic AI, Strands, Bedrock AgentCore, Google ADK, LiteLLM, and more
 - [Architecture Decision Records](docs/adr/) — why we made key design choices

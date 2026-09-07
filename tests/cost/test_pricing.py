@@ -345,8 +345,39 @@ def price_bedrock(card: PricingSnapshot, **kwargs: object) -> CostObservation:
     )
 
 
+def service_rates(
+    *,
+    account_id: str = "acct-1",
+    dimensions: tuple[RateDimension, ...] = SERVICE_DIMENSIONS,
+    unit_price: str = "2",
+) -> tuple[ResolvedRateRow, ...]:
+    return tuple(
+        rate(
+            kind,
+            account_id=account_id,
+            provider="aws",
+            model="claude-sonnet",
+            unit_price=unit_price,
+            dimensions=dimensions,
+        )
+        for kind in ("Input", "Output", "CacheRead", "CacheWrite")
+    )
+
+
+def rival_alias_snapshot(
+    first: tuple[RateDimension, ...],
+    second: tuple[RateDimension, ...],
+) -> PricingSnapshot:
+    """Two equal-ranked account aliases for the same model, differing only in dimensions."""
+    aliases = tuple(
+        alias(alias_id=alias_id, account_id="acct-1", provider="aws", model="claude-sonnet", dimensions=dimensions)
+        for alias_id, dimensions in (("alias-a", first), ("alias-b", second))
+    )
+    return snapshot(aliases=aliases, rates=service_rates() + service_rates(account_id=GLOBAL, dimensions=()))
+
+
 @pytest.mark.unit
-def test_snapshot_round_trip_carries_alias_dimensions_as_a_strict_field() -> None:
+def test_alias_dimensions_round_trip_and_tolerate_legacy_payloads() -> None:
     card = snapshot(aliases=(alias(dimensions=SERVICE_DIMENSIONS),))
     payload = card.to_dict()
 
@@ -357,24 +388,18 @@ def test_snapshot_round_trip_carries_alias_dimensions_as_a_strict_field() -> Non
     assert PricingSnapshot.from_dict(payload) == card
 
     del payload["aliases"][0]["dimensions"]
-    with pytest.raises(ValueError, match="fields"):
+    legacy = PricingSnapshot.from_dict(payload)
+    assert legacy.aliases[0].dimensions == ()
+    assert legacy.to_dict()["aliases"][0]["dimensions"] == []
+
+    payload["aliases"][0]["unexpected"] = "value"
+    with pytest.raises(ValueError, match="unknown"):
         PricingSnapshot.from_dict(payload)
 
 
 @pytest.mark.unit
 def test_alias_dimensions_select_service_rates_without_caller_dimensions() -> None:
-    rows = tuple(
-        rate(
-            kind,
-            account_id="acct-1",
-            provider="aws",
-            model="claude-sonnet",
-            unit_price="2",
-            dimensions=SERVICE_DIMENSIONS,
-        )
-        for kind in ("Input", "Output", "CacheRead", "CacheWrite")
-    )
-    observation = price_bedrock(service_snapshot(rates=rows))
+    observation = price_bedrock(service_snapshot(rates=service_rates()))
 
     assert observation.complete is True
     assert observation.usd == Decimal("4")
@@ -383,9 +408,7 @@ def test_alias_dimensions_select_service_rates_without_caller_dimensions() -> No
 
 @pytest.mark.unit
 def test_alias_dimensions_fall_back_to_global_all_null_rates() -> None:
-    rows = tuple(
-        rate(kind, provider="aws", model="claude-sonnet") for kind in ("Input", "Output", "CacheRead", "CacheWrite")
-    )
+    rows = service_rates(account_id=GLOBAL, dimensions=(), unit_price="1")
     observation = price_bedrock(service_snapshot(rates=rows))
 
     assert observation.complete is True
@@ -396,18 +419,7 @@ def test_alias_dimensions_fall_back_to_global_all_null_rates() -> None:
 
 @pytest.mark.unit
 def test_caller_dimension_conflicting_with_alias_is_incomplete() -> None:
-    rows = tuple(
-        rate(
-            kind,
-            account_id="acct-1",
-            provider="aws",
-            model="claude-sonnet",
-            unit_price="2",
-            dimensions=SERVICE_DIMENSIONS,
-        )
-        for kind in ("Input", "Output", "CacheRead", "CacheWrite")
-    )
-    observation = price_bedrock(service_snapshot(rates=rows), dimensions={"region": "us-west-2"})
+    observation = price_bedrock(service_snapshot(rates=service_rates()), dimensions={"region": "us-west-2"})
 
     assert observation.complete is False
     assert observation.usd is None
@@ -420,18 +432,7 @@ def test_caller_dimension_conflicting_with_alias_is_incomplete() -> None:
 
 @pytest.mark.unit
 def test_caller_dimension_agreeing_with_alias_is_deduplicated() -> None:
-    rows = tuple(
-        rate(
-            kind,
-            account_id="acct-1",
-            provider="aws",
-            model="claude-sonnet",
-            unit_price="2",
-            dimensions=SERVICE_DIMENSIONS,
-        )
-        for kind in ("Input", "Output", "CacheRead", "CacheWrite")
-    )
-    observation = price_bedrock(service_snapshot(rates=rows), dimensions={"region": "us-east-1"})
+    observation = price_bedrock(service_snapshot(rates=service_rates()), dimensions={"region": "us-east-1"})
 
     assert observation.complete is True
     assert observation.usd == Decimal("4")
@@ -439,22 +440,48 @@ def test_caller_dimension_agreeing_with_alias_is_deduplicated() -> None:
 
 @pytest.mark.unit
 def test_unobserved_service_dimension_still_requires_null_rate_rows() -> None:
-    rows = tuple(
-        rate(
-            kind,
-            account_id="acct-1",
-            provider="aws",
-            model="claude-sonnet",
-            unit_price="2",
-            dimensions=SERVICE_DIMENSIONS,
-        )
-        for kind in ("Input", "Output", "CacheRead", "CacheWrite")
-    )
-    observation = price_bedrock(service_snapshot(rates=rows, alias_dimensions=()))
+    observation = price_bedrock(service_snapshot(rates=service_rates(), alias_dimensions=()))
 
     assert observation.complete is False
     assert observation.usd is None
     assert observation.unknown_components == ("Input", "Output", "CacheRead", "CacheWrite")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "rival_dimensions",
+    [
+        pytest.param(
+            (RateDimension("region", "us-west-2"), RateDimension("sub_provider_id", "bedrock")),
+            id="conflicting-value",
+        ),
+        pytest.param((RateDimension("sub_provider_id", "bedrock"),), id="absent-dimension"),
+        pytest.param(
+            (RateDimension("region", None), RateDimension("sub_provider_id", "bedrock")),
+            id="explicit-null",
+        ),
+    ],
+)
+def test_equal_rank_alias_winners_disagreeing_on_dimensions_are_incomplete(
+    rival_dimensions: tuple[RateDimension, ...],
+) -> None:
+    observation = price_bedrock(rival_alias_snapshot(SERVICE_DIMENSIONS, rival_dimensions))
+
+    assert observation.complete is False
+    assert observation.usd is None
+    assert observation.unknown_components == ("Dimensions",)
+    assert observation.resolved_model == "claude-sonnet"
+    assert observation.provenance is not None
+    assert observation.provenance.alias_ids == ("alias-a", "alias-b")
+
+
+@pytest.mark.unit
+def test_equal_rank_alias_winners_agreeing_on_dimensions_price_the_service_rates() -> None:
+    reordered = (RateDimension("sub_provider_id", "bedrock"), RateDimension("region", "us-east-1"))
+    observation = price_bedrock(rival_alias_snapshot(SERVICE_DIMENSIONS, reordered))
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("4")
 
 
 @pytest.mark.unit

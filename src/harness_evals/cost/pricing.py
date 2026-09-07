@@ -26,13 +26,19 @@ _PROVIDER_ALIASES = {
 _KNOWN_PROVIDERS = frozenset(_PROVIDER_ALIASES.values())
 
 
-def _strict_fields(payload: Mapping[str, Any], expected: frozenset[str], type_name: str) -> None:
+def _strict_fields(
+    payload: Mapping[str, Any],
+    expected: frozenset[str],
+    type_name: str,
+    *,
+    optional: frozenset[str] = frozenset(),
+) -> None:
     if not isinstance(payload, Mapping):
         raise TypeError(f"{type_name} must be an object")
     actual = frozenset(payload)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        unknown = sorted(actual - expected)
+    missing = sorted((expected - optional) - actual)
+    unknown = sorted(actual - expected)
+    if missing or unknown:
         raise ValueError(f"{type_name} fields mismatch: missing={missing}, unknown={unknown}")
 
 
@@ -173,6 +179,8 @@ class ModelAliasRow:
             "dimensions",
         }
     )
+    # `dimensions` post-dates the first snapshot payloads; absent means the alias derives nothing.
+    _OPTIONAL_FIELDS = frozenset({"dimensions"})
 
     def __post_init__(self) -> None:
         for field in ("alias_id", "account_id", "alias", "canonical_model", "sync_id"):
@@ -218,14 +226,14 @@ class ModelAliasRow:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ModelAliasRow:
-        _strict_fields(payload, cls._FIELDS, cls.__name__)
+        _strict_fields(payload, cls._FIELDS, cls.__name__, optional=cls._OPTIONAL_FIELDS)
         active = payload["active"]
         if not isinstance(active, bool):
             raise TypeError("ModelAliasRow.active must be a boolean")
         match_kind = _string(payload["match_kind"], "ModelAliasRow.match_kind")
         if match_kind not in _ALIAS_KINDS:
             raise ValueError(f"unsupported alias match kind: {match_kind}")
-        dimensions = payload["dimensions"]
+        dimensions = payload.get("dimensions", [])
         if not isinstance(dimensions, list):
             raise TypeError("ModelAliasRow.dimensions must be a list")
         return cls(
@@ -576,17 +584,18 @@ def _merge_dimensions(
     """Fold alias-derived dimensions into the caller's, or return None when they disagree.
 
     Alias rows carry the service context the backend already resolved (region, sub-provider),
-    so they are authoritative defaults for rate selection. A caller value that contradicts one,
-    or equal-rank aliases that contradict each other, is a conflict we refuse to guess through.
-    Null alias values stay unobserved so `_dimension_rank` keeps requiring a NULL rate row.
+    so they are authoritative defaults for rate selection. Equal-ranked winners must first agree
+    on their *whole* dimension map: an absent key, an explicit null and a concrete value are three
+    different claims, and unioning them would invent context no single alias asserts. Only then are
+    the non-null values merged with the caller's, where a contradicting caller value is also a
+    conflict we refuse to guess through. Null values stay unobserved so `_dimension_rank` keeps
+    requiring a NULL rate row.
     """
-    merged: dict[str, str] = {}
-    for row in alias_winners:
-        for item in row.dimensions:
-            if item.value is None:
-                continue
-            if merged.setdefault(item.name, item.value) != item.value:
-                return None
+    derived_maps = [{item.name: item.value for item in row.dimensions} for row in alias_winners]
+    if any(candidate != derived_maps[0] for candidate in derived_maps[1:]):
+        return None
+    derived = derived_maps[0] if derived_maps else {}
+    merged: dict[str, str] = {name: value for name, value in derived.items() if value is not None}
     for name, value in request_dimensions.items():
         if merged.setdefault(name, value) != value:
             return None

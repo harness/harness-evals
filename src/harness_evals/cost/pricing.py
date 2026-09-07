@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import decimal
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, Inexact, InvalidOperation, localcontext
 from typing import Any, Protocol
 
 GLOBAL_SCOPE = "__GLOBAL__"
@@ -17,13 +18,16 @@ _ALIAS_KINDS = frozenset({"EXACT", "ARN", "PATH", "DEPLOYMENT", "PREFIX", "CONTA
 _PROVIDER_ALIASES = {
     "anthropic": "anthropic",
     "openai": "openai",
+    "azure": "azure",
+    "azureopenai": "azure",
+    "azure_openai": "azure",
+    "azure.open_ai": "azure",
     "bedrock": "aws",
     "aws.bedrock": "aws",
     "gcp.vertex_ai": "gcp",
     "vertex": "gcp",
     "google": "gcp",
 }
-_KNOWN_PROVIDERS = frozenset(_PROVIDER_ALIASES.values())
 
 
 def _strict_fields(
@@ -112,8 +116,9 @@ class ObservedUsage:
 
     input_tokens: int | None
     output_tokens: int | None
-    cache_read_tokens: int | None = None
-    cache_write_tokens: int | None = None
+    # Omitted cache usage means the provider reported none; explicit None stays unknown.
+    cache_read_tokens: int | None = 0
+    cache_write_tokens: int | None = 0
 
 
 @dataclass(frozen=True)
@@ -607,6 +612,14 @@ class ResolvedRateCardProvider:
 
     def __init__(self, snapshot: PricingSnapshot):
         self.snapshot = snapshot
+        rates_by_identity: dict[tuple[str, str, str], list[ResolvedRateRow]] = {}
+        for row in snapshot.rates:
+            normalized = normalize_provider(row.provider)
+            if normalized is None:
+                continue
+            key = (normalized, row.model.casefold(), row.usage_type)
+            rates_by_identity.setdefault(key, []).append(row)
+        self._rates_by_identity = rates_by_identity
 
     def _provenance(
         self,
@@ -686,11 +699,8 @@ class ResolvedRateCardProvider:
     ) -> tuple[ResolvedRateRow | None, tuple[ResolvedRateRow, ...], int | None]:
         identity_rows = [
             row
-            for row in self.snapshot.rates
-            if normalize_provider(row.provider) == provider
-            and row.model.casefold() == model.casefold()
-            and row.usage_type == usage_type
-            and row.account_id in {self.snapshot.account_id, GLOBAL_SCOPE}
+            for row in self._rates_by_identity.get((provider, model.casefold(), usage_type), ())
+            if row.account_id in {self.snapshot.account_id, GLOBAL_SCOPE}
             and _active_at(row.effective_from, row.effective_to, occurred_at)
         ]
         dimension_names = frozenset(request_dimensions).union(
@@ -742,7 +752,7 @@ class ResolvedRateCardProvider:
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in request_dimensions.items()):
             raise TypeError("pricing dimensions must map strings to strings")
 
-        if normalized_provider not in _KNOWN_PROVIDERS or requested_model is None:
+        if normalized_provider is None or requested_model is None:
             return self._identity_incomplete(normalized_provider, requested_model)
 
         resolved_model, alias_winners = self._resolve_alias(normalized_provider, requested_model, occurred)
@@ -765,33 +775,46 @@ class ResolvedRateCardProvider:
         matched_rates: list[ResolvedRateRow] = []
         fee_candidates: set[Decimal] = set()
         unresolved_fee = False
-        for usage_type, token_count in usage_values:
-            if not _valid_token_count(token_count):
-                unknown.append(usage_type)
-                continue
-            winner, equivalent_winners, billable = self._resolve_rate(
-                normalized_provider,
-                resolved_model,
-                usage_type,
-                token_count,
-                occurred,
-                merged_dimensions,
-            )
-            matched_rates.extend(equivalent_winners)
-            if winner is None or billable is None or winner.currency.upper() != "USD":
-                unknown.append(usage_type)
-                # A candidate we could not price may still carry a fee we cannot confirm.
-                unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
-                continue
-            subtotal += Decimal(billable) * winner.unit_price / Decimal(winner.unit_block_size)
-            priced_component = True
-            fee_candidates.add(winner.base_request_fee)
+        with localcontext() as ctx:
+            ctx.prec = 28
+            ctx.traps[Inexact] = False
+            ctx.traps[decimal.Rounded] = False
+            for usage_type, token_count in usage_values:
+                if not _valid_token_count(token_count):
+                    unknown.append(usage_type)
+                    continue
+                if token_count == 0:
+                    # Observed-zero spend does not require a rate row.
+                    continue
+                winner, equivalent_winners, billable = self._resolve_rate(
+                    normalized_provider,
+                    resolved_model,
+                    usage_type,
+                    token_count,
+                    occurred,
+                    merged_dimensions,
+                )
+                matched_rates.extend(equivalent_winners)
+                if winner is None or billable is None or winner.currency.upper() != "USD":
+                    unknown.append(usage_type)
+                    # A candidate we could not price may still carry a fee we cannot confirm.
+                    unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
+                    continue
+                subtotal += Decimal(billable) * winner.unit_price / Decimal(winner.unit_block_size)
+                priced_component = True
+                # Zero is a placeholder on unused usage-type rows, not a competing fee.
+                if winner.base_request_fee != 0:
+                    fee_candidates.add(winner.base_request_fee)
 
-        # The request-level fee is charged once, and only when every applicable row agrees on it.
-        if unresolved_fee or len(fee_candidates) > 1:
-            unknown.append("BaseRequestFee")
-        elif fee_candidates:
-            subtotal += next(iter(fee_candidates))
+            # The request-level fee is charged once, and only when every applicable row agrees on it.
+            if unresolved_fee or len(fee_candidates) > 1:
+                unknown.append("BaseRequestFee")
+            elif fee_candidates:
+                subtotal += next(iter(fee_candidates))
+
+        if not unknown and not priced_component:
+            # Every observed usage count was zero; that is a known $0, not unknown.
+            priced_component = True
 
         provenance = self._provenance(alias_winners, tuple(matched_rates))
         return CostObservation(
@@ -885,9 +908,9 @@ def price_observed_usage(
 ) -> CostObservation:
     """Price one observed provider call without performing network I/O."""
     selected = pricing_provider or _DEFAULT_PROVIDER
-    if dimensions is None:
+    if not dimensions:
         # Preserve compatibility with existing custom providers implementing the
-        # pre-dimensions protocol signature.
+        # pre-dimensions protocol signature. Empty maps are the same as omitted.
         return selected.price_observed_usage(provider, model, usage, occurred_at=occurred_at)
     return selected.price_observed_usage(
         provider,

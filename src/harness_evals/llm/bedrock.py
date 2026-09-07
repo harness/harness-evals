@@ -67,11 +67,13 @@ class BedrockAnthropicLLM(AnthropicLLM):
         if not bearer:
             raise ValueError("No Bedrock API key: pass api_key= or set AWS_BEARER_TOKEN_BEDROCK")
         region = aws_region or os.environ.get("AWS_REGION")
-        self.aws_region = region
         client_kwargs: dict = {"api_key": bearer}
         if region:
             client_kwargs["aws_region"] = region
         self._client = anthropic.AsyncAnthropicBedrock(**client_kwargs)
+        # The Bedrock SDK resolves AWS_DEFAULT_REGION / boto config when aws_region is omitted.
+        client_region = getattr(self._client, "aws_region", None)
+        self.aws_region = region or (client_region if isinstance(client_region, str) and client_region else None)
 
     async def generate_json(self, prompt: str, schema: dict, **kwargs: object) -> dict:
         instruction = (

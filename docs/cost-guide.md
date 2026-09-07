@@ -60,11 +60,12 @@ mapping overrides the shared default.
 optional tier range, and an optional `base_request_fee`. Only rows whose effective interval
 contains `occurred_at` are eligible.
 
-Provider spellings are normalized first, so `bedrock`, `aws.bedrock`, `vertex`, and
-`gcp.vertex_ai` land on the canonical CCM providers (`aws`, `gcp`). `normalize_provider()` is
-exported if you need the same mapping; it passes unrecognized spellings through unchanged rather
-than coercing them into a wrong identity. A provider outside the known set returns an incomplete
-observation with `Identity` unknown — it is never guessed at.
+Provider spellings are normalized first, so `bedrock`, `aws.bedrock`, `vertex`,
+`gcp.vertex_ai`, and Azure OpenAI spellings land on canonical CCM providers (`aws`, `gcp`,
+`azure`). `normalize_provider()` is exported if you need the same mapping; it passes
+unrecognized spellings through unchanged rather than coercing them into a wrong identity.
+Resolution is data-driven: a provider is priceable when the snapshot contains matching alias
+and rate rows, including Azure deployment-name aliases.
 
 ## Dimensions
 
@@ -98,7 +99,9 @@ as `.aws_region` for exactly this purpose.
 
 `CostObservation.complete` is `False` whenever any part of the calculation could not be resolved,
 with `unknown_components` naming the gaps (`Identity`, `Dimensions`, `Input`, `Output`,
-`CacheRead`, `CacheWrite`, `BaseRequestFee`).
+`CacheRead`, `CacheWrite`, `BaseRequestFee`, plus `PricingProvider` from
+`UnavailablePricingProvider`). Omitted cache token counts default to `0` (no cache activity);
+pass `None` only when cache usage was observed as unknown.
 
 Two rules matter:
 

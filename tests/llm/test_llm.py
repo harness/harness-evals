@@ -618,6 +618,24 @@ class TestBedrockAnthropicLLM:
         assert "aws_region" not in self.client_kwargs
         assert "bedrock-bearer-token" not in repr(llm)
 
+    def test_retains_client_resolved_region_for_pricing(self, monkeypatch):
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        def fake_bedrock_ctor(**kwargs):
+            self.client_kwargs = kwargs
+            client = MagicMock()
+            client.aws_region = "ap-northeast-1"
+            return client
+
+        monkeypatch.setattr(
+            __import__("sys").modules["anthropic"].AsyncAnthropicBedrock,
+            "side_effect",
+            fake_bedrock_ctor,
+        )
+        llm = BedrockAnthropicLLM(model="m", api_key="bedrock-bearer-token")
+        assert "aws_region" not in self.client_kwargs
+        assert llm.aws_region == "ap-northeast-1"
+
 
 @pytest.mark.unit
 class TestBedrockOpenAILLM:

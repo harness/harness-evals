@@ -145,6 +145,9 @@ def price(
         ("gcp.vertex_ai", "gcp"),
         ("vertex", "gcp"),
         ("google", "gcp"),
+        ("azure", "azure"),
+        ("AzureOpenAI", "azure"),
+        ("azure_openai", "azure"),
         ("unknown", "unknown"),
     ],
 )
@@ -296,8 +299,9 @@ def test_provider_wildcard_does_not_make_unknown_provider_priceable() -> None:
 
     assert observation.complete is False
     assert observation.usd is None
-    assert observation.resolved_model is None
-    assert observation.unknown_components == ("Identity",)
+    # A wildcard alias can resolve identity, but openai rate rows still do not price this provider.
+    assert observation.resolved_model == "gpt-4o-2024-08-06"
+    assert observation.unknown_components == ("Input", "Output")
 
 
 @pytest.mark.unit
@@ -444,7 +448,7 @@ def test_unobserved_service_dimension_still_requires_null_rate_rows() -> None:
 
     assert observation.complete is False
     assert observation.usd is None
-    assert observation.unknown_components == ("Input", "Output", "CacheRead", "CacheWrite")
+    assert observation.unknown_components == ("Input", "Output")
 
 
 @pytest.mark.unit
@@ -634,7 +638,7 @@ def test_equal_precedence_conflicting_rates_are_ambiguous() -> None:
     assert observation.complete is False
     assert observation.unknown_components == ("Input",)
     assert observation.provenance is not None
-    assert observation.provenance.rate_ids == ("one", "two", "rate-output", "rate-cacheread", "rate-cachewrite")
+    assert observation.provenance.rate_ids == ("one", "two", "rate-output")
 
 
 @pytest.mark.unit
@@ -747,7 +751,7 @@ def test_missing_usage_or_rate_preserves_known_subtotal_and_provenance() -> None
     assert observation.usd == Decimal("1")
     assert observation.known_subtotal_usd == Decimal("1")
     assert observation.complete is False
-    assert observation.unknown_components == ("Output", "CacheRead", "CacheWrite")
+    assert observation.unknown_components == ("Output", "CacheRead")
     assert observation.provenance is not None
     assert observation.provenance.rate_ids == ("rate-input",)
     assert observation.provenance.price_ids == ("price-input",)
@@ -849,7 +853,7 @@ def test_typeerror_raised_inside_legacy_provider_is_not_swallowed() -> None:
         ("openai", None, None, None, ("Identity",)),
         ("openai", "missing", None, None, ("Identity",)),
         ("openai", "gpt-4o", (), None, ("Identity",)),
-        ("openai", "gpt-4o", None, (), ("Input", "Output", "CacheRead", "CacheWrite")),
+        ("openai", "gpt-4o", None, (), ("Input", "Output")),
     ],
 )
 def test_missing_identity_alias_or_rates_are_incomplete(
@@ -928,3 +932,134 @@ def test_pricing_has_no_catalog_dependency_or_backend_imports() -> None:
     assert imported_roots.isdisjoint({"genai_prices", "httpx", "requests", "urllib"})
     assert "harness_evals.api" not in source.read_text()
     assert "service." not in source.read_text()
+
+
+@pytest.mark.unit
+def test_omitted_cache_usage_is_zero_not_unknown() -> None:
+    observation = price(snapshot(), ObservedUsage(input_tokens=1000, output_tokens=1000))
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("2")
+    assert observation.unknown_components == ()
+
+
+@pytest.mark.unit
+def test_omitted_cache_does_not_require_cache_rate_rows() -> None:
+    observation = price(
+        snapshot(rates=(rate("Input"), rate("Output"))),
+        ObservedUsage(input_tokens=1000, output_tokens=1000),
+    )
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("2")
+    assert observation.unknown_components == ()
+
+
+@pytest.mark.unit
+def test_explicit_none_cache_usage_is_unknown() -> None:
+    observation = price(
+        snapshot(),
+        ObservedUsage(input_tokens=1000, output_tokens=1000, cache_read_tokens=None, cache_write_tokens=None),
+    )
+
+    assert observation.complete is False
+    assert observation.usd == Decimal("2")
+    assert observation.unknown_components == ("CacheRead", "CacheWrite")
+
+
+@pytest.mark.unit
+def test_zero_placeholder_request_fee_does_not_conflict_with_nonzero_fee() -> None:
+    rows = (
+        rate("Input", base_request_fee="0.25"),
+        rate("Output", base_request_fee="0"),
+        rate("CacheRead", base_request_fee="0"),
+        rate("CacheWrite", base_request_fee="0"),
+    )
+    observation = price(snapshot(rates=rows))
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("2.25")
+
+
+@pytest.mark.unit
+def test_legacy_provider_without_dimensions_keyword_is_used_when_dimensions_are_empty() -> None:
+    class LegacyProvider:
+        def price_observed_usage(
+            self,
+            provider: str | None,
+            model: str | None,
+            usage: ObservedUsage,
+            *,
+            occurred_at: datetime | None = None,
+        ) -> CostObservation:
+            return CostObservation(Decimal("7"), True, provider, model, model, "legacy", "v1")
+
+    observation = price_observed_usage(
+        "openai",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=LegacyProvider(),
+        dimensions={},
+    )
+    assert observation.usd == Decimal("7")
+    assert observation.source == "legacy"
+
+
+@pytest.mark.unit
+def test_azure_snapshot_rows_are_priceable() -> None:
+    aliases = (alias(provider="azure", value="my-deployment", model="gpt-4o-2024-08-06"),)
+    rates = tuple(rate(kind, provider="azure") for kind in ("Input", "Output", "CacheRead", "CacheWrite"))
+    observation = price_observed_usage(
+        "AzureOpenAI",
+        "my-deployment",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(snapshot(aliases=aliases, rates=rates)),
+    )
+
+    assert observation.complete is True
+    assert observation.provider == "azure"
+    assert observation.usd == Decimal("2")
+
+
+@pytest.mark.unit
+def test_price_arithmetic_ignores_ambient_decimal_context() -> None:
+    import decimal
+
+    ambient = decimal.getcontext()
+    previous_prec = ambient.prec
+    previous_inexact = ambient.traps[decimal.Inexact]
+    ambient.prec = 1
+    ambient.traps[decimal.Inexact] = True
+    try:
+        observation = price(snapshot(), ObservedUsage(1234, 0, 0, 0))
+    finally:
+        ambient.prec = previous_prec
+        ambient.traps[decimal.Inexact] = previous_inexact
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("1.234")
+
+
+@pytest.mark.unit
+def test_alias_explicit_null_dimension_is_filled_by_caller_observation() -> None:
+    aliases = (
+        alias(
+            provider="aws",
+            model="claude-sonnet",
+            dimensions=(RateDimension("region", None), RateDimension("sub_provider_id", "bedrock")),
+        ),
+    )
+    rates = service_rates()
+    observation = price_observed_usage(
+        "bedrock",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(snapshot(aliases=aliases, rates=rates)),
+        dimensions={"region": "us-east-1"},
+    )
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("4")

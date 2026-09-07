@@ -238,7 +238,9 @@ class ModelAliasRow:
         match_kind = _string(payload["match_kind"], "ModelAliasRow.match_kind")
         if match_kind not in _ALIAS_KINDS:
             raise ValueError(f"unsupported alias match kind: {match_kind}")
-        dimensions = payload.get("dimensions", [])
+        dimensions = payload.get("dimensions")
+        if dimensions is None:
+            dimensions = []
         if not isinstance(dimensions, list):
             raise TypeError("ModelAliasRow.dimensions must be a list")
         return cls(
@@ -591,10 +593,15 @@ def _merge_dimensions(
     Alias rows carry the service context the backend already resolved (region, sub-provider),
     so they are authoritative defaults for rate selection. Equal-ranked winners must first agree
     on their *whole* dimension map: an absent key, an explicit null and a concrete value are three
-    different claims, and unioning them would invent context no single alias asserts. Only then are
-    the non-null values merged with the caller's, where a contradicting caller value is also a
-    conflict we refuse to guess through. Null values stay unobserved so `_dimension_rank` keeps
-    requiring a NULL rate row.
+    different claims, and unioning them would invent context no single alias asserts. That
+    agreement check is about whether the *aliases* trust each other, not whether the caller's own
+    observation may fill a gap: once the winners agree, an alias dimension that is absent or
+    explicitly null is a claim of "the alias doesn't know", and the caller's directly observed
+    value (e.g. the region the client actually called) is free to fill it — unioning here is not
+    inventing context, it's using a better source for context the alias abstained on. A caller
+    value that instead *contradicts* an alias's concrete, non-null claim is still a conflict we
+    refuse to guess through. A dimension neither the alias nor the caller asserts anything for
+    stays unobserved, so `_dimension_rank` keeps requiring a NULL rate row for it.
     """
     derived_maps = [{item.name: item.value for item in row.dimensions} for row in alias_winners]
     if any(candidate != derived_maps[0] for candidate in derived_maps[1:]):
@@ -783,9 +790,10 @@ class ResolvedRateCardProvider:
                 if not _valid_token_count(token_count):
                     unknown.append(usage_type)
                     continue
-                if token_count == 0:
-                    # Observed-zero spend does not require a rate row.
-                    continue
+                # Zero is still resolved against the rate card (it may carry a fee, and it
+                # confirms the usage type is actually rated) — it is just never required to
+                # find a match: an omitted usage type (e.g. unreported cache activity) prices
+                # as a no-op rather than as unknown.
                 winner, equivalent_winners, billable = self._resolve_rate(
                     normalized_provider,
                     resolved_model,
@@ -796,9 +804,10 @@ class ResolvedRateCardProvider:
                 )
                 matched_rates.extend(equivalent_winners)
                 if winner is None or billable is None or winner.currency.upper() != "USD":
-                    unknown.append(usage_type)
-                    # A candidate we could not price may still carry a fee we cannot confirm.
-                    unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
+                    if token_count != 0:
+                        unknown.append(usage_type)
+                        # A candidate we could not price may still carry a fee we cannot confirm.
+                        unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
                     continue
                 subtotal += Decimal(billable) * winner.unit_price / Decimal(winner.unit_block_size)
                 priced_component = True
@@ -813,8 +822,14 @@ class ResolvedRateCardProvider:
                 subtotal += next(iter(fee_candidates))
 
         if not unknown and not priced_component:
-            # Every observed usage count was zero; that is a known $0, not unknown.
-            priced_component = True
+            if matched_rates:
+                # Every observed usage count was zero, and at least one usage type does
+                # resolve rate rows for this identity — a known $0, not unknown.
+                priced_component = True
+            else:
+                # Nothing was observed and the identity has no rate coverage at all: a $0
+                # here would be manufactured, not observed.
+                unknown.extend(usage_type for usage_type, _ in usage_values)
 
         provenance = self._provenance(alias_winners, tuple(matched_rates))
         return CostObservation(

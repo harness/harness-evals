@@ -396,6 +396,10 @@ def test_alias_dimensions_round_trip_and_tolerate_legacy_payloads() -> None:
     assert legacy.aliases[0].dimensions == ()
     assert legacy.to_dict()["aliases"][0]["dimensions"] == []
 
+    payload["aliases"][0]["dimensions"] = None
+    explicit_null = PricingSnapshot.from_dict(payload)
+    assert explicit_null.aliases[0].dimensions == ()
+
     payload["aliases"][0]["unexpected"] = "value"
     with pytest.raises(ValueError, match="unknown"):
         PricingSnapshot.from_dict(payload)
@@ -638,7 +642,7 @@ def test_equal_precedence_conflicting_rates_are_ambiguous() -> None:
     assert observation.complete is False
     assert observation.unknown_components == ("Input",)
     assert observation.provenance is not None
-    assert observation.provenance.rate_ids == ("one", "two", "rate-output")
+    assert observation.provenance.rate_ids == ("one", "two", "rate-output", "rate-cacheread", "rate-cachewrite")
 
 
 @pytest.mark.unit
@@ -1063,3 +1067,46 @@ def test_alias_explicit_null_dimension_is_filled_by_caller_observation() -> None
 
     assert observation.complete is True
     assert observation.usd == Decimal("4")
+
+
+@pytest.mark.unit
+def test_alias_explicit_null_dimension_without_caller_value_still_requires_null_rate() -> None:
+    aliases = (
+        alias(
+            provider="aws",
+            model="claude-sonnet",
+            dimensions=(RateDimension("region", None), RateDimension("sub_provider_id", "bedrock")),
+        ),
+    )
+    rates = service_rates()
+    observation = price_observed_usage(
+        "bedrock",
+        "gpt-4o",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(snapshot(aliases=aliases, rates=rates)),
+    )
+
+    # No caller observation to fill the gap: an explicit alias null is unobserved, same as an
+    # absent dimension, so region-specific rows are excluded and only a NULL row would match.
+    assert observation.complete is False
+    assert observation.usd is None
+    assert observation.unknown_components == ("Input", "Output")
+
+
+@pytest.mark.unit
+def test_all_zero_usage_without_any_rate_coverage_is_incomplete() -> None:
+    observation = price(snapshot(rates=()), ObservedUsage(0, 0, 0, 0))
+
+    assert observation.usd is None
+    assert observation.complete is False
+    assert observation.unknown_components == ("Input", "Output", "CacheRead", "CacheWrite")
+
+
+@pytest.mark.unit
+def test_all_zero_usage_with_rate_coverage_still_charges_the_request_fee() -> None:
+    rows = tuple(rate(kind, base_request_fee="0.25") for kind in ("Input", "Output", "CacheRead", "CacheWrite"))
+    observation = price(snapshot(rates=rows), ObservedUsage(0, 0, 0, 0))
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("0.25")

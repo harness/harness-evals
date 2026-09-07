@@ -32,8 +32,17 @@ prices, it cannot go fetch them from a Harness API.
 
 ## Decision
 
-**The SDK prices only usage a provider actually reported, against a rate card the caller
-supplies. It has no price data of its own and makes no network calls.**
+**`harness_evals.cost` prices only usage a provider actually reported, against a rate card the
+caller supplies. It has no price data of its own and makes no network calls.**
+
+This scope is deliberately narrow to `harness_evals.cost`. `harness_evals.llm.cost` is a
+separate, pre-existing module that estimates judge-call spend for informational reporting via
+`litellm.completion_cost()` when available — it predates this ADR, estimates rather than
+observes, and is not affected by this decision. The two modules intentionally take opposite
+positions: `llm.cost` gives a best-effort estimate for judge telemetry when nothing more accurate
+exists; `harness_evals.cost` refuses to estimate and reports unknown instead, because it exists to
+back a spend guardrail rather than a telemetry line. Do not blend them, and do not read this ADR
+as governing `llm.cost`.
 
 Three consequences follow:
 
@@ -115,7 +124,9 @@ wrong in a way that looks like success.
 - Cost guardrails are documented as best-effort with bounded overshoot, not hard caps.
 - New usage types or dimensions extend `ResolvedRateRow` and its matching rank; unobserved
   dimensions must keep matching NULL-only.
-- Adding a fallback price source in the SDK would reverse this ADR and needs a new one.
+- Adding a fallback price source to `harness_evals.cost` would reverse this ADR and needs a new
+  one; it does not constrain `harness_evals.llm.cost`, whose estimation predates and sits outside
+  this decision.
 
 ## See also
 

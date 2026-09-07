@@ -67,6 +67,7 @@ class BedrockAnthropicLLM(AnthropicLLM):
         if not bearer:
             raise ValueError("No Bedrock API key: pass api_key= or set AWS_BEARER_TOKEN_BEDROCK")
         region = aws_region or os.environ.get("AWS_REGION")
+        self.aws_region = region
         client_kwargs: dict = {"api_key": bearer}
         if region:
             client_kwargs["aws_region"] = region
@@ -171,6 +172,7 @@ class BedrockOpenAILLM(OpenAILLM):
             # OpenAI-compatible endpoint is bearer-only, so fail fast with a clear message.
             raise ValueError("No Bedrock API key: pass api_key= or set AWS_BEARER_TOKEN_BEDROCK")
         region = aws_region or os.environ.get("AWS_REGION") or "us-east-1"
+        self.aws_region = region
         base_url = f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
         self._client = openai.AsyncOpenAI(api_key=key, base_url=base_url)
 

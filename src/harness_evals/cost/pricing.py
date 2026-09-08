@@ -806,12 +806,17 @@ class ResolvedRateCardProvider:
                 )
                 matched_rates.extend(equivalent_winners)
                 if winner is None or billable is None or winner.currency.upper() != "USD":
+                    # A candidate we could not price may still carry a request-level fee we
+                    # cannot confirm, whether or not this usage type was actually used.
+                    unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
                     if token_count != 0:
                         unknown.append(usage_type)
-                        # A candidate we could not price may still carry a fee we cannot confirm.
-                        unresolved_fee = unresolved_fee or any(row.base_request_fee != 0 for row in equivalent_winners)
                     continue
-                subtotal += Decimal(billable) * winner.unit_price / Decimal(winner.unit_block_size)
+                try:
+                    subtotal += Decimal(billable) * winner.unit_price / Decimal(winner.unit_block_size)
+                except decimal.DecimalException:
+                    unknown.append(usage_type)
+                    continue
                 priced_component = True
                 # Zero is a placeholder on unused usage-type rows, not a competing fee.
                 if winner.base_request_fee != 0:

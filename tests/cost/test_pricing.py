@@ -1143,3 +1143,32 @@ def test_all_zero_usage_with_rate_coverage_still_charges_the_request_fee() -> No
 
     assert observation.complete is True
     assert observation.usd == Decimal("0.25")
+
+
+@pytest.mark.unit
+def test_overflowing_unit_price_fails_the_component_open() -> None:
+    """A finite-but-unusable Decimal must not abort pricing (ADR-011: never raise)."""
+    observation = price(snapshot(rates=(rate("Input", unit_price="1E+1000000"), rate("Output"))))
+
+    assert observation.usd == Decimal("1")
+    assert observation.complete is False
+    assert "Input" in observation.unknown_components
+
+
+@pytest.mark.unit
+def test_unresolved_request_fee_on_unused_usage_type_is_still_unknown() -> None:
+    rows = (
+        rate("Input", rate_id="in", unit_price="1"),
+        rate("Output", rate_id="out", unit_price="1"),
+        rate("CacheRead", rate_id="cr", unit_price="1"),
+        rate("CacheWrite", rate_id="cw-a", unit_price="1", base_request_fee="0.25"),
+        rate("CacheWrite", rate_id="cw-b", unit_price="2", base_request_fee="0.25"),
+    )
+    unused = price(snapshot(rates=rows), ObservedUsage(1000, 1000, 0, 0))
+    used = price(snapshot(rates=rows), ObservedUsage(1000, 1000, 0, 1))
+
+    assert unused.usd == Decimal("2")
+    assert unused.complete is False
+    assert "BaseRequestFee" in unused.unknown_components
+    assert used.complete is False
+    assert used.unknown_components == ("CacheWrite", "BaseRequestFee")

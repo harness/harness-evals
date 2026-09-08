@@ -1104,6 +1104,39 @@ def test_all_zero_usage_without_any_rate_coverage_is_incomplete() -> None:
 
 
 @pytest.mark.unit
+def test_all_zero_usage_priced_in_another_currency_is_incomplete() -> None:
+    # Rows exist and match, so this is not "no coverage" — but none of them can produce a USD
+    # figure, and a $0 would be manufactured rather than observed.
+    rows = (
+        rate("Input", currency="EUR"),
+        rate("Output", currency="EUR"),
+        rate("CacheRead", currency="EUR"),
+        rate("CacheWrite", currency="EUR"),
+    )
+    observation = price(snapshot(rates=rows), ObservedUsage(0, 0, 0, 0))
+
+    assert observation.usd is None
+    assert observation.complete is False
+    assert observation.unknown_components == ("Input", "Output", "CacheRead", "CacheWrite")
+
+
+@pytest.mark.unit
+def test_minimum_charge_is_not_billed_for_an_unused_usage_type() -> None:
+    # A per-row minimum is a floor under real usage. An omitted usage type (unreported cache
+    # activity) must still price as a no-op instead of billing the minimum.
+    rows = (
+        rate("Input", min_charge_units=1000),
+        rate("Output", min_charge_units=1000),
+        rate("CacheRead", min_charge_units=5000, unit_price="10"),
+        rate("CacheWrite", min_charge_units=5000, unit_price="10"),
+    )
+    observation = price(snapshot(rates=rows), ObservedUsage(1000, 1000, 0, 0))
+
+    assert observation.complete is True
+    assert observation.usd == Decimal("2")
+
+
+@pytest.mark.unit
 def test_all_zero_usage_with_rate_coverage_still_charges_the_request_fee() -> None:
     rows = tuple(rate(kind, base_request_fee="0.25") for kind in ("Input", "Output", "CacheRead", "CacheWrite"))
     observation = price(snapshot(rates=rows), ObservedUsage(0, 0, 0, 0))

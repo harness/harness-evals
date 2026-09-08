@@ -500,6 +500,7 @@ class TestBedrockAnthropicLLM:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
         monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
 
     def _make(self, **kwargs):
         from harness_evals.llm.bedrock import BedrockAnthropicLLM
@@ -610,6 +611,24 @@ class TestBedrockAnthropicLLM:
         assert self.client_kwargs.get("aws_region") == "eu-west-1"
         assert "env-bearer" not in repr(llm)
 
+    def test_retains_aws_default_region_for_pricing(self, monkeypatch):
+        # boto's own chain honours AWS_DEFAULT_REGION, so a caller who only sets that gets a
+        # concrete region on the wire; pricing needs the same value as a `region` dimension.
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "sa-east-1")
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        llm = BedrockAnthropicLLM(model="m", api_key="bedrock-bearer-token")
+        assert llm.aws_region == "sa-east-1"
+        assert self.client_kwargs.get("aws_region") == "sa-east-1"
+
+    def test_aws_region_wins_over_aws_default_region(self, monkeypatch):
+        monkeypatch.setenv("AWS_REGION", "eu-west-1")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "sa-east-1")
+        from harness_evals.llm.bedrock import BedrockAnthropicLLM
+
+        llm = BedrockAnthropicLLM(model="m", api_key="bedrock-bearer-token")
+        assert llm.aws_region == "eu-west-1"
+
     def test_absent_region_remains_none_when_client_omits_it(self):
         from harness_evals.llm.bedrock import BedrockAnthropicLLM
 
@@ -683,6 +702,7 @@ class TestBedrockOpenAILLM:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
         monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
 
     def _make(self, **kwargs):
         from harness_evals.llm.bedrock import BedrockOpenAILLM
@@ -752,6 +772,14 @@ class TestBedrockOpenAILLM:
         assert llm.aws_region == "eu-west-1"
         assert self.client_kwargs.get("base_url") == "https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1"
         assert "env-bearer" not in repr(llm)
+
+    def test_retains_aws_default_region_for_pricing(self, monkeypatch):
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "sa-east-1")
+        from harness_evals.llm.bedrock import BedrockOpenAILLM
+
+        llm = BedrockOpenAILLM(model="m", api_key="bedrock-bearer-token")
+        assert llm.aws_region == "sa-east-1"
+        assert self.client_kwargs.get("base_url") == "https://bedrock-runtime.sa-east-1.amazonaws.com/openai/v1"
 
     def test_retains_default_us_east_1_region_for_pricing(self):
         from harness_evals.llm.bedrock import BedrockOpenAILLM

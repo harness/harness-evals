@@ -8,7 +8,7 @@ Two clients, each subclassing its direct-API counterpart and overriding only wha
   (``https://bedrock-runtime.<region>.amazonaws.com/openai/v1``).
 
 Both authenticate with a Bedrock **API key (bearer token)**: constructor ``api_key`` or the
-``AWS_BEARER_TOKEN_BEDROCK`` env var. Region: ``aws_region`` or ``AWS_REGION`` env var.
+``AWS_BEARER_TOKEN_BEDROCK`` env var. Region: ``aws_region``, or the ``AWS_REGION`` / ``AWS_DEFAULT_REGION`` env vars.
 ``model`` is a Bedrock model id / inference-profile id or ARN.
 """
 
@@ -35,7 +35,7 @@ class BedrockAnthropicLLM(AnthropicLLM):
     **Auth is Bedrock API key (bearer token) only** — via ``api_key`` or the
     ``AWS_BEARER_TOKEN_BEDROCK`` env var. It does **not** use ``ANTHROPIC_API_KEY``, and it does
     not support AWS IAM/SigV4 credentials (that path needs the ``anthropic[bedrock]``/boto3
-    extra, which is intentionally not required). Region: ``aws_region`` or ``AWS_REGION``.
+    extra, which is intentionally not required). Region: ``aws_region``, or the ``AWS_REGION`` / ``AWS_DEFAULT_REGION`` env vars.
     """
 
     def __init__(
@@ -66,7 +66,7 @@ class BedrockAnthropicLLM(AnthropicLLM):
         bearer = api_key or os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
         if not bearer:
             raise ValueError("No Bedrock API key: pass api_key= or set AWS_BEARER_TOKEN_BEDROCK")
-        region = aws_region or os.environ.get("AWS_REGION")
+        region = aws_region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         client_kwargs: dict = {"api_key": bearer}
         if region:
             client_kwargs["aws_region"] = region
@@ -173,7 +173,7 @@ class BedrockOpenAILLM(OpenAILLM):
             # as a Bedrock bearer, producing a confusing 401 at call time. Bedrock's
             # OpenAI-compatible endpoint is bearer-only, so fail fast with a clear message.
             raise ValueError("No Bedrock API key: pass api_key= or set AWS_BEARER_TOKEN_BEDROCK")
-        region = aws_region or os.environ.get("AWS_REGION") or "us-east-1"
+        region = aws_region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         self.aws_region = region
         base_url = f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
         self._client = openai.AsyncOpenAI(api_key=key, base_url=base_url)

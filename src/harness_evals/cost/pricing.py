@@ -718,7 +718,9 @@ class ResolvedRateCardProvider:
             dimension_rank = self._dimension_rank(row, request_dimensions, dimension_names)
             if dimension_rank is None:
                 continue
-            billable = max(actual_units, row.min_charge_units)
+            # A minimum charge is a floor under real usage, not a reason to bill a usage type
+            # that was never used: at zero observed units the row prices as a no-op.
+            billable = max(actual_units, row.min_charge_units) if actual_units else 0
             if row.tier_min_units <= billable and (row.tier_max_units is None or billable < row.tier_max_units):
                 ranked.append((row, dimension_rank, billable))
         account_rows = [item for item in ranked if item[0].account_id == self.snapshot.account_id]
@@ -822,14 +824,11 @@ class ResolvedRateCardProvider:
                 subtotal += next(iter(fee_candidates))
 
         if not unknown and not priced_component:
-            if matched_rates:
-                # Every observed usage count was zero, and at least one usage type does
-                # resolve rate rows for this identity — a known $0, not unknown.
-                priced_component = True
-            else:
-                # Nothing was observed and the identity has no rate coverage at all: a $0
-                # here would be manufactured, not observed.
-                unknown.extend(usage_type for usage_type, _ in usage_values)
+            # An observed zero against a usable USD row already priced above (`subtotal += 0`),
+            # so reaching here means nothing resolved to a USD price at all — rows may have
+            # matched but were ambiguous or non-USD. A $0 here would be manufactured, not
+            # observed, which is exactly what ADR-011 forbids.
+            unknown.extend(usage_type for usage_type, _ in usage_values)
 
         provenance = self._provenance(alias_winners, tuple(matched_rates))
         return CostObservation(

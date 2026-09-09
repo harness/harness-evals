@@ -797,7 +797,7 @@ def test_injected_snapshot_provider_is_used() -> None:
         occurred_at=NOW,
         pricing_provider=provider,
     )
-    assert observation.source == "udp-resolved-rate-card"
+    assert observation.source == "resolved-rate-card"
     assert observation.usd == Decimal("2")
 
 
@@ -903,14 +903,14 @@ def test_unsupported_currency_is_incomplete_without_estimate() -> None:
 
 
 @pytest.mark.unit
-def test_no_injected_provider_returns_udp_unavailable_without_network_fallback() -> None:
+def test_no_injected_provider_returns_pricing_unavailable_without_network_fallback() -> None:
     observation = price_observed_usage("openai", "gpt-4o", ObservedUsage(1, 1))
     source = Path(__file__).parents[2] / "src" / "harness_evals" / "cost" / "pricing.py"
     package = Path(__file__).parents[2] / "src" / "harness_evals" / "cost" / "__init__.py"
 
     assert observation.usd is None
     assert observation.complete is False
-    assert observation.source == "udp-unavailable"
+    assert observation.source == "pricing-unavailable"
     assert "genai_prices" not in source.read_text()
     assert "genai_prices" not in package.read_text()
 

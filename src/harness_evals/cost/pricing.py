@@ -1,4 +1,4 @@
-"""Offline pricing from backend-neutral UDP resolved-rate-card snapshots."""
+"""Offline pricing from injected, backend-neutral resolved-rate-card snapshots."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from decimal import Decimal, Inexact, InvalidOperation, localcontext
 from typing import Any, Protocol
 
 GLOBAL_SCOPE = "__GLOBAL__"
-UDP_PRICING_SOURCE = "udp-resolved-rate-card"
-UDP_UNAVAILABLE_SOURCE = "udp-unavailable"
+# Values of `CostObservation.source`; callers persist and branch on them.
+RATE_CARD_PRICING_SOURCE = "resolved-rate-card"
+PRICING_UNAVAILABLE_SOURCE = "pricing-unavailable"
 
 _USAGE_TYPES = ("Input", "Output", "CacheRead", "CacheWrite")
 _ALIAS_KINDS = frozenset({"EXACT", "ARN", "PATH", "DEPLOYMENT", "PREFIX", "CONTAINS"})
@@ -148,7 +149,7 @@ class RateDimension:
 
 @dataclass(frozen=True)
 class ModelAliasRow:
-    """Serializable UDP model-alias row used before rate lookup."""
+    """Serializable model-alias row used before rate lookup."""
 
     alias_id: str
     account_id: str
@@ -263,7 +264,7 @@ class ModelAliasRow:
 
 @dataclass(frozen=True)
 class ResolvedRateRow:
-    """Serializable UDP rate row after backend-side price resolution."""
+    """Serializable rate row after backend-side price resolution."""
 
     rate_id: str
     price_id: str
@@ -281,6 +282,7 @@ class ResolvedRateRow:
     effective_from: datetime
     effective_to: datetime | None
     base_request_fee: Decimal
+    # Opaque caller-supplied batch identity; surfaces as CostObservation.catalog_version.
     sync_id: str
 
     _FIELDS = frozenset(
@@ -390,11 +392,14 @@ class ResolvedRateRow:
 
 @dataclass(frozen=True)
 class PricingSnapshot:
-    """A portable point-in-time UDP alias and resolved-rate-card response."""
+    """A portable point-in-time alias and resolved-rate-card snapshot."""
 
     account_id: str
     interval_start: datetime
     interval_end: datetime
+    # Opaque labels naming whatever catalog the caller built these rows from. Never
+    # parsed or matched on here; echoed into PricingProvenance so a stored price can
+    # be traced back to its source.
     alias_type: str
     rate_type: str
     aliases: tuple[ModelAliasRow, ...]
@@ -615,7 +620,7 @@ def _merge_dimensions(
 
 
 class ResolvedRateCardProvider:
-    """Resolve and price usage solely from an injected UDP snapshot."""
+    """Resolve and price usage solely from an injected rate-card snapshot."""
 
     def __init__(self, snapshot: PricingSnapshot):
         self.snapshot = snapshot
@@ -842,7 +847,7 @@ class ResolvedRateCardProvider:
             provider=normalized_provider,
             requested_model=requested_model,
             resolved_model=resolved_model,
-            source=UDP_PRICING_SOURCE,
+            source=RATE_CARD_PRICING_SOURCE,
             catalog_version=",".join(provenance.sync_ids),
             unknown_components=_unique(unknown),
             provenance=provenance,
@@ -861,7 +866,7 @@ class ResolvedRateCardProvider:
             provider=provider,
             requested_model=requested_model,
             resolved_model=None,
-            source=UDP_PRICING_SOURCE,
+            source=RATE_CARD_PRICING_SOURCE,
             catalog_version=",".join(provenance.sync_ids),
             unknown_components=("Identity",),
             provenance=provenance,
@@ -881,7 +886,7 @@ class ResolvedRateCardProvider:
             provider=provider,
             requested_model=requested_model,
             resolved_model=resolved_model,
-            source=UDP_PRICING_SOURCE,
+            source=RATE_CARD_PRICING_SOURCE,
             catalog_version=",".join(provenance.sync_ids),
             unknown_components=("Dimensions",),
             provenance=provenance,
@@ -889,7 +894,7 @@ class ResolvedRateCardProvider:
 
 
 class UnavailablePricingProvider:
-    """Explicit default when no resolved UDP snapshot was injected."""
+    """Explicit default when no resolved rate-card snapshot was injected."""
 
     def price_observed_usage(
         self,
@@ -907,7 +912,7 @@ class UnavailablePricingProvider:
             provider=normalize_provider(provider),
             requested_model=model.strip() if isinstance(model, str) and model.strip() else None,
             resolved_model=None,
-            source=UDP_UNAVAILABLE_SOURCE,
+            source=PRICING_UNAVAILABLE_SOURCE,
             catalog_version="",
             unknown_components=("PricingProvider",),
         )

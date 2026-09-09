@@ -10,10 +10,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Observed-usage pricing**: `harness_evals.cost` prices provider-reported
-  input, output, cache-read, and cache-write usage from a serializable UDP
-  resolved-rate-card snapshot. Resolution is backend-neutral and offline, with
-  explicit incomplete results and provenance when identity, usage, or rates
-  cannot be resolved unambiguously.
+  input, output, cache-read, and cache-write usage from a caller-supplied,
+  serializable resolved-rate-card snapshot. Resolution is backend-neutral and
+  offline, with explicit incomplete results and provenance when identity,
+  usage, or rates cannot be resolved unambiguously.
 - **Docs**: `docs/cost-guide.md` covers snapshot supply, alias/rate resolution,
   strict dimension matching, and incomplete-result handling. `docs/adr/011-observed-cost-only.md`
   records why cost is observed and caller-supplied rather than estimated or bundled.

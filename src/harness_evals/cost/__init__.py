@@ -1,5 +1,7 @@
 from harness_evals.cost.pricing import (
     GLOBAL_SCOPE,
+    PRICING_UNAVAILABLE_SOURCE,
+    RATE_CARD_PRICING_SOURCE,
     CostObservation,
     ModelAliasRow,
     ObservedUsage,
@@ -16,6 +18,8 @@ from harness_evals.cost.pricing import (
 
 __all__ = [
     "GLOBAL_SCOPE",
+    "PRICING_UNAVAILABLE_SOURCE",
+    "RATE_CARD_PRICING_SOURCE",
     "CostObservation",
     "ModelAliasRow",
     "ObservedUsage",

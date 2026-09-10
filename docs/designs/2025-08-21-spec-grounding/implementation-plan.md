@@ -24,7 +24,7 @@ The control plane invokes this metric once per applicable binding and performs t
 | PR | Status | Notes |
 |---|---|---|
 | HE-1 | **Merged** (PR #84) | Pure scoring + tests |
-| HE-2 | In progress | Metric, catalog, factory, `0.20.0` |
+| HE-2 | **Merged** (PR #87) | Metric, catalog, factory, [`v0.20.0`](https://github.com/harness/harness-evals/releases/tag/v0.20.0) |
 | HE-3 | Not started | Independent |
 
 ### HE-1 — Pure scoring model and reason rendering
@@ -126,6 +126,9 @@ Run a short Python snippet with typed requirement/claim records and verify:
 
 ### HE-2 — `SpecGroundingMetric`, prompts, factory, and release
 
+**Status:** merged (PR #87). GitHub tag/release [`v0.20.0`](https://github.com/harness/harness-evals/releases/tag/v0.20.0);
+green [Publish](https://github.com/harness/harness-evals/actions/runs/33933919636) run.
+
 **Goal:** expose a production metric that uses HE-1 and can reuse pre-extracted requirements.
 
 Add/update:
@@ -183,12 +186,16 @@ Catalog/factory work:
 
 Release:
 
-- Minor version bump, because this adds a built-in metric (from current `0.19.x`, this is expected to be
-  `0.20.0`).
+- Shipped as `0.20.0` (minor: new built-in metric; `pyproject.toml` + `CHANGELOG.md`).
 - Matching changelog entry.
-- Publishing is tag-triggered by `.github/workflows/publish.yml`: after merge, create the matching `vX.Y.Z` tag
-  and wait for the workflow/PyPI publication. A version change on `main` alone does not publish. Downstream
-  consumers should depend on the published version, not an unpublished `main` SHA.
+- PyPI publishing is tag-triggered by `.github/workflows/publish.yml` (`on.push.tags: v*.*.*`).
+  A version bump on `main` alone does not run that workflow. Corroboration (not present in a
+  typical PR checkout's `git tag` list): GitHub tag/release
+  [`v0.20.0`](https://github.com/harness/harness-evals/releases/tag/v0.20.0) and successful
+  [Publish](https://github.com/harness/harness-evals/actions/runs/33933919636) for that tag.
+  Contributor `AGENTS.md` still describes a version-bump Harness pipeline via
+  `.harness/publish.yaml`; that file is not in this tree. Downstream consumers should depend
+  on the published version, not an unpublished `main` SHA.
 
 Tests use a fake `BaseLLM` with canned JSON and assert exact call counts:
 
@@ -220,8 +227,10 @@ Install the built wheel into a clean virtual environment, instantiate the metric
 - reason and metadata JSON;
 - package/catalog version.
 
-**Merge gate:** publish the SDK version before downstream consumers start integration. A `0.20.0` minor is a
-breaking range change for any consumer that currently pins below that version.
+**Merge gate:** satisfied. [`v0.20.0`](https://github.com/harness/harness-evals/releases/tag/v0.20.0)
+is tagged and the [Publish](https://github.com/harness/harness-evals/actions/runs/33933919636) workflow
+succeeded. Downstream consumers should depend on the published package, not an unpublished `main` SHA.
+A `0.20.0` minor remains a breaking range change for any consumer still pinning below that version.
 
 ---
 
@@ -260,8 +269,8 @@ classification while metadata labels it contradicted.
 
 | Milestone | Required SDK PRs | Exit condition |
 |---|---|---|
-| M0 — scoring contract frozen | HE-1 | Pure arithmetic/reason tests pass and edge cases are decided |
-| M1 — releasable metric | HE-2 | Published package contains `spec_grounding` and factory/catalog can construct it |
+| M0 — scoring contract frozen | HE-1 **done** | Pure arithmetic/reason tests pass and edge cases are decided |
+| M1 — releasable metric | HE-2 **done** ([`v0.20.0`](https://github.com/harness/harness-evals/releases/tag/v0.20.0)) | Published package contains `spec_grounding` and factory/catalog can construct it |
 | M2 — richer existing metrics | HE-3 | Faithfulness reports contradictions without score regressions |
 
 ## Downstream handoff

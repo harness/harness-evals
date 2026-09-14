@@ -143,13 +143,13 @@ ec = EvalCase(
 
 scores = evaluate(ec, metrics=[
     ExactMatchMetric(),
-    LatencyMetric(max_ms=2000, threshold=0.5),
+    LatencyMetric(max_ms=2000),  # binary pass/fail: value is 1.0 if latency_ms <= max_ms, else 0.0
 ])
 
 for s in scores:
     print(f"{'PASS' if s.passed else 'FAIL'} {s.name}: {s.value:.2f}")
 # PASS exact_match: 1.00
-# PASS latency: 0.84
+# PASS latency: 1.00
 ```
 
 ### Evaluate structured output (JSON/YAML)

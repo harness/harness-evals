@@ -6,12 +6,12 @@ from harness_evals.core.score import Score
 
 
 class LatencyMetric(BaseMetric):
-    """Score based on response latency from eval_case.latency_ms.
+    """Binary pass/fail based on response latency from eval_case.latency_ms.
 
-    value = max(0, 1 - latency_ms / max_ms). At max_ms, score = 0.
+    value = 1.0 if latency_ms <= max_ms else 0.0.
     """
 
-    def __init__(self, max_ms: float = 5000, threshold: float = 0.5, **kwargs: object) -> None:
+    def __init__(self, max_ms: float = 5000, threshold: float = 1.0, **kwargs: object) -> None:
         super().__init__(name="latency", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)
         if max_ms <= 0:
             raise ValueError(f"max_ms must be positive, got {max_ms}")
@@ -35,12 +35,12 @@ class LatencyMetric(BaseMetric):
                 reason=f"Latency value is invalid — must be non-negative, got {latency}ms",
             )
 
-        value = max(0.0, 1.0 - latency / self.max_ms)
+        value = 1.0 if latency <= self.max_ms else 0.0
 
         return Score(
             name=self.name,
             value=value,
             threshold=self.threshold,
-            reason=f"Latency was {latency:g}ms against max {self.max_ms:g}ms",
+            reason=(f"Latency {latency:g}ms {'within' if value else 'exceeded'} budget of {self.max_ms:g}ms"),
             metadata={"latency_ms": latency, "max_ms": self.max_ms},
         )

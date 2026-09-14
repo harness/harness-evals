@@ -43,19 +43,21 @@ class TestConstructorValidation:
 @pytest.mark.unit
 class TestLatency:
     def test_fast(self, operational_eval_case):
-        score = LatencyMetric(max_ms=5000, threshold=0.5).measure(operational_eval_case)
+        score = LatencyMetric(max_ms=5000).measure(operational_eval_case)
         assert score.passed
-        assert score.value == pytest.approx(0.76, abs=0.01)
+        assert score.value == 1.0
         assert "Latency" in score.reason
 
     @pytest.mark.parametrize(
         "latency_ms, max_ms, expected_value",
         [
             (10000, 5000, 0.0),
+            (5001, 5000, 0.0),
+            (5000, 5000, 1.0),
+            (2500, 5000, 1.0),
             (0, 5000, 1.0),
-            (2500, 5000, 0.5),
         ],
-        ids=["over_max", "zero", "half"],
+        ids=["over_max", "just_over_max", "at_max", "under_max", "zero"],
     )
     def test_latency_values(self, latency_ms, max_ms, expected_value):
         ec = EvalCase(input="q", output="a", latency_ms=latency_ms)

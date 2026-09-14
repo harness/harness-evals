@@ -26,18 +26,20 @@ MESSAGES_WITH_TOKENS = [
 class TestTurnLatencyMetric:
     def test_within_budget(self):
         ec = EvalCase(input="q", output="a", messages=MESSAGES_WITH_LATENCY)
-        score = TurnLatencyMetric(max_ms_per_turn=500, threshold=0.3).measure(ec)
+        score = TurnLatencyMetric(max_ms_per_turn=500).measure(ec)
         assert score.passed
-        assert score.value == pytest.approx(0.4)  # mean of (1-200/500, 1-400/500) = mean(0.6, 0.2) = 0.4
+        assert score.value == 1.0  # both turns (200ms, 400ms) are within the 500ms budget
         assert score.metadata["turn_latencies"] == [200.0, 400.0]
         assert score.metadata["mean_latency_ms"] == 300.0
-        assert "Mean assistant turn latency" in score.reason
+        assert score.metadata["n_turns_failed"] == 0
+        assert "scored turns within" in score.reason
 
     def test_over_budget(self):
         ec = EvalCase(input="q", output="a", messages=MESSAGES_WITH_LATENCY)
-        score = TurnLatencyMetric(max_ms_per_turn=300, threshold=0.8).measure(ec)
-        assert not score.passed  # mean = (1-200/300 + 0.0) / 2 = 0.333
-        assert score.value < 0.5
+        score = TurnLatencyMetric(max_ms_per_turn=300).measure(ec)
+        assert not score.passed  # the 400ms turn exceeds the 300ms budget
+        assert score.value == 0.0
+        assert score.metadata["n_turns_failed"] == 1
 
     def test_no_messages(self):
         ec = EvalCase(input="q", output="a")
@@ -67,8 +69,8 @@ class TestTurnLatencyMetric:
         ]
         ec = EvalCase(input="q", output="a", messages=messages)
         score = TurnLatencyMetric(max_ms_per_turn=500).measure(ec)
-        # Only turn 1 scored: (1 - 200/500) = 0.6
-        assert score.value == pytest.approx(0.6)
+        # Only turn 1 is scored, and it's within budget
+        assert score.value == 1.0
         assert score.metadata["turn_latencies"] == [200.0]
 
     def test_negative_latency_skipped(self):

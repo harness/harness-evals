@@ -5,6 +5,20 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2]
+
+### Changed
+
+- **`LatencyMetric` / `TurnLatencyMetric` are now binary pass/fail** (breaking): both
+  metrics previously returned a graded score (`max(0, 1 - latency_ms / max_ms)`),
+  requiring callers to pick a 0-1 `threshold` to get a pass/fail result. They now
+  score `value = 1.0` if the latency is within budget and `0.0` otherwise
+  (`TurnLatencyMetric` requires every scored turn to be within `max_ms_per_turn` —
+  all-must-pass), matching the threshold-cutoff semantics used by other eval tools
+  (e.g. Promptfoo's `latency` assertion). The default `threshold` for both metrics
+  changed from `0.5` to `1.0` accordingly; `max_ms` / `max_ms_per_turn` are
+  unchanged. `TurnLatencyMetric`'s metadata gained `n_turns_failed`.
+
 ## [0.20.1]
 
 ### Fixed

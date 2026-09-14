@@ -5,6 +5,18 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1]
+
+### Fixed
+
+- **`build_metric()` dimension override**: added an optional `dimension` keyword
+  argument, applied to the constructed metric instance after building it. Every
+  concrete metric class already sets its own `dimension` at `__init__` time, so
+  a caller-configured dimension (e.g. from an external metric config store)
+  previously had no way to reach the runtime metric instance — every score was tagged with
+  whichever dimension the metric class declared, regardless of what the caller
+  had configured.
+
 ## [0.20.0]
 
 ### Added

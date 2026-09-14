@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from harness_evals import EvalCase
+from harness_evals.core.metric import Dimension
 from harness_evals.metrics import factory
 from harness_evals.metrics.factory import build_metric, heuristic_options_schema, normalize_metric_config
 from harness_evals.metrics.grounding.spec_grounding import SpecGroundingMetric
@@ -16,6 +17,26 @@ class TestBuildMetric:
     def test_heuristic_regex_from_catalog(self):
         m = build_metric("heuristic", {"kind": "regex"}, score_name="regex_match", threshold=1.0)
         assert m.name == "regex_match"
+
+    def test_dimension_override_accepts_enum_member(self):
+        """A caller may pass a ``Dimension`` member directly, bypassing str coercion."""
+        metric = build_metric("heuristic", {"kind": "regex"}, score_name="regex_match", dimension=Dimension.TRAJECTORY)
+        assert metric.dimension == Dimension.TRAJECTORY
+
+    def test_dimension_override_accepts_valid_string(self):
+        """External callers typically store dimension as a plain string, not an enum."""
+        metric = build_metric("heuristic", {"kind": "regex"}, score_name="regex_match", dimension="safety")
+        assert metric.dimension == Dimension.SAFETY
+
+    def test_dimension_override_omitted_keeps_metric_default(self):
+        """Regex heuristics default to CORRECTNESS; omitting the override must not disturb that."""
+        metric = build_metric("heuristic", {"kind": "regex"}, score_name="regex_match")
+        assert metric.dimension == Dimension.CORRECTNESS
+
+    def test_dimension_override_rejects_invalid_string(self):
+        """A corrupted/unknown externally-configured dimension must fail loudly, not silently."""
+        with pytest.raises(ValueError):
+            build_metric("heuristic", {"kind": "regex"}, score_name="regex_match", dimension="not_a_real_dimension")
 
     @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
     def test_negated_heuristic_from_catalog(self, kind):

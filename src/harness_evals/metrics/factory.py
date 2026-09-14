@@ -111,6 +111,7 @@ def build_metric(
     *,
     entry_config: dict[str, Any] | None = None,
     allow_code_loading: bool = True,
+    dimension: str | Dimension | None = None,
 ) -> BaseMetric:
     """Build a BaseMetric instance from type and config.
 
@@ -119,27 +120,39 @@ def build_metric(
     allow_code_loading:
         When ``False`` (server-side/online), refuse to load arbitrary code
         metrics. Only CLI/SDK callers should set this to ``True``.
+    dimension:
+        Optional override applied after construction (e.g. a caller-configured
+        dimension stored alongside the metric config). Every concrete metric
+        class already sets its own ``dimension`` at ``__init__`` time, so
+        without this override any externally-configured dimension is silently
+        ignored and every score reports under whatever dimension the metric
+        class happens to declare — this is what lets ``build_metric()`` and a
+        caller's own dimension bookkeeping disagree.
 
     Raises ValueError if type is unknown or config is invalid.
     """
     effective_config = normalize_metric_config(metric_type, config, entry_config)
 
     if metric_type in ("llm", "ai_judge"):
-        return _build_llm_metric(effective_config, score_name, threshold)
+        metric = _build_llm_metric(effective_config, score_name, threshold)
     elif metric_type == "embedding":
-        return _build_embedding_metric(effective_config, score_name, threshold)
+        metric = _build_embedding_metric(effective_config, score_name, threshold)
     elif metric_type == "heuristic":
-        return _build_heuristic_metric(effective_config, score_name, threshold)
+        metric = _build_heuristic_metric(effective_config, score_name, threshold)
     elif metric_type == "code":
-        return _build_code_metric(
+        metric = _build_code_metric(
             effective_config, score_name, threshold, suite_path, allow_code_loading=allow_code_loading
         )
     elif metric_type == "composite":
-        return _build_composite_metric(
+        metric = _build_composite_metric(
             effective_config, score_name, threshold, suite_path, allow_code_loading=allow_code_loading
         )
     else:
         raise ValueError(f"Unknown metric type: {metric_type!r}")
+
+    if dimension is not None:
+        metric.dimension = dimension if isinstance(dimension, Dimension) else Dimension(dimension)
+    return metric
 
 
 def merge_metric_config(

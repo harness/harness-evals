@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted (revised after architecture review — see "Revisions from review" below)
 
 ## Context
 
@@ -123,50 +123,87 @@ Each metric:
   (matches the existing `build_metric()` registry-dimension-override pattern
   from PR #90) — a Noul checking for PII, for instance, is a `SAFETY` call at
   the site that wires it up.
+- `mode: Literal["correctness", "confidence"] | None = None` is an explicit
+  constructor kwarg, not inferred silently per-row. `None` (default) infers
+  from `eval_case.expected is not None` at measure time, but authored
+  `mode="correctness"` against a case with no `expected` is a hard error
+  (`Score(value=0.0, reason=...)`, not a silent fallback to confidence mode) —
+  a dataset with partial goldens must not flip the meaning of `Score.value`
+  row-to-row under one metric name, which would corrupt summary averaging
+  and `baseline/compare.py` regression detection.
 
-Per-primitive value semantics:
+Per-primitive value semantics. `expected` for `Noul` must be `bool`, `0`/`1`,
+or the literal strings `"true"`/`"false"` (case-insensitive) — anything else
+is a validation error at construction time, per `AGENTS.md`'s alias rule
+("preserve ambiguous values as validation errors"); `bool("false")` is
+truthy in Python, so this cannot be a bare `bool(expected)` cast. `NoulMetric`
+also takes `invert: bool = False`, for cases like "does this contain PII"
+where a *high* `noul` is the failure mode, not the success mode — without it,
+confidence-mode value is indistinguishable from "definitely present" vs.
+"definitely absent."
 
-| Primitive | With `expected` | Without `expected` |
+| Primitive | With `expected` (`mode="correctness"`) | Without `expected` (`mode="confidence"`) |
 |---|---|---|
-| `Noul` | `1.0` if `(noul >= 0.5) == bool(expected)` else `0.0` | `value = noul` |
+| `Noul` | `1.0` if `(noul >= 0.5) == expected_bool` else `0.0` | `value = noul if not invert else 1.0 - noul` |
 | `Choice` | `1.0` if `choice == expected` else `0.0` | `value = confidence` |
-| `Score` | `1.0 - abs(normalized_score - normalized_expected)` | `value = confidence` (raw `score` in metadata) |
+| `Score` | `1.0 - abs(level_norm(score) - level_norm(expected))` | `value = confidence` (raw `score` in metadata) |
 
-`Score` normalization follows the docs' own guidance: divide the raw
-level-weighted score by `len(criteria) - 1` to land in [0, 1], consistent
-with `Score.value`'s existing [0, 1] contract (ADR-002) and with how the
-Typesafe docs themselves normalize before combining.
+`Score` normalization: `criteria` is an ordered list, levels are indexed
+`0..len(criteria)-1` (matching the docs' own indexing — level 0 is always the
+low end). `level_norm(x) = x / (len(criteria) - 1)`, applied identically to
+the response's `score` (which is a probability-weighted mean and can be
+non-integer, e.g. `1.3`) and to `expected`. `expected` must be a numeric
+level (float in `[0, len(criteria)-1]`) — not a legend string — because the
+weighted-mean response has no exact string to compare against; document this
+requirement on `ScoreMetric` and reject non-numeric `expected` as a
+validation error rather than attempting fuzzy legend matching. Both
+`level_norm` outputs are independently guaranteed in `[0, 1]`, so
+`1.0 - abs(a - b)` is guaranteed in `[0, 1]` — no `Score.clamped` needed here,
+but the provider response is still defensively clamped before use in case a
+future TypeSafe API version returns a level outside the declared range.
 
-### Batching: reuse `CompositeMetric`, don't reinvent it
+### Batching: a `DecisionCompositeMetric` sibling, not a dual-mode `CompositeMetric`
 
 Firing one HTTP call per primitive metric (three `ChoiceMetric`/`ScoreMetric`
 instances against the same `eval_case.output` → three round trips) throws
 away the exact efficiency TypeSafe's API is designed around ("ask independent
-questions together"). Rather than build a new batching/coalescing layer,
-extend `CompositeMetric` — which already does deterministic weighted
-combination of named sub-checks — with a new operator kind that groups
-decision sub-checks sharing a `state_field` into one `a_ask()` call:
+questions together"). The original draft of this ADR proposed solving this
+by adding an async operator path directly to `CompositeMetric`. Review
+caught two problems with that: (1) `composite.py`'s whole appeal is that it
+is pure, synchronous, and fully config-serializable — the YAML-driven
+`config/runner.py` path is the *primary* way `CompositeMetric` gets
+constructed, and a decision operator needs a live `BaseDecisionProvider`
+object injected into its config, which a YAML file cannot express, so the
+batching feature would be unreachable from the main entry point; (2) one
+failed batched `a_ask()` call would, under the original design, zero out
+every sub-check in that group, whereas today each sync sub-check fails
+independently (`composite.py`'s per-`sub` `try`/`except`).
 
-- `operators.py` gains an **async** operator registry (`ASYNC_OPERATORS`)
-  alongside the existing sync `OPERATORS`; a `"decision"` check type lives
-  there, since it requires network I/O.
-- `CompositeMetric` gains `a_measure()` (today it only implements sync
-  `measure()`). It partitions `sub_scores` into sync operators (run as
-  today) and decision operators (grouped by `state_field`, one `a_ask()` per
-  distinct state, questions fanned out by `name`), then folds both sets into
-  the same weighted-sum/`effective_weights` logic already in
-  `composite.py`.
-- Calling `CompositeMetric.measure()` (sync) with decision sub-checks present
-  still works via `_run_async`, same as `BaseLLM.generate_sync()`.
+Instead: a new sibling class, `DecisionCompositeMetric`, in
+`metrics/composite/decision_composite.py`, constructed directly in Python
+with an explicit `provider: BaseDecisionProvider` and a list of decision
+sub-checks (same `name`/`weight`/`skip_when_missing` shape as
+`CompositeMetric.sub_scores`, but `check` is one of the `Question` types
+from `decision/types.py` plus a `state_field`, grouped by shared
+`state_field` into one `a_ask()` per distinct resolved state). It reuses
+`CompositeMetric`'s weighted-sum/`effective_weights` arithmetic via a shared
+module-level `_combine(details, sub_scores) -> float` helper extracted out
+of `composite.py`, so the two classes cannot silently drift in how they fold
+weights — but it does not touch `composite.py`'s public sync `measure()`
+contract or its `OPERATORS` registry at all. A batched call that fails
+marks every sub-check *in that batch* `status="error"` (excluded from
+`active_weight_sum`, same as today's per-sub-check error handling), not the
+whole metric.
 
-This is additive to `composite.py`/`operators.py` — existing sub-checks are
-untouched — and it's the only piece of this ADR that changes an existing
-file rather than adding new ones.
+`DecisionCompositeMetric` implements `a_measure()` as primary, `measure()`
+via `_run_async(self.a_measure(eval_case))` — same sync-wrapper pattern as
+`BaseLLM.generate_sync()` and `BaseDecisionProvider.ask()`.
 
 Cross-metric batching (e.g. two separate standalone `ChoiceMetric` instances
 in the same `evaluate()` call happening to share a state) is explicitly
-**out of scope** for v1. `CompositeMetric` is the batching primitive; anyone
-who wants combined questions in one call reaches for it, same as today.
+**out of scope** for v1. `DecisionCompositeMetric` is the batching primitive;
+anyone who wants combined questions in one call reaches for it, same as
+`CompositeMetric` today for sync operators.
 
 ### What we are *not* doing
 
@@ -210,26 +247,104 @@ who wants combined questions in one call reaches for it, same as today.
 
 - **New optional dependency surface.** `typesafe-sdk` becomes a new extra
   (`pip install harness-evals[decision]`), mirroring `[llm]`. Core stays
-  dependency-free.
-- **`CompositeMetric` gains an async code path.** Slightly more surface in a
-  file that was previously pure/sync-only, but it's additive and gated behind
-  the presence of a `"decision"` check type — existing sync-only composites
-  see no behavior change.
-- **v1 batching is scoped to one `CompositeMetric` call.** Users who want
-  cross-metric batching must model their questions as one composite rather
-  than several standalone primitive metrics. Documented as a known
+  dependency-free. Pinned `>=0.1,<1` (adjust to the SDK's actual first stable
+  range at implementation time) — every other optional dependency in
+  `pyproject.toml` carries a lower bound; this one should too.
+- **`DecisionCompositeMetric` duplicates `CompositeMetric`'s shape.** Two
+  classes instead of one dual-mode class. Mitigated by extracting shared
+  fold arithmetic into one `_combine()` helper both call, so the two cannot
+  drift on weighting semantics; accepted because it keeps `composite.py`
+  fully synchronous, pure, and YAML-constructible, which review flagged as
+  the more important property to preserve.
+- **v1 batching is scoped to one `DecisionCompositeMetric` call.** Users who
+  want cross-metric batching must model their questions as one composite
+  rather than several standalone primitive metrics. Documented as a known
   limitation, not silently degraded.
+- **Provider transport failures are skips, not zero scores.** A network
+  error, timeout, or non-2xx response from TypeSafe returns `Score(value=0.0,
+  metadata={"error": ...})` **is explicitly wrong and must not ship**; the
+  correct behavior is to let the exception propagate (consistent with how
+  judge-metric HTTP failures behave today — `evaluate()` catches and records
+  exceptions per ADR-004, it does not let a metric quietly launder an infra
+  failure into a passing-or-failing judgment). Decision metrics must not
+  catch provider exceptions internally.
+- **Floating model tag (`jev-latest`) affects reproducibility.** Two runs of
+  the same eval on different days can silently use different model versions.
+  `DecisionResponse.model` (the concrete model TypeSafe actually used) is
+  always recorded in `Score.metadata["model"]` so this is at least visible,
+  and `README`/`metrics-guide.md` call out pinning to a specific model
+  version for any eval used as a CI gate or baseline.
+- **No timeout/retry/concurrency policy specified yet.** `a_evaluate()`
+  gathers across all metrics × cases with no global concurrency cap today;
+  decision metrics add a real external rate limit (429/529 per the TypeSafe
+  API docs) that heuristic/deterministic metrics never had to think about.
+  `TypeSafeDecisionProvider` takes an explicit `timeout` and lets the SDK's
+  own retry policy handle 429/529 backoff (per `sdk/python/api/retries.md`)
+  — harness-evals does not reimplement retry logic, but documents what the
+  SDK already covers so callers don't double-wrap it.
 
 ## Consequences
 
 - New package `src/harness_evals/decision/` (provider abstraction) and new
   metric category `src/harness_evals/metrics/decision/` (`ChoiceMetric`,
   `ScoreMetric`, `NoulMetric`), registered in `metrics/__init__.py` and the
-  catalog as `choice`, `score_decision` (avoids catalog-name collision with
-  `Score` the dataclass and any future `score`-named deterministic metric —
-  confirm final catalog key during implementation), `noul`.
-- `metrics/composite/operators.py` and `metrics/composite/composite.py` gain
-  an async `"decision"` operator and `CompositeMetric.a_measure()`.
-- `pyproject.toml` gains a `decision = ["typesafe-sdk"]` extra, added to
-  `all`.
+  catalog as `decision_choice`, `decision_score`, `decision_noul` — namespaced
+  under `decision_` rather than bare `choice`/`score`/`noul` to read
+  unambiguously in a catalog listing next to unrelated `score`-shaped
+  concepts (the `Score` dataclass, any future deterministic "score" metric)
+  and to group visually by category the way `turn_*` and `context_*` already
+  do.
+- `CatalogEntry` gains a `requires_provider: bool` field (alongside the
+  existing `requires_llm`/`requires_embedding`), computed the same way via
+  `_requires_param(cls, "provider")` in `catalog.py`. Without this, all three
+  decision metrics land in the factory's default "heuristic" bucket (which
+  assumes zero-dependency construction) and `build_metric()` would try to
+  instantiate them with no provider, raising `TypeError` at config-load time
+  for every user of the YAML config path — this must be fixed in the same PR
+  that registers the metrics, not deferred.
+- New sibling `metrics/composite/decision_composite.py`
+  (`DecisionCompositeMetric`) plus an extracted `_combine()` helper shared
+  with `composite.py`. `composite.py`/`operators.py` themselves are
+  unchanged.
+- `pyproject.toml` gains a `decision = ["typesafe-sdk"]` extra (pinned), added
+  to `all`.
 - No changes to `Golden`, `EvalCase`, `Score`, or any existing metric.
+
+## Revisions from review
+
+An architecture review (pre-implementation gate, conducted before any code
+landed) raised eleven concerns against the original draft of this ADR. This
+revision addresses all of them:
+
+1. Score-normalization formula was ambiguous about level indexing and could
+   produce values outside `[0, 1]` → fixed above with explicit `level_norm`.
+2. Catalog auto-derivation would silently misfile decision metrics as
+   zero-dependency → fixed with `CatalogEntry.requires_provider`.
+3. Correctness/confidence mode was inferred from data presence, corrupting
+   cross-row comparability → fixed with an explicit `mode` kwarg that errors
+   rather than silently switches.
+4. `CompositeMetric` async dual-mode was the wrong shape (unreachable from
+   YAML config, group failure blast radius) → replaced with the
+   `DecisionCompositeMetric` sibling design above.
+5. Noul `bool(expected)` mishandles falsy-looking strings, and there was no
+   inversion knob for "high probability = failure" checks → fixed with
+   explicit `expected` type validation and `invert`.
+6. Floating `model="jev-latest"` default breaks reproducibility → addressed
+   by always recording the concrete `model` in `Score.metadata` and
+   documenting pinning; the default itself is kept for ergonomics.
+7. Token usage recorded inside `a_ask()` may not reach `a_evaluate()`'s
+   contextvar-based collector when reached via the sync `measure()` →
+   `_run_async` path (thread-pool dispatch does not propagate contextvars)
+   → addressed by also stashing `input_tokens`/`output_tokens` directly in
+   `Score.metadata` as a redundant, always-reliable path, independent of
+   whether the contextvar propagates.
+8. Provider transport errors were folding into `value=0.0` → fixed above:
+   decision metrics let transport exceptions propagate rather than judging
+   with them.
+9. No stated timeout/retry/concurrency policy → addressed above (explicit
+   `timeout`, defer to SDK retry policy, documented rather than
+   reimplemented).
+10. The `typesafe-sdk` extra was unpinned, unlike every other optional
+    dependency → fixed with an explicit version range.
+11. `score_decision`/`noul` catalog names were awkward/ambiguous → fixed with
+    the `decision_choice`/`decision_score`/`decision_noul` namespace above.

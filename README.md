@@ -12,6 +12,7 @@ pip install harness-evals[llm]       # + LLM-judged metrics (OpenAI, Anthropic)
 pip install harness-evals[otlp]      # + OTLP metrics & traces export
 pip install harness-evals[langfuse]  # + Langfuse source/sink
 pip install harness-evals[harness]   # + Harness AI Service LLM provider
+pip install harness-evals[decision]  # + TypeSafe decision-primitive metrics (Choice/Score/Noul)
 pip install harness-evals[benchmarks]# + academic benchmarks (MMLU, GSM8K, etc.)
 pip install harness-evals[all]       # everything
 ```
@@ -793,6 +794,7 @@ All benchmarks support: `shots=N` override, `limit=N` for quick runs, `offline=T
 | **Agent** | ToolCorrectness, ToolArgumentMatch, TaskCompletion, ArgumentCorrectness, PlanQuality, PlanAdherence, StepEfficiency | Tool call correctness, deterministic argument match, task completion, LLM-judged argument validation, plan quality/adherence, step efficiency (some require `[llm]`) |
 | **Conversation** | ConversationCoherence, ConversationResolution, ConversationCompleteness, TurnEfficiency, TurnRelevancy, KnowledgeRetention, RoleAdherence, TopicAdherence, GoalAccuracy, ToolUse | Multi-turn coherence, resolution, completeness, efficiency, relevancy, memory, role/topic adherence, goal accuracy, tool usage (requires `[llm]`) |
 | **Security** | VulnerabilityCorrectness, SecurityCompleteness, CodeSafety, CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability | LLM-as-Judge metrics for AI-generated security vulnerability remediations, with composite Remediation Quality Index (requires LLM provider: `[llm]` or `[harness]`) |
+| **Decision** | Choice, Score, Noul | Typed, calibrated single-call decisions — pick one of N categories, rate against an ordered rubric, or answer a calibrated yes/no — as an alternative to free-text LLM-judge prompting (requires `[decision]`) |
 
 ## EvalCase Fields
 

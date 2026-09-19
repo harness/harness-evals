@@ -23,6 +23,7 @@ class CatalogEntry:
     default_threshold: float
     requires_llm: bool
     requires_embedding: bool
+    requires_provider: bool
     description: str
 
 
@@ -108,6 +109,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         BLEUMetric,
         BrierScoreMetric,
         CalibrationMetric,
+        ChoiceMetric,
         ComplianceMetric,
         CompositeMetric,
         ContainsMetric,
@@ -121,6 +123,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ConversationResolutionMetric,
         CostEfficiencyMetric,
         DAGMetric,
+        DecisionCompositeMetric,
         DiscriminationMetric,
         EmbeddingSimilarityMetric,
         EnvironmentRobustnessMetric,
@@ -139,6 +142,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ListContainsMetric,
         MCPTraceCompletenessMetric,
         MisuseDetectionMetric,
+        NoulMetric,
         NumericDiffMetric,
         OutcomeConsistencyMetric,
         PairwiseMetric,
@@ -156,6 +160,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ROUGEMetric,
         RubricJudgeMetric,
         SchemaValidationMetric,
+        ScoreMetric,
         SpecGroundingMetric,
         StepEfficiencyMetric,
         StructuralSimilarityMetric,
@@ -200,6 +205,11 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "schema_validation": SchemaValidationMetric,
         "structural_similarity": StructuralSimilarityMetric,
         "composite": CompositeMetric,
+        # Decision primitives
+        "decision_choice": ChoiceMetric,
+        "decision_score": ScoreMetric,
+        "decision_noul": NoulMetric,
+        "decision_composite": DecisionCompositeMetric,
         # Similarity
         "levenshtein": LevenshteinMetric,
         "bleu": BLEUMetric,
@@ -316,6 +326,7 @@ def catalog() -> list[CatalogEntry]:
                 default_threshold=_get_default_threshold(cls),
                 requires_llm=_requires_param(cls, "llm"),
                 requires_embedding=_requires_param(cls, "embedding"),
+                requires_provider=_requires_param(cls, "provider"),
                 description=(cls.__doc__ or "").split("\n")[0].strip(),
             )
         )

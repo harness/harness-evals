@@ -21,6 +21,7 @@ from typing import Any, get_args, get_origin, get_type_hints
 
 from harness_evals import BaseMetric, Dimension, EvalCase, Score
 from harness_evals.catalog import catalog
+from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.llm.openai_embedding import OpenAIEmbedding
 from harness_evals.metrics import AnswerCorrectnessMetric, GEvalMetric, RubricJudgeMetric
 
@@ -62,6 +63,11 @@ try:
 except ImportError:
     HarnessGatewayOpenAILLM = None  # type: ignore[assignment,misc]
     HarnessGatewayOpenAIEmbedding = None  # type: ignore[assignment,misc]
+
+try:
+    from harness_evals.decision.typesafe import TypeSafeDecisionProvider
+except ImportError:
+    TypeSafeDecisionProvider = None  # type: ignore[assignment,misc]
 
 _GATEWAY_PROVIDERS = frozenset({"harness_gateway", "harness_llm_gateway"})
 # Providers that may route LLM chat/completions through /llm-gw/v1 when use_llm_gateway is set.
@@ -147,6 +153,8 @@ def build_metric(
         metric = _build_composite_metric(
             effective_config, score_name, threshold, suite_path, allow_code_loading=allow_code_loading
         )
+    elif metric_type == "decision":
+        metric = _build_decision_metric(effective_config, score_name, threshold, allow_code_loading=allow_code_loading)
     else:
         raise ValueError(f"Unknown metric type: {metric_type!r}")
 
@@ -250,23 +258,31 @@ def normalize_metric_config(
 
 
 @functools.cache
-def _catalog_registry() -> tuple[dict[str, type[BaseMetric]], dict[str, type[BaseMetric]], dict[str, type[BaseMetric]]]:
-    """Auto-derive heuristic, LLM, and embedding registries from the catalog."""
+def _catalog_registry() -> tuple[
+    dict[str, type[BaseMetric]],
+    dict[str, type[BaseMetric]],
+    dict[str, type[BaseMetric]],
+    dict[str, type[BaseMetric]],
+]:
+    """Auto-derive heuristic, LLM, embedding, and decision registries from the catalog."""
     heuristic: dict[str, type[BaseMetric]] = {}
     llm: dict[str, type[BaseMetric]] = {}
     embedding: dict[str, type[BaseMetric]] = {}
+    decision: dict[str, type[BaseMetric]] = {}
 
     for entry in catalog():
         if entry.kind == "composite":
             continue
-        if entry.requires_llm:
+        if entry.requires_provider:
+            decision[entry.kind] = entry.metric_class
+        elif entry.requires_llm:
             llm[entry.kind] = entry.metric_class
         elif entry.requires_embedding:
             embedding[entry.kind] = entry.metric_class
         else:
             heuristic[entry.kind] = entry.metric_class
 
-    return heuristic, llm, embedding
+    return heuristic, llm, embedding, decision
 
 
 def _heuristic_registry() -> dict[str, type[BaseMetric]]:
@@ -382,6 +398,10 @@ def _llm_metric_registry() -> dict[str, type[BaseMetric]]:
 
 def _embedding_registry() -> dict[str, type[BaseMetric]]:
     return _catalog_registry()[2]
+
+
+def _decision_registry() -> dict[str, type[BaseMetric]]:
+    return _catalog_registry()[3]
 
 
 def _validate_constructor_options(
@@ -641,6 +661,40 @@ def build_embedding_provider(metadata: dict[str, Any]) -> OpenAIEmbedding:
     )
 
 
+def build_decision_provider(config: dict[str, Any], *, allow_code_loading: bool = True) -> Any:
+    """Instantiate the correct decision-primitive provider from config metadata."""
+    metadata = config.get("metadata", {})
+    provider_instance = metadata.get("provider_instance")
+    if provider_instance is not None:
+        if not allow_code_loading:
+            raise ValueError(
+                "A pre-built 'provider_instance' is not allowed in server-side/online execution. "
+                "Use the CLI or SDK to run decision metrics with a custom provider locally."
+            )
+        if not isinstance(provider_instance, BaseDecisionProvider):
+            raise ValueError(
+                f"metadata['provider_instance'] must be a BaseDecisionProvider, got {type(provider_instance)!r}"
+            )
+        return provider_instance
+
+    provider = metadata.get("provider", "typesafe")
+    if provider != "typesafe":
+        raise ValueError(f"Unknown decision provider: {provider!r}. Available: ['typesafe']")
+    if TypeSafeDecisionProvider is None:
+        raise ValueError(
+            "Decision metrics require the 'decision' optional dependency: pip install 'harness-evals[decision]'"
+        )
+
+    kwargs: dict[str, Any] = {}
+    if metadata.get("model") is not None:
+        kwargs["model"] = metadata["model"]
+    if metadata.get("api_key") is not None:
+        kwargs["api_key"] = metadata["api_key"]
+    if metadata.get("timeout") is not None:
+        kwargs["timeout"] = float(metadata["timeout"])
+    return TypeSafeDecisionProvider(**kwargs)
+
+
 def _build_llm_metric(
     config: dict[str, Any],
     score_name: str | None,
@@ -733,6 +787,39 @@ def _build_embedding_metric(
     options = config.get("options") or {}
     _validate_constructor_options(metric_class, options)
     metric = metric_class(embedding=embedding, threshold=threshold, **options)
+
+    metric.name = score_name or kind
+    return metric
+
+
+def _build_decision_metric(
+    config: dict[str, Any],
+    score_name: str | None,
+    threshold: float,
+    *,
+    allow_code_loading: bool = True,
+) -> BaseMetric:
+    kind = config.get("kind")
+    if not kind:
+        raise ValueError("Decision metric config must have 'kind' field")
+
+    registry = _decision_registry()
+    if kind not in registry:
+        raise ValueError(f"Unknown decision kind: {kind!r}. Available: {sorted(registry.keys())}")
+
+    metric_class = registry[kind]
+    provider = build_decision_provider(config, allow_code_loading=allow_code_loading)
+    options = config.get("options") or {}
+
+    kind_kwargs: dict[str, Any] = {}
+    if "instructions" in config:
+        kind_kwargs["instructions"] = config["instructions"]
+    if "criteria" in config:
+        kind_kwargs["criteria"] = config["criteria"]
+
+    reserved_options = {"provider", *kind_kwargs}
+    _validate_constructor_options(metric_class, options, reserved_options)
+    metric = metric_class(provider=provider, threshold=threshold, **kind_kwargs, **options)
 
     metric.name = score_name or kind
     return metric

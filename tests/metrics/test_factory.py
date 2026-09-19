@@ -332,6 +332,96 @@ class TestBuildMetric:
             )
 
 
+class TestBuildDecisionMetric:
+    def test_decision_choice_builds_via_injected_provider(self):
+        from harness_evals.decision.base import BaseDecisionProvider
+
+        provider = AsyncMock(spec=BaseDecisionProvider)
+        m = build_metric(
+            "decision",
+            {
+                "kind": "decision_choice",
+                "instructions": "Which team?",
+                "criteria": {"billing": None, "returns": None},
+                "metadata": {"provider_instance": provider},
+            },
+            score_name="department",
+            threshold=0.8,
+        )
+        assert m.name == "department"
+        assert m.provider is provider
+        assert m.instructions == "Which team?"
+        assert m.criteria == {"billing": None, "returns": None}
+
+    def test_decision_score_and_noul_build(self):
+        from harness_evals.decision.base import BaseDecisionProvider
+
+        provider = AsyncMock(spec=BaseDecisionProvider)
+        score_metric = build_metric(
+            "decision",
+            {
+                "kind": "decision_score",
+                "instructions": "How urgent?",
+                "criteria": ["low", "medium", "high"],
+                "metadata": {"provider_instance": provider},
+            },
+        )
+        assert score_metric.criteria == ["low", "medium", "high"]
+
+        noul_metric = build_metric(
+            "decision",
+            {
+                "kind": "decision_noul",
+                "instructions": "Is this an escalation?",
+                "metadata": {"provider_instance": provider},
+            },
+        )
+        assert noul_metric.provider is provider
+
+    def test_decision_unknown_kind_rejected(self):
+        from harness_evals.decision.base import BaseDecisionProvider
+
+        provider = AsyncMock(spec=BaseDecisionProvider)
+        with pytest.raises(ValueError, match="Unknown decision kind"):
+            build_metric(
+                "decision",
+                {"kind": "decision_nonexistent", "metadata": {"provider_instance": provider}},
+            )
+
+    def test_decision_missing_typesafe_sdk_raises_clear_error(self, monkeypatch):
+        monkeypatch.setattr(factory, "TypeSafeDecisionProvider", None)
+        with pytest.raises(ValueError, match="harness-evals\\[decision\\]"):
+            build_metric(
+                "decision",
+                {"kind": "decision_noul", "instructions": "?", "metadata": {}},
+            )
+
+    def test_decision_unknown_provider_rejected(self):
+        with pytest.raises(ValueError, match="Unknown decision provider"):
+            build_metric(
+                "decision",
+                {"kind": "decision_noul", "instructions": "?", "metadata": {"provider": "acme"}},
+            )
+
+    def test_decision_provider_instance_rejected_when_code_loading_disallowed(self):
+        from harness_evals.decision.base import BaseDecisionProvider
+
+        provider = AsyncMock(spec=BaseDecisionProvider)
+        with pytest.raises(ValueError, match="not allowed in server-side/online execution"):
+            build_metric(
+                "decision",
+                {"kind": "decision_noul", "instructions": "?", "metadata": {"provider_instance": provider}},
+                allow_code_loading=False,
+            )
+
+    def test_decision_provider_instance_must_be_base_decision_provider(self):
+        with pytest.raises(ValueError, match="must be a BaseDecisionProvider"):
+            build_metric(
+                "decision",
+                {"kind": "decision_noul", "instructions": "?", "metadata": {"provider_instance": object()}},
+            )
+
+
 class TestHeuristicCompatibility:
     @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])
     def test_negate_is_declared_in_schema_and_normalizes_without_warning(self, kind, caplog):

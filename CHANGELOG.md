@@ -5,6 +5,41 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0]
+
+### Added
+
+- **`DecisionCompositeMetric`** (`harness_evals.metrics.composite`): batches
+  multiple decision-primitive sub-checks (Choice/Score/Noul questions) that
+  share a `state_field` into a single `provider.a_ask()` call instead of one
+  call per sub-check. Groups sub-checks by `state_field`, applies each
+  primitive's correctness/confidence value formula per DP-2, and folds the
+  weighted results the same way as `CompositeMetric`. A provider failure for
+  one group marks only that group's sub-checks `status="error"` — sibling
+  groups are unaffected. The weighted-sum/`effective_weights` aggregation
+  previously inlined in `CompositeMetric.measure()` is now shared via
+  `metrics/composite/_combine.py::fold_sub_scores()` (pure refactor, no
+  behavior change).
+
+## [0.21.0]
+
+### Added
+
+- **Decision primitives** (`decision` optional dependency, `pip install
+  'harness-evals[decision]'`): a vendor-neutral `BaseDecisionProvider`
+  abstraction (`harness_evals.decision`) plus three new metrics —
+  `ChoiceMetric`, `ScoreMetric`, `NoulMetric` (`harness_evals.metrics.decision`,
+  catalog kinds `decision_choice`/`decision_score`/`decision_noul`) — for
+  typed, calibrated single-call decisions (pick-one / ordered-rubric-rate /
+  calibrated-yes-no) as an alternative to free-text LLM-judge prompting.
+  `TypeSafeDecisionProvider` is the reference implementation, backed by
+  `typesafe-sdk`. Each metric supports both a `mode="correctness"` (scored
+  against `EvalCase.expected`) and `mode="confidence"` (self-reported
+  calibration signal, no `expected` required) path, inferred automatically
+  when `mode` is omitted. `CatalogEntry` gained a `requires_provider` field
+  and `build_metric()`/`build_metric("decision", ...)` gained matching
+  factory/catalog wiring (`build_decision_provider()`).
+
 ## [0.20.2]
 
 ### Changed

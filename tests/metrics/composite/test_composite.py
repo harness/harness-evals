@@ -94,3 +94,35 @@ def test_composite_metric_skip_when_missing():
     assert score.value == 1.0  # check_opt skipped, check_a is 100% of effective weight
     assert score.metadata["sub_scores"]["check_opt"]["status"] == "skipped"
     assert score.metadata["effective_weights"]["check_a"] == 1.0
+
+
+@pytest.mark.unit
+def test_composite_metric_fold_sub_scores_regression():
+    """Guards the _combine.py extraction: output shape must be unchanged."""
+    config = [
+        {
+            "name": "check_a",
+            "weight": 0.7,
+            "check": {"type": "equals", "field": "$.output.a", "value": 100},
+        },
+        {
+            "name": "check_b",
+            "weight": 0.3,
+            "check": {"type": "equals", "field": "$.output.b", "value": 200},
+        },
+    ]
+
+    metric = CompositeMetric(sub_scores=config, output_format="json", threshold=0.8)
+
+    ec = EvalCase(input="", expected={}, output={"a": 100, "b": 999})
+    score = metric.measure(ec)
+
+    assert score.value == pytest.approx(0.7)
+    assert score.metadata == {
+        "sub_scores": {
+            "check_a": {"value": 1.0, "status": "ok"},
+            "check_b": {"value": 0.0, "status": "ok"},
+        },
+        "effective_weights": {"check_a": 0.7, "check_b": 0.3},
+    }
+    assert score.reason == "Composite score aggregated 2 sub-scores with total active weight 1"

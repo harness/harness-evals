@@ -9,6 +9,7 @@ import yaml
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
+from harness_evals.metrics.composite._combine import fold_sub_scores
 from harness_evals.metrics.composite.operators import OPERATORS, OperatorError
 from harness_evals.utils.path import extract_path
 
@@ -76,24 +77,20 @@ class CompositeMetric(BaseMetric):
         eval_case_dict["output"] = actual
         eval_case_dict["expected"] = expected
 
-        details = {"sub_scores": {}, "effective_weights": {}}
-        total_score = 0.0
-        active_weight_sum = 0.0
+        results: dict[str, dict[str, Any]] = {}
 
         for sub in self.sub_scores:
             sub_name = sub.get("name", "unknown")
-            weight = float(sub.get("weight", 0.0))
             check_config = sub.get("check", {})
             op_type = check_config.get("type")
             skip_when_missing = sub.get("skip_when_missing", False)
 
             if not op_type or op_type not in OPERATORS:
-                details["sub_scores"][sub_name] = {
+                results[sub_name] = {
                     "value": 0.0,
                     "status": "error",
                     "reason": f"Unknown operator type: {op_type}",
                 }
-                active_weight_sum += weight
                 continue
 
             operator_fn = OPERATORS[op_type]
@@ -104,7 +101,7 @@ class CompositeMetric(BaseMetric):
             if main_field and skip_when_missing:
                 val = extract_path(eval_case_dict, main_field)
                 if val is None:
-                    details["sub_scores"][sub_name] = {
+                    results[sub_name] = {
                         "value": None,
                         "status": "skipped",
                         "reason": "field missing, skip_when_missing=true",
@@ -113,37 +110,29 @@ class CompositeMetric(BaseMetric):
 
             try:
                 val = operator_fn(eval_case_dict, check_config)
-                details["sub_scores"][sub_name] = {
+                results[sub_name] = {
                     "value": val,
                     "status": "ok",
                 }
-                total_score += val * weight
             except OperatorError as e:
-                details["sub_scores"][sub_name] = {
+                results[sub_name] = {
                     "value": 0.0,
                     "status": "error",
                     "reason": str(e),
                 }
             except Exception as e:
-                details["sub_scores"][sub_name] = {
+                results[sub_name] = {
                     "value": 0.0,
                     "status": "error",
                     "reason": f"Unexpected error: {e}",
                 }
 
-            active_weight_sum += weight
-
-        final_score = 0.0
-        if active_weight_sum > 0:
-            final_score = total_score / active_weight_sum
-
-        # Calculate effective weights
-        if active_weight_sum > 0:
-            for sub in self.sub_scores:
-                sub_name = sub.get("name", "unknown")
-                if details["sub_scores"][sub_name]["status"] != "skipped":
-                    orig_weight = float(sub.get("weight", 0.0))
-                    details["effective_weights"][sub_name] = round(orig_weight / active_weight_sum, 4)
+        final_score, details = fold_sub_scores(self.sub_scores, results)
+        active_weight_sum = sum(
+            float(sub.get("weight", 0.0))
+            for sub in self.sub_scores
+            if results.get(sub.get("name", "unknown"), {}).get("status") != "skipped"
+        )
 
         return Score(
             name=self.name,

@@ -162,7 +162,7 @@ harness-evals/
 │   │   ├── mcp/                     # ToolSelectionAccuracy, MCPTraceCompleteness
 │   │   ├── security/               # VulnerabilityCorrectness, SecurityCompleteness, CodeSafety,
 │   │   │                            # CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability
-│   │   ├── composite/              # CompositeMetric (combine metrics with operators)
+│   │   ├── composite/              # CompositeMetric, DecisionCompositeMetric (combine metrics with operators)
 │   │   └── decision/                # ChoiceMetric, ScoreMetric, NoulMetric (decision primitives)
 │   │
 │   ├── benchmarks/                  # Academic benchmark evaluation suites

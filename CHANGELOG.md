@@ -5,6 +5,22 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0]
+
+### Added
+
+- **`DecisionCompositeMetric`** (`harness_evals.metrics.composite`): batches
+  multiple decision-primitive sub-checks (Choice/Score/Noul questions) that
+  share a `state_field` into a single `provider.a_ask()` call instead of one
+  call per sub-check. Groups sub-checks by `state_field`, applies each
+  primitive's correctness/confidence value formula per DP-2, and folds the
+  weighted results the same way as `CompositeMetric`. A provider failure for
+  one group marks only that group's sub-checks `status="error"` — sibling
+  groups are unaffected. The weighted-sum/`effective_weights` aggregation
+  previously inlined in `CompositeMetric.measure()` is now shared via
+  `metrics/composite/_combine.py::fold_sub_scores()` (pure refactor, no
+  behavior change).
+
 ## [0.21.0]
 
 ### Added

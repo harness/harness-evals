@@ -11,6 +11,7 @@ from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
 from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from harness_evals.metrics.composite.composite import CompositeMetric
+from harness_evals.metrics.composite.decision_composite import DecisionCompositeMetric
 from harness_evals.metrics.conversation.coherence import ConversationCoherenceMetric
 from harness_evals.metrics.conversation.conversation_completeness import (
     ConversationCompletenessMetric,
@@ -126,6 +127,7 @@ __all__ = [
     "SchemaValidationMetric",
     "StructuralSimilarityMetric",
     "CompositeMetric",
+    "DecisionCompositeMetric",
     "LatencyMetric",
     "TokenCostMetric",
     "CostEfficiencyMetric",

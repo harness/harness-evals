@@ -162,7 +162,8 @@ harness-evals/
 │   │   ├── mcp/                     # ToolSelectionAccuracy, MCPTraceCompleteness
 │   │   ├── security/               # VulnerabilityCorrectness, SecurityCompleteness, CodeSafety,
 │   │   │                            # CodeQuality, ExplanationQuality, RootCauseAnalysis, Actionability
-│   │   └── composite/              # CompositeMetric (combine metrics with operators)
+│   │   ├── composite/              # CompositeMetric (combine metrics with operators)
+│   │   └── decision/                # ChoiceMetric, ScoreMetric, NoulMetric (decision primitives)
 │   │
 │   ├── benchmarks/                  # Academic benchmark evaluation suites
 │   │   ├── __init__.py              # Public exports (all benchmark classes)
@@ -188,6 +189,11 @@ harness-evals/
 │   │   ├── harness_ai.py           # HarnessAILLM
 │   │   ├── embedding.py            # Embedding base
 │   │   └── openai_embedding.py     # OpenAI embeddings
+│   │
+│   ├── decision/                    # Decision-primitive provider abstraction
+│   │   ├── base.py                  # BaseDecisionProvider ABC
+│   │   ├── types.py                 # Question/Answer/DecisionResponse dataclasses
+│   │   └── typesafe.py             # TypeSafeDecisionProvider (typesafe-sdk-backed)
 │   │
 │   ├── targets/                     # System-under-test adapters
 │   │   ├── base.py                  # BaseTarget ABC

@@ -42,8 +42,8 @@ definitions (additive `metadata` usage only), and does not modify
 
 | PR | Status | Notes |
 |---|---|---|
-| DP-1 | In progress | Provider abstraction + TypeSafe provider, no metrics yet |
-| DP-2 | Not started | Three primitive metrics, catalog/factory, release |
+| DP-1 | Done | Provider abstraction + TypeSafe provider, tests green |
+| DP-2 | Done | Three primitive metrics, catalog/factory wired, tests/docs/CHANGELOG/version bump done. Live manual-check step (real `TYPESAFE_API_KEY`) still outstanding. |
 | DP-3 | Not started | `DecisionCompositeMetric` (independent, can land after DP-2) |
 | DP-4 | Not started | Efficacy comparison vs. LLM-judge (needs live `TYPESAFE_API_KEY`) |
 

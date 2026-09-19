@@ -57,6 +57,7 @@ If your metric doesn't clearly fit one dimension, it may be compound — conside
 | `agent/` | Tool correctness, task completion | `BaseMetric` |
 | `conversation/` | Multi-turn coherence, resolution | `BaseMetric` |
 | `mcp/` | Tool selection, trace completeness | `BaseMetric` |
+| `decision/` | Typed, calibrated single-call decisions (pick-one, ordered-rubric-rate, calibrated yes/no) | `BaseMetric` (takes `provider` param — a `BaseDecisionProvider`) |
 
 ### 3. Create the File
 

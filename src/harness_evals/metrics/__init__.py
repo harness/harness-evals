@@ -29,6 +29,9 @@ from harness_evals.metrics.conversation.tool_use import ToolUseMetric
 from harness_evals.metrics.conversation.topic_adherence import TopicAdherenceMetric
 from harness_evals.metrics.conversation.turn_efficiency import TurnEfficiencyMetric
 from harness_evals.metrics.conversation.turn_relevancy import TurnRelevancyMetric
+from harness_evals.metrics.decision.choice import ChoiceMetric
+from harness_evals.metrics.decision.noul import NoulMetric
+from harness_evals.metrics.decision.score import ScoreMetric
 from harness_evals.metrics.deterministic.contains import ContainsMetric
 from harness_evals.metrics.deterministic.exact_match import ExactMatchMetric
 from harness_evals.metrics.deterministic.list_contains import ListContainsMetric
@@ -205,4 +208,7 @@ __all__ = [
     "ExplanationQualityMetric",
     "RootCauseAnalysisMetric",
     "ActionabilityMetric",
+    "ChoiceMetric",
+    "ScoreMetric",
+    "NoulMetric",
 ]

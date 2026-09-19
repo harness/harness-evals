@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Decision primitives vs. LLM-as-judge — efficacy report</title>
+<style>
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 2rem auto; max-width: 900px; color: #1a1a1a; line-height: 1.5; padding: 0 1rem; }
+  h1 { font-size: 1.6rem; }
+  h2 { text-transform: capitalize; border-bottom: 2px solid #333; padding-bottom: 0.25rem; margin-top: 2.5rem; }
+  h2.plain { text-transform: none; }
+  .subtitle { color: #555; margin-top: -0.5rem; }
+  .cards { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .card { flex: 1; min-width: 320px; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+  .card h3 { margin-top: 0; }
+  .n { color: #888; font-size: 0.85em; font-weight: normal; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 0.75rem; font-size: 0.9rem; }
+  table.metrics td { padding: 3px 6px; }
+  table.metrics td:first-child { color: #555; }
+  table.calibration th, table.calibration td { border: 1px solid #eee; padding: 4px 6px; text-align: right; }
+  table.calibration th:first-child, table.calibration td:first-child { text-align: left; }
+  table.summary th, table.summary td { border: 1px solid #ddd; padding: 6px 10px; text-align: right; }
+  table.summary th:nth-child(1), table.summary th:nth-child(2),
+  table.summary td:nth-child(1), table.summary td:nth-child(2) { text-align: left; }
+  table.summary td.win { background: #eaf5ea; font-weight: 600; }
+  .bar-track { display: inline-block; height: 10px; background: #eee; border-radius: 4px; vertical-align: middle; margin-left: 6px; }
+  .bar-fill { height: 10px; background: #4a7cff; border-radius: 4px; }
+  .note { color: #666; font-size: 0.9rem; }
+  .panel { border-left: 4px solid #ccc; padding: 0.25rem 1rem; margin: 1rem 0; background: #fafafa; }
+  .panel.use { border-color: #4caf50; }
+  .panel.avoid { border-color: #d9534f; }
+  .panel.caveat { border-color: #f0ad4e; }
+  .bottom-line { border: 2px solid #333; border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; background: #fff; }
+  code { background: #f2f2f2; padding: 1px 5px; border-radius: 3px; }
+  ul { padding-left: 1.25rem; }
+</style>
+</head>
+<body>
+<h1>Decision primitives vs. LLM-as-judge — efficacy report</h1>
+<p class="subtitle">Support-ticket triage, 18 hand-labeled cases, 3 dimensions (department / severity /
+is_escalation), both approaches run live against the same inputs.</p>
+
+<h2 class="plain">What's being compared</h2>
+<p><strong>Decision primitives</strong> — <code>ChoiceMetric</code>/<code>ScoreMetric</code>/<code>NoulMetric</code>
+against a live <code>TypeSafeDecisionProvider</code> (model <code>jev-1.13.0</code>) — vs.
+<strong>LLM-as-judge</strong> — a custom prompt + JSON schema against a live <code>AnthropicLLM</code>
+(<code>claude-sonnet-4-5-20250929</code>). Same criteria wording, same 18 tickets, both self-report a 0-1
+confidence — but the two confidences are not collected the same way. The decision primitive's confidence
+comes from TypeSafe's own probability distribution over choices; the judge's confidence is a verbalized
+number in a prompt response, which empirically clusters on a handful of round values (0.85/0.9/0.95/1.0).
+This asymmetry caveats every Brier-score comparison below.</p>
+
+<h2 class="plain">Summary</h2>
+<table class="summary">
+  <thead><tr><th>Dimension</th><th>Approach</th><th>Accuracy</th><th>Brier score (lower=better)</th><th>Mean latency</th></tr></thead>
+  <tbody><tr><td>department</td><td>Decision primitive</td><td class='win'>0.889</td><td class='win'>0.087</td><td class='win'>0.185s</td></tr>
+<tr><td></td><td>LLM judge</td><td class=''>0.778</td><td class=''>0.169</td><td class=''>1.363s</td></tr>
+<tr><td>severity</td><td>Decision primitive</td><td class=''>0.778</td><td class=''>0.183</td><td class='win'>0.174s</td></tr>
+<tr><td></td><td>LLM judge</td><td class='win'>0.833</td><td class='win'>0.131</td><td class=''>1.319s</td></tr>
+<tr><td>is_escalation</td><td>Decision primitive</td><td class=''>1.000</td><td class='win'>0.002</td><td class='win'>0.147s</td></tr>
+<tr><td></td><td>LLM judge</td><td class=''>1.000</td><td class=''>0.005</td><td class=''>1.297s</td></tr></tbody>
+</table>
+<p class="note">Green = better on that column for that dimension. Latency is the one metric that wins
+consistently for the decision primitive across every dimension (~7-9x faster). Accuracy splits one
+dimension each way (<code>department</code> to the decision primitive, <code>severity</code> to the judge).
+The Brier score (a correctness-Brier, not an independent calibration measure — see caveats) follows the
+same accuracy split, plus a decision-primitive edge on <code>is_escalation</code>; but both approaches are
+already at 100% accuracy there, so treat that Brier gap as noise rather than a real calibration win.</p>
+<p class="note"><strong>Cost:</strong> not comparable — the Anthropic pricing table in this codebase has no
+rate for <code>claude-sonnet-4-5-20250929</code>, so <code>cost_usd</code> came back empty for the judge side.
+Token counts (per-dimension cards below) are the fallback proxy; they don't move in one consistent
+direction — the decision primitive uses ~28% more tokens on <code>department</code> (432 vs 338) but fewer
+on <code>is_escalation</code> (349 vs 288) — so the latency gap is real generation/round-trip time, not
+explained by a token-volume difference either way.</p>
+
+<div class="panel caveat">
+<h2 class="plain" style="margin-top:0.25rem;border:none;padding:0">Caveats — read before trusting the numbers</h2>
+<ul>
+  <li><strong>n=18.</strong> One flipped case moves accuracy ~5.5 points. Don't read the accuracy deltas
+  above as a precise, reproducible gap.</li>
+  <li><strong>One task family, one rubric style.</strong> Fixed-category/fixed-rubric decisions on short
+  (1-3 sentence) text only. Nothing here covers long documents, multi-turn context, or open-ended judgment.</li>
+  <li><strong>No cost comparison</strong> — unresolved, not "roughly equal."</li>
+  <li><strong>Single judge model.</strong> A different model or prompt could change accuracy without
+  changing the latency conclusion.</li>
+  <li><strong>Confidence isn't collected the same way on both sides.</strong> The decision primitive's
+  confidence is a real probability from TypeSafe; the judge's is a verbalized, clustered self-report. Brier
+  scores compare these two differently-shaped numbers, not two instances of the same measurement.</li>
+  <li><strong>Brier score here conflates accuracy and calibration.</strong> It's a correctness-Brier
+  (confidence vs. right/wrong), not an independent calibration signal — a dimension where one approach
+  "wins" both accuracy and Brier is really one underlying win, not two.</li>
+  <li><strong>n=1-2 calibration buckets are not meaningful evidence</strong> of calibration quality — they're
+  shown for transparency, not as a signal to act on.</li>
+</ul>
+</div>
+
+<div class="panel use">
+<h2 class="plain" style="margin-top:0.25rem;border:none;padding:0">Where to use decision primitives</h2>
+<ul>
+  <li>Fixed-rubric classification/rating on short inputs where latency matters — ticket routing, inline
+  content flags, per-turn conversation tagging, hot-path or high-volume decisions.</li>
+  <li>Decisions where the criteria are genuinely enumerable — a closed category set, or an ordered scale
+  with a description per level.</li>
+  <li>Batched/composite checks — <code>DecisionCompositeMetric</code> folds several sub-checks sharing one
+  input into a single provider call. This report only tested one unbatched call per dimension, so the claim
+  that batching compounds the latency advantage further is a reasonable expectation, not something this
+  report measured — treat it as speculative until tested.</li>
+</ul>
+</div>
+
+<div class="panel">
+<h2 class="plain" style="margin-top:0.25rem;border:none;padding:0">How to use them</h2>
+<ul>
+  <li>Write <code>criteria</code> as a closed, mutually-exclusive set (Choice), an ordered rubric with a
+  description per level (Score), or one unambiguous yes/no condition (Noul) — not an open instruction.</li>
+  <li>Use <code>mode="correctness"</code> against a golden <code>expected</code> when labels exist (as
+  here); use <code>mode="confidence"</code> when they don't, and treat the self-reported probability as a
+  calibration signal rather than pass/fail.</li>
+  <li>Spot-check calibration per use case — this report shows it varies by dimension, so it doesn't
+  transfer automatically.</li>
+</ul>
+</div>
+
+<div class="panel avoid">
+<h2 class="plain" style="margin-top:0.25rem;border:none;padding:0">Where NOT to use decision primitives</h2>
+<ul>
+  <li><strong>Open-ended judgment</strong> — free-text critique, "is this response helpful," rubric-free
+  quality assessment. That's what <code>GEval</code>/<code>RubricJudge</code> are for; decision primitives
+  don't attempt it and were not tested against them for that kind of task.</li>
+  <li><strong>Tasks needing an explanation/rationale.</strong> Decision primitives return a
+  choice/score/bool plus a confidence, not natural-language reasoning. If a human reviewer or audit trail
+  needs the "why," use an LLM judge.</li>
+  <li><strong>As the sole basis for a go/no-go call at this sample size.</strong> This is a first data
+  point, not a benchmark suite — don't cite these exact numbers in a procurement or design decision.</li>
+</ul>
+</div>
+
+<div class="bottom-line">
+<strong>Bottom line:</strong> for this one task family — short, fixed-rubric classification — decision
+primitives were dramatically faster and roughly accuracy-competitive (better on <code>department</code>,
+worse on <code>severity</code>, both at 100% on <code>is_escalation</code>). That's a real, if narrow,
+efficiency argument for structured, high-volume classification work. It is not evidence they should replace LLM-as-judge metrics generally, and says nothing about
+open-ended judgment tasks, where LLM-as-judge remains the only tool of the two. No production-wiring
+decision follows from this pass.
+</div>
+
+<h2>Per-dimension detail</h2>
+<section><h2>department</h2><div class="cards">
+    <div class="card">
+      <h3>Decision primitive <span class="n">(n=18)</span></h3>
+      <table class="metrics">
+        <tr><td>Accuracy</td><td>0.889</td></tr>
+        <tr><td>Brier score</td><td>0.0867</td></tr>
+        <tr><td>Mean latency</td><td>0.185s <div class="bar-track" style="width:160px"><div class="bar-fill" style="width:13.6%"></div></div></td></tr>
+        <tr><td>Mean tokens</td><td>432</td></tr>
+        
+      </table>
+      <table class="calibration">
+        <thead><tr><th>Confidence bucket</th><th>n</th><th>Mean confidence</th><th>Observed accuracy</th></tr></thead>
+        <tbody><tr><td>0.5-0.6</td><td>1</td><td>0.510</td><td>1.000</td></tr>
+<tr><td>0.6-0.7</td><td>1</td><td>0.650</td><td>0.000</td></tr>
+<tr><td>0.7-0.8</td><td>1</td><td>0.710</td><td>1.000</td></tr>
+<tr><td>0.9-1.0</td><td>15</td><td>0.987</td><td>0.933</td></tr></tbody>
+      </table>
+    </div>
+    
+
+    <div class="card">
+      <h3>LLM judge <span class="n">(n=18)</span></h3>
+      <table class="metrics">
+        <tr><td>Accuracy</td><td>0.778</td></tr>
+        <tr><td>Brier score</td><td>0.1693</td></tr>
+        <tr><td>Mean latency</td><td>1.363s <div class="bar-track" style="width:160px"><div class="bar-fill" style="width:100.0%"></div></div></td></tr>
+        <tr><td>Mean tokens</td><td>338</td></tr>
+        
+      </table>
+      <table class="calibration">
+        <thead><tr><th>Confidence bucket</th><th>n</th><th>Mean confidence</th><th>Observed accuracy</th></tr></thead>
+        <tbody><tr><td>0.8-0.9</td><td>3</td><td>0.850</td><td>0.000</td></tr>
+<tr><td>0.9-1.0</td><td>15</td><td>0.950</td><td>0.933</td></tr></tbody>
+      </table>
+    </div>
+    </div></section><section><h2>severity</h2><div class="cards">
+    <div class="card">
+      <h3>Decision primitive <span class="n">(n=18)</span></h3>
+      <table class="metrics">
+        <tr><td>Accuracy</td><td>0.778</td></tr>
+        <tr><td>Brier score</td><td>0.1830</td></tr>
+        <tr><td>Mean latency</td><td>0.174s <div class="bar-track" style="width:160px"><div class="bar-fill" style="width:13.2%"></div></div></td></tr>
+        <tr><td>Mean tokens</td><td>392</td></tr>
+        
+      </table>
+      <table class="calibration">
+        <thead><tr><th>Confidence bucket</th><th>n</th><th>Mean confidence</th><th>Observed accuracy</th></tr></thead>
+        <tbody><tr><td>0.5-0.6</td><td>3</td><td>0.517</td><td>0.667</td></tr>
+<tr><td>0.7-0.8</td><td>1</td><td>0.760</td><td>1.000</td></tr>
+<tr><td>0.8-0.9</td><td>1</td><td>0.840</td><td>0.000</td></tr>
+<tr><td>0.9-1.0</td><td>13</td><td>0.968</td><td>0.846</td></tr></tbody>
+      </table>
+    </div>
+    
+
+    <div class="card">
+      <h3>LLM judge <span class="n">(n=18)</span></h3>
+      <table class="metrics">
+        <tr><td>Accuracy</td><td>0.833</td></tr>
+        <tr><td>Brier score</td><td>0.1314</td></tr>
+        <tr><td>Mean latency</td><td>1.319s <div class="bar-track" style="width:160px"><div class="bar-fill" style="width:100.0%"></div></div></td></tr>
+        <tr><td>Mean tokens</td><td>366</td></tr>
+        
+      </table>
+      <table class="calibration">
+        <thead><tr><th>Confidence bucket</th><th>n</th><th>Mean confidence</th><th>Observed accuracy</th></tr></thead>
+        <tbody><tr><td>0.8-0.9</td><td>11</td><td>0.850</td><td>0.727</td></tr>
+<tr><td>0.9-1.0</td><td>7</td><td>0.954</td><td>1.000</td></tr></tbody>
+      </table>
+    </div>
+    </div></section><section><h2>is_escalation</h2><div class="cards">
+    <div class="card">
+      <h3>Decision primitive <span class="n">(n=18)</span></h3>
+      <table class="metrics">
+        <tr><td>Accuracy</td><td>1.000</td></tr>
+        <tr><td>Brier score</td><td>0.0023</td></tr>
+        <tr><td>Mean latency</td><td>0.147s <div class="bar-track" style="width:160px"><div class="bar-fill" style="width:11.3%"></div></div></td></tr>
+        <tr><td>Mean tokens</td><td>349</td></tr>
+        
+      </table>
+      <table class="calibration">
+        <thead><tr><th>Confidence bucket</th><th>n</th><th>Mean confidence</th><th>Observed accuracy</th></tr></thead>
+        <tbody><tr><td>0.8-0.9</td><td>2</td><td>0.875</td><td>1.000</td></tr>
+<tr><td>0.9-1.0</td><td>16</td><td>0.978</td><td>1.000</td></tr></tbody>
+      </table>
+    </div>
+    
+
+    <div class="card">
+      <h3>LLM judge <span class="n">(n=18)</span></h3>
+      <table class="metrics">
+        <tr><td>Accuracy</td><td>1.000</td></tr>
+        <tr><td>Brier score</td><td>0.0046</td></tr>
+        <tr><td>Mean latency</td><td>1.297s <div class="bar-track" style="width:160px"><div class="bar-fill" style="width:100.0%"></div></div></td></tr>
+        <tr><td>Mean tokens</td><td>288</td></tr>
+        
+      </table>
+      <table class="calibration">
+        <thead><tr><th>Confidence bucket</th><th>n</th><th>Mean confidence</th><th>Observed accuracy</th></tr></thead>
+        <tbody><tr><td>0.8-0.9</td><td>2</td><td>0.850</td><td>1.000</td></tr>
+<tr><td>0.9-1.0</td><td>16</td><td>0.957</td><td>1.000</td></tr></tbody>
+      </table>
+    </div>
+    </div></section>
+</body>
+</html>

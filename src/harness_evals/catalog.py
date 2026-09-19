@@ -123,6 +123,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ConversationResolutionMetric,
         CostEfficiencyMetric,
         DAGMetric,
+        DecisionCompositeMetric,
         DiscriminationMetric,
         EmbeddingSimilarityMetric,
         EnvironmentRobustnessMetric,
@@ -208,6 +209,7 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "decision_choice": ChoiceMetric,
         "decision_score": ScoreMetric,
         "decision_noul": NoulMetric,
+        "decision_composite": DecisionCompositeMetric,
         # Similarity
         "levenshtein": LevenshteinMetric,
         "bleu": BLEUMetric,

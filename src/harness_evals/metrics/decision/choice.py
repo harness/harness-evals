@@ -8,7 +8,7 @@ from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ChoiceQuestion
-from harness_evals.metrics.decision._common import _MISSING, resolve_mode, resolve_state
+from harness_evals.metrics.decision._common import _MISSING, resolve_mode, resolve_state, score_choice
 
 
 class ChoiceMetric(BaseMetric):
@@ -54,24 +54,18 @@ class ChoiceMetric(BaseMetric):
                 reason=f"Missing state field '{self.state_field}'",
             )
 
-        effective_mode = resolve_mode(self.mode, eval_case)
+        effective_mode = resolve_mode(self.mode, eval_case.expected)
         question = ChoiceQuestion(instructions=self.instructions, criteria=self.criteria)
         response = await self.provider.a_ask(state, {self.name: question})
         answer = response.answers[self.name]
 
-        metadata: dict[str, object] = {
-            "choice": answer.choice,
-            "confidence": answer.confidence,
-            "probabilities": answer.probabilities,
-            "mode": effective_mode,
-            "model": response.model,
-            "input_tokens": response.input_tokens,
-            "output_tokens": response.output_tokens,
-        }
-
-        if effective_mode == "correctness":
-            value = 1.0 if answer.choice == eval_case.expected else 0.0
-        else:
-            value = max(0.0, min(1.0, answer.confidence))
+        value, metadata = score_choice(answer, effective_mode, eval_case.expected)
+        metadata.update(
+            {
+                "model": response.model,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+            }
+        )
 
         return Score(name=self.name, value=value, threshold=self.threshold, metadata=metadata)

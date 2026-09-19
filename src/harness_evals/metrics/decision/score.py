@@ -8,7 +8,7 @@ from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ScoreQuestion
-from harness_evals.metrics.decision._common import _MISSING, level_norm, resolve_mode, resolve_state
+from harness_evals.metrics.decision._common import _MISSING, resolve_mode, resolve_state, score_rubric
 
 
 class ScoreMetric(BaseMetric):
@@ -56,34 +56,22 @@ class ScoreMetric(BaseMetric):
                 reason=f"Missing state field '{self.state_field}'",
             )
 
-        effective_mode = resolve_mode(self.mode, eval_case)
+        effective_mode = resolve_mode(self.mode, eval_case.expected)
         question = ScoreQuestion(instructions=self.instructions, criteria=self.criteria)
         response = await self.provider.a_ask(state, {self.name: question})
         answer = response.answers[self.name]
         num_levels = len(self.criteria)
 
-        metadata: dict[str, object] = {
-            "score": answer.score,
-            "confidence": answer.confidence,
-            "legend": answer.legend,
-            "probabilities": answer.probabilities,
-            "mode": effective_mode,
-            "model": response.model,
-            "input_tokens": response.input_tokens,
-            "output_tokens": response.output_tokens,
-        }
+        try:
+            value, metadata = score_rubric(answer, effective_mode, eval_case.expected, num_levels)
+        except ValueError as e:
+            raise ValueError(f"ScoreMetric {e}") from e
+        metadata.update(
+            {
+                "model": response.model,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+            }
+        )
 
-        if effective_mode == "correctness":
-            expected = eval_case.expected
-            if not isinstance(expected, int | float) or isinstance(expected, bool):
-                raise ValueError(f"ScoreMetric expected must be a numeric rubric level (0-indexed), got {expected!r}")
-            if not (0 <= expected <= num_levels - 1):
-                raise ValueError(
-                    f"ScoreMetric expected level {expected} is out of range for {num_levels} criteria "
-                    f"(valid range: 0-{num_levels - 1})"
-                )
-            value = 1.0 - abs(level_norm(answer.score, num_levels) - level_norm(expected, num_levels))
-        else:
-            value = max(0.0, min(1.0, answer.confidence))
-
-        return Score(name=self.name, value=max(0.0, min(1.0, value)), threshold=self.threshold, metadata=metadata)
+        return Score(name=self.name, value=value, threshold=self.threshold, metadata=metadata)

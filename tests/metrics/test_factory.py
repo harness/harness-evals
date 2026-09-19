@@ -403,6 +403,24 @@ class TestBuildDecisionMetric:
                 {"kind": "decision_noul", "instructions": "?", "metadata": {"provider": "acme"}},
             )
 
+    def test_decision_provider_instance_rejected_when_code_loading_disallowed(self):
+        from harness_evals.decision.base import BaseDecisionProvider
+
+        provider = AsyncMock(spec=BaseDecisionProvider)
+        with pytest.raises(ValueError, match="not allowed in server-side/online execution"):
+            build_metric(
+                "decision",
+                {"kind": "decision_noul", "instructions": "?", "metadata": {"provider_instance": provider}},
+                allow_code_loading=False,
+            )
+
+    def test_decision_provider_instance_must_be_base_decision_provider(self):
+        with pytest.raises(ValueError, match="must be a BaseDecisionProvider"):
+            build_metric(
+                "decision",
+                {"kind": "decision_noul", "instructions": "?", "metadata": {"provider_instance": object()}},
+            )
+
 
 class TestHeuristicCompatibility:
     @pytest.mark.parametrize("kind", ["contains", "exact_match", "regex"])

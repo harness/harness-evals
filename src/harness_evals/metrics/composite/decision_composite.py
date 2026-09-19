@@ -11,66 +11,25 @@ from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ChoiceQuestion, NoulQuestion, Question, ScoreQuestion
 from harness_evals.metrics.composite._combine import fold_sub_scores
-from harness_evals.metrics.decision._common import level_norm, parse_bool_expected
+from harness_evals.metrics.decision._common import resolve_mode, score_choice, score_noul, score_rubric
 from harness_evals.utils.path import extract_path
-
-
-def _resolve_sub_mode(explicit_mode: str | None, expected: Any) -> str:
-    if explicit_mode == "correctness" and expected is None:
-        raise ValueError("mode='correctness' requires an expected value (via expected_field)")
-    if explicit_mode is not None:
-        return explicit_mode
-    return "correctness" if expected is not None else "confidence"
 
 
 def _score_answer(
     question: Question, answer: Any, mode: str, expected: Any, invert: bool
 ) -> tuple[float, dict[str, Any]]:
+    """Score one batched sub-check's answer, dispatching by question type.
+
+    Shares scoring logic with the standalone ``ChoiceMetric``/``ScoreMetric``/
+    ``NoulMetric`` via ``metrics/decision/_common.py`` so a fix to correctness
+    semantics only needs to land in one place.
+    """
     if isinstance(question, ChoiceQuestion):
-        metadata: dict[str, Any] = {
-            "choice": answer.choice,
-            "confidence": answer.confidence,
-            "probabilities": answer.probabilities,
-            "mode": mode,
-        }
-        if mode == "correctness":
-            value = 1.0 if answer.choice == expected else 0.0
-        else:
-            value = max(0.0, min(1.0, answer.confidence))
-        return value, metadata
-
+        return score_choice(answer, mode, expected)
     if isinstance(question, ScoreQuestion):
-        num_levels = len(question.criteria)
-        metadata = {
-            "score": answer.score,
-            "confidence": answer.confidence,
-            "legend": answer.legend,
-            "probabilities": answer.probabilities,
-            "mode": mode,
-        }
-        if mode == "correctness":
-            if not isinstance(expected, int | float) or isinstance(expected, bool):
-                raise ValueError(f"ScoreQuestion expected must be a numeric rubric level (0-indexed), got {expected!r}")
-            if not (0 <= expected <= num_levels - 1):
-                raise ValueError(
-                    f"ScoreQuestion expected level {expected} is out of range for {num_levels} criteria "
-                    f"(valid range: 0-{num_levels - 1})"
-                )
-            value = 1.0 - abs(level_norm(answer.score, num_levels) - level_norm(expected, num_levels))
-        else:
-            value = answer.confidence
-        return max(0.0, min(1.0, value)), metadata
-
+        return score_rubric(answer, mode, expected, len(question.criteria))
     if isinstance(question, NoulQuestion):
-        noul = max(0.0, min(1.0, answer.noul))
-        metadata = {"noul": noul, "mode": mode}
-        if mode == "correctness":
-            expected_bool = parse_bool_expected(expected)
-            value = 1.0 if (noul >= 0.5) == expected_bool else 0.0
-        else:
-            value = noul if not invert else 1.0 - noul
-        return value, metadata
-
+        return score_noul(answer, mode, expected, invert)
     raise TypeError(f"Unknown question type: {type(question)!r}")
 
 
@@ -164,7 +123,7 @@ class DecisionCompositeMetric(BaseMetric):
                 expected = extract_path(eval_case_dict, expected_field) if expected_field else None
 
                 try:
-                    mode = _resolve_sub_mode(sub.get("mode"), expected)
+                    mode = resolve_mode(sub.get("mode"), expected)
                     value, metadata = _score_answer(question, answer, mode, expected, sub.get("invert", False))
                 except ValueError as e:
                     results[sub_name] = {"value": 0.0, "status": "error", "reason": str(e)}

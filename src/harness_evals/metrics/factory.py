@@ -21,6 +21,7 @@ from typing import Any, get_args, get_origin, get_type_hints
 
 from harness_evals import BaseMetric, Dimension, EvalCase, Score
 from harness_evals.catalog import catalog
+from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.llm.openai_embedding import OpenAIEmbedding
 from harness_evals.metrics import AnswerCorrectnessMetric, GEvalMetric, RubricJudgeMetric
 
@@ -153,7 +154,7 @@ def build_metric(
             effective_config, score_name, threshold, suite_path, allow_code_loading=allow_code_loading
         )
     elif metric_type == "decision":
-        metric = _build_decision_metric(effective_config, score_name, threshold)
+        metric = _build_decision_metric(effective_config, score_name, threshold, allow_code_loading=allow_code_loading)
     else:
         raise ValueError(f"Unknown metric type: {metric_type!r}")
 
@@ -660,11 +661,21 @@ def build_embedding_provider(metadata: dict[str, Any]) -> OpenAIEmbedding:
     )
 
 
-def build_decision_provider(config: dict[str, Any]) -> Any:
+def build_decision_provider(config: dict[str, Any], *, allow_code_loading: bool = True) -> Any:
     """Instantiate the correct decision-primitive provider from config metadata."""
     metadata = config.get("metadata", {})
-    if metadata.get("provider_instance") is not None:
-        return metadata["provider_instance"]
+    provider_instance = metadata.get("provider_instance")
+    if provider_instance is not None:
+        if not allow_code_loading:
+            raise ValueError(
+                "A pre-built 'provider_instance' is not allowed in server-side/online execution. "
+                "Use the CLI or SDK to run decision metrics with a custom provider locally."
+            )
+        if not isinstance(provider_instance, BaseDecisionProvider):
+            raise ValueError(
+                f"metadata['provider_instance'] must be a BaseDecisionProvider, got {type(provider_instance)!r}"
+            )
+        return provider_instance
 
     provider = metadata.get("provider", "typesafe")
     if provider != "typesafe":
@@ -785,6 +796,8 @@ def _build_decision_metric(
     config: dict[str, Any],
     score_name: str | None,
     threshold: float,
+    *,
+    allow_code_loading: bool = True,
 ) -> BaseMetric:
     kind = config.get("kind")
     if not kind:
@@ -795,7 +808,7 @@ def _build_decision_metric(
         raise ValueError(f"Unknown decision kind: {kind!r}. Available: {sorted(registry.keys())}")
 
     metric_class = registry[kind]
-    provider = build_decision_provider(config)
+    provider = build_decision_provider(config, allow_code_loading=allow_code_loading)
     options = config.get("options") or {}
 
     kind_kwargs: dict[str, Any] = {}

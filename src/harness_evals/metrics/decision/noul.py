@@ -8,7 +8,7 @@ from harness_evals.core.metric import BaseMetric, Dimension
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import NoulQuestion
-from harness_evals.metrics.decision._common import _MISSING, parse_bool_expected, resolve_mode, resolve_state
+from harness_evals.metrics.decision._common import _MISSING, resolve_mode, resolve_state, score_noul
 
 
 class NoulMetric(BaseMetric):
@@ -56,24 +56,18 @@ class NoulMetric(BaseMetric):
                 reason=f"Missing state field '{self.state_field}'",
             )
 
-        effective_mode = resolve_mode(self.mode, eval_case)
+        effective_mode = resolve_mode(self.mode, eval_case.expected)
         question = NoulQuestion(instructions=self.instructions, criteria=self.criteria)
         response = await self.provider.a_ask(state, {self.name: question})
         answer = response.answers[self.name]
-        noul = max(0.0, min(1.0, answer.noul))
 
-        metadata: dict[str, object] = {
-            "noul": noul,
-            "mode": effective_mode,
-            "model": response.model,
-            "input_tokens": response.input_tokens,
-            "output_tokens": response.output_tokens,
-        }
-
-        if effective_mode == "correctness":
-            expected_bool = parse_bool_expected(eval_case.expected)
-            value = 1.0 if (noul >= 0.5) == expected_bool else 0.0
-        else:
-            value = noul if not self.invert else 1.0 - noul
+        value, metadata = score_noul(answer, effective_mode, eval_case.expected, self.invert)
+        metadata.update(
+            {
+                "model": response.model,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+            }
+        )
 
         return Score(name=self.name, value=value, threshold=self.threshold, metadata=metadata)

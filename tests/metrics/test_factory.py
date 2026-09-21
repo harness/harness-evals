@@ -744,6 +744,27 @@ class TestBuildLLMProviderGatewayRouting:
 
 
 class TestBuildEmbeddingProviderGatewayRouting:
+    def test_bedrock_embedding_uses_aws_default_region(self, monkeypatch):
+        captured: dict = {}
+
+        def capture(**kwargs):
+            captured.update(kwargs)
+            return AsyncMock()
+
+        monkeypatch.setattr(factory, "OpenAIEmbedding", capture)
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "sa-east-1")
+
+        factory.build_embedding_provider(
+            {
+                "provider": "bedrock_openai",
+                "api_key": "bedrock-bearer",
+                "embedding_model": "amazon.titan-embed-text-v2:0",
+            }
+        )
+
+        assert captured["base_url"] == "https://bedrock-runtime.sa-east-1.amazonaws.com/openai/v1"
+
     def test_use_llm_gateway_returns_harness_gateway_embedding(self, monkeypatch):
         import sys
         from unittest.mock import MagicMock

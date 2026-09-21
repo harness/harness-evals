@@ -628,7 +628,12 @@ def build_embedding_provider(metadata: dict[str, Any]) -> OpenAIEmbedding:
 
     # 3. OpenAI via Bedrock — same bearer, Bedrock OpenAI-compat endpoint.
     if provider in ("bedrock_openai", "openai") and (provider == "bedrock_openai" or metadata.get("bedrock")):
-        region = metadata.get("region") or os.environ.get("AWS_REGION") or "us-east-1"
+        region = (
+            metadata.get("region")
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+            or "us-east-1"
+        )
         base_url = f"https://bedrock-runtime.{region}.amazonaws.com/openai/v1"
         api_key = metadata.get("api_key")
         if not api_key:

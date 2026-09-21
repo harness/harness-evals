@@ -5,6 +5,20 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0]
+
+### Added
+
+- **Observed-usage pricing**: `harness_evals.cost` prices provider-reported
+  input, output, cache-read, and cache-write usage from a caller-supplied,
+  serializable resolved-rate-card snapshot. Resolution is backend-neutral and
+  offline, with explicit incomplete results and provenance when identity,
+  usage, or rates cannot be resolved unambiguously.
+- **Docs**: `docs/cost-guide.md` covers snapshot supply, alias/rate resolution,
+  strict dimension matching, and incomplete-result handling.
+  `docs/adr/011-observed-cost-only.md` records why cost is observed and
+  caller-supplied rather than estimated or bundled.
+
 ## [0.22.0]
 
 ### Added
@@ -65,7 +79,6 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   previously had no way to reach the runtime metric instance — every score was tagged with
   whichever dimension the metric class declared, regardless of what the caller
   had configured.
-
 ## [0.20.0]
 
 ### Added

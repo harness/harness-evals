@@ -149,6 +149,8 @@ See [docs/adr/](adr/) for Architecture Decision Records explaining key choices:
 - ADR-007: Why Golden and EvalCase are separate types
 - ADR-008: Why `measure_dataset` instead of `evaluate_batch`
 - ADR-009: Why every metric belongs to exactly one of five dimensions
+- ADR-010: Why tool argument matching is a separate metric
+- ADR-011: Why cost is observed and caller-supplied, never estimated or bundled
 
 ## Module Dependency Graph
 
@@ -175,6 +177,7 @@ harness_evals/
 ├── llm/           ← [Phase 2] depends on nothing (ABC + optional providers)
 ├── baseline/      ← depends on core.score
 ├── synthesizer/   ← depends on llm/, core.eval_case
+├── cost/          ← depends on nothing (stdlib + Decimal); no price data, no network
 └── perturbations/ ← deterministic + LLM-based
 ```
 

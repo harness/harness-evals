@@ -6,6 +6,7 @@ import pytest
 
 from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
 from harness_evals.core.types import Message
+from harness_evals.errors import TargetInvocationError
 from harness_evals.targets.conversational_streaming_http import ConversationalStreamingHttpTarget
 
 
@@ -274,3 +275,31 @@ async def test_conversational_streaming_target_isolates_sessions_between_batch_t
             "stream": True,
         },
     ]
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_raises_on_error_only_stream(monkeypatch):
+    # A 200 SSE response whose only meaningful frame is a structured `error`
+    # event (no assistant_message) must fail loudly via agenerate too.
+    target = _harness_target()
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        return (
+            _sse(
+                [
+                    (
+                        "error",
+                        {"message": "Something went wrong processing your request.", "response_code": 500},
+                    ),
+                    ("done", {}),
+                ]
+            ),
+            "text/event-stream",
+            12.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+
+    with pytest.raises(TargetInvocationError, match="Something went wrong processing your request"):
+        await target.agenerate([Message(role="user", content="Create a k8s connector")])

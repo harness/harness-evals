@@ -5,6 +5,23 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.1]
+
+### Fixed
+
+- **`StreamingHttpTarget`/`ConversationalStreamingHttpTarget` now surface in-band SSE
+  `error` events as target failures**: a `200 OK` `text/event-stream` response whose only
+  meaningful frame is a structured `event: error` (e.g. `{"message": "...",
+  "response_code": 500}`) with no content event previously produced a clean, empty
+  `EvalCase`/`Message` — scoring silently as a blank answer instead of failing the item.
+  Both now raise `TargetInvocationError` when the computed output is empty and a
+  dict-payload `error` event was captured, giving a loud, actionable failure with the
+  backend's own error message. A stream that ends with the benign bare-string `eof`
+  terminator (`event: error` / `data: eof`), or that produced real output alongside a
+  trailing error frame, is unaffected. `error` events are now always captured into
+  `metadata["sse_events"]` even when an explicit `capture_events` list is configured,
+  since detection depends on seeing them.
+
 ## [0.23.0]
 
 ### Added

@@ -64,7 +64,10 @@ class StreamingHttpTarget(BaseTarget):
             ``metadata["sse_events"]`` as ``{event_name: [payloads...]}`` so
             metrics can evaluate across multiple events. Default (unset/``None``)
             captures *all* events. Provide an explicit list to capture only those
-            events; an explicit empty list (``[]``) captures nothing.
+            events; an explicit empty list (``[]``) captures nothing. ``error``
+            events are always captured in addition to the configured list —
+            they drive in-band error detection (see below) regardless of what
+            success-path events an author opted into.
         output_event: Which event carries the primary ``EvalCase.output``. When
             set, the last payload of that event is used (then ``output_path``
             within it if it is a dict/list). When unset, output is auto-selected:
@@ -171,6 +174,13 @@ class StreamingHttpTarget(BaseTarget):
             )
 
         output, kwargs, metadata_extra, extract_source = self._process_response(raw_body, content_type, golden.input)
+        if not output:
+            stream_error = _detect_stream_error(metadata_extra.get("sse_events") if metadata_extra else None)
+            if stream_error is not None:
+                raise TargetInvocationError(
+                    f"streaming target returned an error event: {stream_error}",
+                    latency_ms=latency_ms,
+                )
         extracted_context = kwargs.pop("context", None)
         # A reported trajectory (messages_path) is authoritative; otherwise
         # assemble a best-effort trace from the input, any captured tool calls,
@@ -349,7 +359,11 @@ class StreamingHttpTarget(BaseTarget):
         if self.capture_events is None:
             wanted: set[str] | None = None  # capture everything
         else:
-            wanted = set(self.capture_events)
+            # Always capture `error` events regardless of the configured
+            # subset — error-event detection (see `_detect_stream_error`)
+            # must see them even when the author scoped `capture_events` down
+            # to a handful of success-path event names.
+            wanted = set(self.capture_events) | {"error"}
         captured: dict[str, list] = {}
         timeline: list[dict[str, object]] = []
         for name, payload in decoded:
@@ -543,6 +557,26 @@ def _decode(data: str) -> object:
         return json.loads(data)
     except (json.JSONDecodeError, ValueError):
         return data
+
+
+def _detect_stream_error(sse_events: dict[str, list] | None) -> str | None:
+    """Look for a structured ``error`` SSE event among captured events.
+
+    Returns a message when an ``error``-named event carries a dict payload
+    (e.g. ``{"message": "...", "response_code": 500}``). Ignores non-dict
+    payloads — notably the bare-string ``eof`` sentinel some backends emit as
+    a benign stream terminator (``event: error`` / ``data: eof``) — so a
+    normal end of stream never false-positives as a target failure.
+    """
+    if not sse_events:
+        return None
+    error_payloads = sse_events.get("error")
+    if not error_payloads:
+        return None
+    for payload in reversed(error_payloads):
+        if isinstance(payload, dict):
+            return str(payload.get("message") or payload.get("error") or payload)
+    return None
 
 
 def _event_matches(event_name: str, selector: str | list[str] | None) -> bool:

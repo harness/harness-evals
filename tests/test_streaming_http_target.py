@@ -810,6 +810,61 @@ async def test_sse_reconstruction_yields_to_reported_messages(monkeypatch: pytes
 
 
 # ---------------------------------------------------------------------------
+# In-band SSE error surfacing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_sse_error_only_stream_raises_target_invocation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 200 response whose only meaningful frame is a structured `error` event
+    # (no content event at all) must fail loudly instead of scoring blank output.
+    body = _sse(
+        'event: error\ndata: {"message": "Something went wrong processing your request.", "response_code": 500}',
+        "event: done\ndata: {}",
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", output_event="assistant_message")
+
+    with pytest.raises(TargetInvocationError, match="Something went wrong processing your request"):
+        await target.ainvoke(Golden(input="hello"))
+
+
+@pytest.mark.unit
+async def test_sse_bare_string_eof_sentinel_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Some backends terminate a *successful* stream with a benign
+    # `event: error` / `data: eof` sentinel (a bare string, not a dict). This
+    # must not be mistaken for a structured error.
+    body = _sse(
+        'event: assistant_message\ndata: {"output": "real answer"}',
+        "event: error\ndata: eof",
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", output_event="assistant_message")
+    result = await target.ainvoke(Golden(input="hello"))
+
+    assert result.output == "real answer"
+
+
+@pytest.mark.unit
+async def test_sse_real_content_with_trailing_error_frame_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A stream that produced a real answer plus a spurious trailing structured
+    # error frame should still be treated as a success — only truly empty
+    # output combined with a structured error should fail.
+    body = _sse(
+        'event: assistant_message\ndata: {"output": "real answer"}',
+        'event: error\ndata: {"message": "partial telemetry failure", "response_code": 500}',
+    )
+    _patch_response(monkeypatch, body)
+
+    target = StreamingHttpTarget(url="http://localhost:8080/run", output_event="assistant_message")
+    result = await target.ainvoke(Golden(input="hello"))
+
+    assert result.output == "real answer"
+
+
+# ---------------------------------------------------------------------------
 # Plugin registration
 # ---------------------------------------------------------------------------
 

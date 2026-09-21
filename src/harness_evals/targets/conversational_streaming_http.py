@@ -15,7 +15,7 @@ from harness_evals.errors import TargetInvocationError
 from harness_evals.logging_config import compact_json
 from harness_evals.plugins import register_target
 from harness_evals.targets.base import ConversationTarget
-from harness_evals.targets.streaming_http import StreamingHttpTarget, _decode, _parse_sse
+from harness_evals.targets.streaming_http import StreamingHttpTarget, _decode, _detect_stream_error, _parse_sse
 from harness_evals.targets.templating import render_headers
 
 logger = logging.getLogger(__name__)
@@ -120,6 +120,13 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
             content_type,
             self._last_user_content(messages),
         )
+        if not output:
+            stream_error = _detect_stream_error(metadata_extra.get("sse_events") if metadata_extra else None)
+            if stream_error is not None:
+                raise TargetInvocationError(
+                    f"streaming target returned an error event: {stream_error}",
+                    latency_ms=latency_ms,
+                )
         decoded = self._decode_stream(raw_body, content_type)
         self._update_session(decoded, session=session)
         pending = self._pending_human_input(decoded)

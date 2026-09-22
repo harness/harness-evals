@@ -474,6 +474,112 @@ class TestCsvSink:
         assert rows[0]["passed"] == "False"
         assert rows[0]["reason"] == "too low"
 
+    def test_conversation_pivot_writes_one_row_per_case(self, tmp_path):
+        path = tmp_path / "conversation.csv"
+        sink = CsvSink(str(path), format="conversation_pivot", label="grok")
+        ec = EvalCase(
+            input="Discover unique SCS component names",
+            output="done",
+            metadata={
+                "golden_id": "code-8710e2d8-discover",
+                "scenario": "Discover unique SCS component names across repositories",
+            },
+        )
+        scores = [
+            Score(name="outcome_goal_accuracy", value=1.0, threshold=0.7),
+            Score(name="conversation_resolution", value=0.95, threshold=0.7),
+            Score(
+                name="runner_v3_usage_budget",
+                value=1.0,
+                threshold=1.0,
+                metadata={
+                    "observed": {
+                        "duration_ms": 45210,
+                        "cost_usd": 0.12,
+                        "tool_count": 17,
+                        "num_turns": 3,
+                    }
+                },
+            ),
+        ]
+        sink.write(scores, ec)
+        sink.finalize()
+
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert len(rows) == 1
+        assert rows[0]["golden_id"] == "code-8710e2d8-discover"
+        assert rows[0]["scenario"] == "Discover unique SCS component names across repositories"
+        assert rows[0]["outcome_goal_accuracy"] == "grok: 1"
+        assert rows[0]["conversation_resolution"] == "grok: 0.95"
+        assert rows[0]["total_duration_ms"] == "grok: 45210"
+        assert rows[0]["total_cost_usd"] == "grok: 0.12"
+        assert rows[0]["total_tool_calls"] == "grok: 17"
+        assert rows[0]["total_turns"] == "grok: 3"
+
+    def test_conversation_pivot_write_metrics(self, tmp_path):
+        path = tmp_path / "write_pivot.csv"
+        sink = CsvSink(
+            str(path),
+            format="conversation_pivot",
+            label="sonnet-5-medium",
+            pivot_metrics=[
+                "outcome_goal_accuracy",
+                "harness_hallucination",
+                "harness_role_violation",
+            ],
+        )
+        ec = EvalCase(
+            input="Create cost category",
+            output="done",
+            metadata={"golden_id": "ce-ccm-write", "scenario": "CCM create"},
+        )
+        scores = [
+            Score(name="outcome_goal_accuracy", value=0.5, threshold=0.7),
+            Score(name="harness_hallucination", value=1.0, threshold=0.7),
+            Score(name="harness_role_violation", value=1.0, threshold=0.9),
+        ]
+        sink.write(scores, ec)
+        sink.finalize()
+
+        with open(path, newline="", encoding="utf-8") as f:
+            row = next(csv.DictReader(f))
+        assert "hallucination" not in row
+        assert row["harness_hallucination"] == "sonnet-5-medium: 1"
+        assert row["harness_role_violation"] == "sonnet-5-medium: 1"
+
+    def test_conversation_pivot_target_error_shows_question_marks(self, tmp_path):
+        path = tmp_path / "conversation_failed.csv"
+        sink = CsvSink(str(path), format="conversation_pivot", label="sonnet-5-medium")
+        ec = EvalCase(
+            input="Trace deployment changes",
+            output="",
+            metadata={
+                "golden_id": "kg-n25pcy9c-deploy-change-pr-gap-readonly",
+                "scenario": "Trace what changed in the most recent deployment",
+                "simulate_error": "401 Unauthorized",
+            },
+        )
+        scores = [
+            Score(
+                name="outcome_goal_accuracy",
+                value=0.0,
+                threshold=0.7,
+                metadata={"target_error": True},
+            ),
+            Score(name="runner_v3_usage_budget", value=0.0, threshold=1.0),
+        ]
+        sink.write(scores, ec)
+        sink.finalize()
+
+        with open(path, newline="", encoding="utf-8") as f:
+            row = next(csv.DictReader(f))
+        assert row["outcome_goal_accuracy"] == "sonnet-5-medium: ?"
+        assert row["runner_v3_usage_budget"] == "sonnet-5-medium: ?"
+        assert row["total_duration_ms"] == "sonnet-5-medium: ?"
+        assert row["total_cost_usd"] == "sonnet-5-medium: ?"
+        assert row["total_tool_calls"] == "sonnet-5-medium: ?"
+
 
 # ---------------------------------------------------------------------------
 # JUnitSink

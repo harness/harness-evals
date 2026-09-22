@@ -5,6 +5,17 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0]
+
+### Added
+
+- **Conversation pivot CSV format**: `CsvSink(format="conversation_pivot",
+  label=...)` writes one row per eval case with labeled metric columns plus
+  conversation totals `total_duration_ms`, `total_cost_usd`, `total_tool_calls`,
+  and `total_turns` from `runner_v3_usage_budget` observed usage (`duration_ms`
+  falls back to `EvalCase.latency_ms`). Supports `pivot_metrics` for write-flow
+  metric name sets.
+
 ## [0.23.1]
 
 ### Fixed

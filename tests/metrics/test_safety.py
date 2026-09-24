@@ -247,6 +247,17 @@ class TestPIIMetric:
         score = PIIMetric(exclude_patterns=[r"_\d{10}\b"]).measure(ec)
         assert score.passed
 
+    def test_long_resource_id_digits_not_flagged_as_phone(self):
+        ec = EvalCase(
+            input="q",
+            output=(
+                "Created connector E2E_AI_K8_Connector_1790183333065 in project "
+                "E2E_UI_AIChatbot_Project_1790183333065."
+            ),
+        )
+        score = PIIMetric().measure(ec)
+        assert score.passed
+
     def test_is_safety_metric(self):
         assert isinstance(PIIMetric(), SafetyMetric)
 
@@ -613,6 +624,41 @@ class TestHallucinationMetric:
         assert score.passed
         assert "assistant_tool_result (harness_execute)" in llm.prompts[0]
         assert "Connection validated" in llm.prompts[0]
+
+    async def test_includes_eval_case_tool_calls_as_reference(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Grounded in top-level tool_calls",
+                "total_claims": 1,
+                "hallucinated_claims": 0,
+                "score": 1.0,
+            }
+        )
+        metric = HallucinationMetric(
+            llm=llm,
+            include_assistant_tool_inputs_as_reference=True,
+            include_assistant_tool_results_as_reference=True,
+        )
+        ec = EvalCase(
+            input="q",
+            output="Found 10 Kubernetes connectors at account scope.",
+            tool_calls=[
+                ToolCall(
+                    name="harness_list",
+                    input={"resource_type": "connector", "filters": {"type": "K8s"}},
+                    output={"total": 10, "items": [{"identifier": "k8s-a"}]},
+                )
+            ],
+        )
+
+        score = await metric.a_measure(ec)
+
+        assert score.passed
+        prompt = llm.prompts[0]
+        assert "assistant_tool_input (harness_list)" in prompt
+        assert "assistant_tool_result (harness_list)" in prompt
+        assert '"total": 10' in prompt
+        assert "Clarifying questions" in prompt
 
     async def test_includes_scenario_metadata_as_reference_when_enabled(self):
         llm = MockLLM(

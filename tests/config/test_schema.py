@@ -170,6 +170,21 @@ class TestValidation:
         with pytest.raises(HarnessEvalsError, match="provider"):
             loads_config("name: x\ndataset: ./g.jsonl\ntarget: {type: http}\nmetrics: [x]\njudge_llm: {name: gpt-4o}")
 
+    def test_model_name_resolves_env_var(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "JUDGE_MODEL_ARN",
+            "arn:aws:bedrock:us-east-1:1:application-inference-profile/test",
+        )
+        cfg = loads_config("""\
+name: x
+dataset: ./g.jsonl
+target: {type: http, url: http://x}
+metrics: [exact_match]
+judge_llm: {provider: bedrock_converse, name: "${JUDGE_MODEL_ARN}"}
+""")
+        assert cfg.judge_llm is not None
+        assert cfg.judge_llm.name == "arn:aws:bedrock:us-east-1:1:application-inference-profile/test"
+
     def test_conversation_requires_llm_for_simulate(self) -> None:
         with pytest.raises(HarnessEvalsError, match="simulator_llm"):
             loads_config("""\

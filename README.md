@@ -568,6 +568,24 @@ ec = OTELEvalCaseSource.from_spans(collected_spans)
 scores = evaluate(ec, metrics=[...])
 ```
 
+Time-window listing and session merge are generic (`lookback_days`,
+`group_by=session_id`). Pass any `TraceCatalog` to list traces; Langfuse is one
+implementation:
+
+```python
+from datetime import datetime, timezone, timedelta
+from harness_evals.importers.langfuse import LangfuseTraceCatalog
+from harness_evals.importers.otel import OTELEvalCaseSource
+from harness_evals.refs import ResourceRef
+
+source = OTELEvalCaseSource(catalog=LangfuseTraceCatalog(langfuse_client))
+cases = await source.fetch(ResourceRef(
+    source="otel",
+    id="",
+    extra={"lookback_days": 7, "group_by": "session_id", "limit": 200},
+))
+```
+
 > **Note:** The previous import paths (`from harness_evals.sources.langfuse import LangfuseSource`
 > and `from harness_evals.sources.otel import OTELSource`) still work but emit a
 > `DeprecationWarning`. Migrate to the `importers` paths shown above.

@@ -13,6 +13,8 @@ _DEFAULT_EXCLUDE_PATTERNS: tuple[str, ...] = (
     r"toolu_[A-Za-z0-9_]+",
     r"\btool_[A-Za-z0-9]{16,}\b",
     r"\bcall_[A-Za-z0-9]{16,}\b",
+    # Harness resource suffixes / epoch millis (11+ digits) are not phone numbers.
+    r"\d{11,}",
 )
 
 _PII_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -24,11 +26,13 @@ _PII_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     # Phone: international (+country-code) or US/Canadian 10-digit format.
+    # Digit-boundary guards stop matching 10-digit slices inside longer IDs
+    # (e.g. E2E resource suffixes like …1790183333065).
     "phone": re.compile(
         r"(?:"
-        r"\+\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}"
+        r"(?<!\d)\+\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}(?!\d)"
         r"|"
-        r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"
+        r"(?<!\d)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)"
         r")"
     ),
     "credit_card": re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b"),

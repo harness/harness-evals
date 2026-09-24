@@ -5,6 +5,26 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1]
+
+### Added
+
+- **Online QA conversation eval path**: `TraceCatalog` / `LangfuseTraceCatalog`,
+  OTEL `lookback_days` + `group_by=session_id` session merge, conversation-pivot
+  CSV duration/cost/tool totals, and structured `ConversationResolutionMetric`
+  statuses (`resolved`, `waiting_user`, `partial`, `unsatisfactory`,
+  `blocked_error`, `abandoned`, `insufficient_evidence`).
+
+### Fixed
+
+- **`HallucinationMetric`**: treat tool I/O as ground truth; exclude clarifying /
+  HITL questions; ground on `eval_case.tool_calls` as well as message-embedded calls.
+- **`PIIMetric`**: digit-boundary phone matching and strip of 11+ digit resource IDs.
+- **`evaluate()` judge spend**: sync path records token/cost metadata (parity with
+  `a_evaluate()`).
+- **Langfuse → OTEL**: stamp observation cost/tokens and trace I/O onto spans;
+  keep fuller tool results for hallucination grounding.
+
 ## [0.24.0]
 
 ### Added

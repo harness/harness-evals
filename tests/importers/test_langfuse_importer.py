@@ -25,6 +25,7 @@ class _FakeTrace:
     metadata: dict | None = field(default_factory=lambda: {"env": "test"})
     start_time: datetime | None = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc))
     end_time: datetime | None = field(default_factory=lambda: datetime(2025, 1, 1, 0, 0, 1, tzinfo=timezone.utc))
+    session_id: str | None = None
 
 
 @dataclass
@@ -35,6 +36,10 @@ class _FakeObservation:
     output: Any = None
     usage_details: dict | None = None
     total_cost: float | None = None
+    id: str | None = "obs-1"
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    parent_observation_id: str | None = None
 
 
 @dataclass
@@ -168,11 +173,16 @@ class TestLangfuseEvalCaseSourceFromTrace:
 @dataclass
 class _FakeTraceListItem:
     id: str = "trace-1"
+    session_id: str | None = None
+    timestamp: datetime | None = None
 
 
 @dataclass
 class _FakePageMeta:
-    next_cursor: str | None = None
+    page: int = 1
+    total_pages: int = 1
+    limit: int = 100
+    total_items: int = 0
 
 
 @dataclass
@@ -222,12 +232,20 @@ class TestLangfuseEvalCaseSourceFromTraces:
         assert call_kwargs.kwargs.get("tags") == ["prod"] or call_kwargs[1].get("tags") == ["prod"]
 
     def test_pagination(self):
-        page1 = _FakeTracePage(data=[_FakeTraceListItem(id="t1")], meta=_FakePageMeta(next_cursor="cursor_2"))
-        page2 = _FakeTracePage(data=[_FakeTraceListItem(id="t2")])
+        page1 = _FakeTracePage(
+            data=[_FakeTraceListItem(id="t1")],
+            meta=_FakePageMeta(page=1, total_pages=2, total_items=2),
+        )
+        page2 = _FakeTracePage(
+            data=[_FakeTraceListItem(id="t2")],
+            meta=_FakePageMeta(page=2, total_pages=2, total_items=2),
+        )
         source, client = self._make_source([page1, page2])
         cases = source.from_traces(limit=10)
         assert len(cases) == 2
         assert client.api.trace.list.call_count == 2
+        assert client.api.trace.list.call_args_list[0].kwargs.get("page") == 1
+        assert client.api.trace.list.call_args_list[1].kwargs.get("page") == 2
 
     def test_limit_truncates(self):
         page = _FakeTracePage(data=[_FakeTraceListItem(id=f"t{i}") for i in range(5)])
@@ -323,3 +341,188 @@ class TestInitSubclassEnforcement:
             class BadSource(BaseEvalCaseSource):
                 async def fetch(self, ref):
                     return []
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("_langfuse_module")
+class TestLangfuseTraceCatalog:
+    def test_list_and_load_spans_for_otel_builder(self):
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+        from harness_evals.importers.otel import OTELEvalCaseSource
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        client = MagicMock()
+        client.api.trace.list.return_value = _FakeTracePage(
+            data=[
+                _FakeTraceListItem(id="t1", session_id="sess-a"),
+                _FakeTraceListItem(id="t2", session_id="sess-a"),
+            ]
+        )
+        client.api.trace.get.side_effect = lambda tid: _FakeTrace(
+            session_id="sess-a",
+            input={"prompt": "hello", "user_message": "hello"},
+            output={"text": "ok"} if tid == "t2" else {"text": "hi"},
+        )
+        obs = {
+            "t1": [
+                _FakeObservation(
+                    type="GENERATION",
+                    name="chat",
+                    input=[{"role": "user", "content": "hello"}],
+                    output="hi",
+                    start_time=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 9, 20, 1, 0, 1, tzinfo=timezone.utc),
+                )
+            ],
+            "t2": [
+                _FakeObservation(
+                    type="GENERATION",
+                    name="chat",
+                    input=[
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": "hi"},
+                        {"role": "user", "content": "more"},
+                    ],
+                    output="ok",
+                    start_time=datetime(2026, 9, 20, 1, 1, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 9, 20, 1, 1, 1, tzinfo=timezone.utc),
+                )
+            ],
+        }
+
+        def get_obs(trace_id, **_kwargs):
+            return _FakeObservationList(data=obs[trace_id])
+
+        client.api.observations.get_many.side_effect = get_obs
+
+        catalog = LangfuseTraceCatalog(client)
+        listed = catalog.list_traces(limit=10)
+        assert [t.trace_id for t in listed] == ["t1", "t2"]
+        traces = [
+            SpanTrace(
+                spans=catalog.load_spans(stub.trace_id),
+                trace_id=stub.trace_id,
+                session_id=stub.session_id,
+            )
+            for stub in listed
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 1
+        assert cases[0].input == "hello"
+        assert cases[0].messages[0].content == "hello"
+        assert any(m.content == "more" for m in cases[0].messages if m.role == "user")
+        assert cases[0].output == "ok"
+
+    def test_trace_prompt_used_when_generation_input_missing(self):
+        """UA traces often omit generation I/O; session input must come from trace.input."""
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+        from harness_evals.importers.otel import OTELEvalCaseSource
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        client = MagicMock()
+        client.api.trace.list.return_value = _FakeTracePage(
+            data=[
+                _FakeTraceListItem(id="t1", session_id="sess-b"),
+                _FakeTraceListItem(id="t2", session_id="sess-b"),
+            ]
+        )
+        prompts = {
+            "t1": {
+                "input": {"prompt": "first question", "user_message": "first question"},
+                "output": {"status": "completed", "text": "first answer"},
+            },
+            "t2": {
+                "input": {"prompt": "follow up", "user_message": "follow up"},
+                "output": {"status": "completed", "text": "final answer"},
+            },
+        }
+
+        def get_trace(tid):
+            payload = prompts[tid]
+            return _FakeTrace(session_id="sess-b", input=payload["input"], output=payload["output"])
+
+        client.api.trace.get.side_effect = get_trace
+
+        def get_obs(trace_id, **_kwargs):
+            # Generation observations with no input/output (prod UA shape).
+            return _FakeObservationList(
+                data=[
+                    _FakeObservation(
+                        type="GENERATION",
+                        name="litellm_request",
+                        input=None,
+                        output=None,
+                        start_time=datetime(2026, 9, 20, 1, 0 if trace_id == "t1" else 1, tzinfo=timezone.utc),
+                        end_time=datetime(2026, 9, 20, 1, 0 if trace_id == "t1" else 1, 1, tzinfo=timezone.utc),
+                    )
+                ]
+            )
+
+        client.api.observations.get_many.side_effect = get_obs
+        catalog = LangfuseTraceCatalog(client)
+        traces = [
+            SpanTrace(
+                spans=catalog.load_spans(tid),
+                trace_id=tid,
+                session_id="sess-b",
+                start_time=datetime(2026, 9, 20, 1, 0 if tid == "t1" else 1, tzinfo=timezone.utc),
+            )
+            for tid in ("t1", "t2")
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 1
+        assert cases[0].input == "first question"
+        assert cases[0].output == "final answer"
+
+    def test_generic_span_observations_are_not_tools(self):
+        """Langfuse SPAN (mcp/rest) must not be mapped to execute_tool."""
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog, _observation_to_span
+
+        client = MagicMock()
+        client.api.trace.get.return_value = _FakeTrace(
+            session_id="sess-c",
+            input={"prompt": "Analyze the error", "user_message": "<current_context>\nAnalyze"},
+            output={"status": "completed", "text": "## Analysis"},
+        )
+        client.api.observations.get_many.return_value = _FakeObservationList(
+            data=[
+                _FakeObservation(
+                    type="SPAN",
+                    name="rest.request",
+                    input={"method": "GET"},
+                    output={"status": 200},
+                    parent_observation_id="agent-1",
+                ),
+                _FakeObservation(
+                    type="TOOL",
+                    name="harness_list",
+                    input={"resource_type": "pipeline"},
+                    output={"items": []},
+                    parent_observation_id="agent-1",
+                ),
+                _FakeObservation(
+                    type="AGENT",
+                    name="chat_unified_agent",
+                    input={"prompt": "Analyze the error"},
+                    output=None,
+                    parent_observation_id=None,
+                ),
+            ]
+        )
+        catalog = LangfuseTraceCatalog(client)
+        spans = catalog.load_spans("t-span")
+        by_name = {s["name"]: s["attributes"] for s in spans}
+        assert by_name["rest.request"].get("gen_ai.operation.name") != "execute_tool"
+        assert by_name["harness_list"].get("gen_ai.operation.name") == "execute_tool"
+        assert by_name["chat_unified_agent"].get("gen_ai.operation.name") == "invoke_agent"
+
+        from harness_evals.importers.otel import OTELEvalCaseSource
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        cases = OTELEvalCaseSource.from_span_traces(
+            [SpanTrace(spans=spans, trace_id="t-span", session_id="sess-c")]
+        )
+        assert len(cases) == 1
+        assert cases[0].input == "Analyze the error"
+        assert cases[0].output == "## Analysis"
+

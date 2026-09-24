@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from harness_evals.datasets.filter import parse_golden_ids, parse_golden_tags, parse_modules
+from harness_evals.env import resolve_env_in_value
 from harness_evals.errors import HarnessEvalsError
 from harness_evals.refs import ResourceRef, resolve
 
@@ -238,7 +239,9 @@ def _parse_model(raw: dict) -> ModelSpec:
     if "provider" not in raw or "name" not in raw:
         raise HarnessEvalsError("Model spec requires 'provider' and 'name' keys")
     provider = raw["provider"]
-    name = raw["name"]
+    name = resolve_env_in_value(raw["name"])
+    if not isinstance(name, str) or not name.strip():
+        raise HarnessEvalsError("Model spec 'name' must be a non-empty string after env resolution")
     params = {k: v for k, v in raw.items() if k not in {"provider", "name"}}
     return ModelSpec(provider=provider, name=name, params=params)
 

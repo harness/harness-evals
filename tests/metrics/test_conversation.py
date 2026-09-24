@@ -41,8 +41,17 @@ INCOHERENT_MESSAGES = [
     [GoalAccuracyMetric, ConversationResolutionMetric, ConversationCompletenessMetric],
 )
 async def test_success_metrics_include_expected_outcome_when_metadata_present(metric_cls):
-    llm = MockLLM(default={"reasoning": "ok", "score": 0.9})
+    # Resolution now requires structured status; other metrics still use score-only.
+    if metric_cls is ConversationResolutionMetric:
+        default = {"reasoning": "ok", "status": "resolved", "score": 0.9}
+    else:
+        default = {"reasoning": "ok", "score": 0.9}
+    llm = MockLLM(default=default)
     metric = metric_cls(llm=llm)
+    if metric_cls is ConversationResolutionMetric:
+        metric = ConversationResolutionMetric(
+            llm=llm, use_waiting_user_heuristic=False
+        )
     expected_outcome = "Agent answers both the capital and population questions."
     ec = EvalCase(
         input="q",
@@ -160,30 +169,149 @@ class TestConversationCoherence:
 @pytest.mark.unit
 class TestConversationResolution:
     async def test_resolved_conversation(self):
-        llm = MockLLM(default={"reasoning": "User need fully addressed", "score": 1.0})
+        llm = MockLLM(
+            default={
+                "reasoning": "User need fully addressed",
+                "status": "resolved",
+                "score": 1.0,
+            }
+        )
         metric = ConversationResolutionMetric(llm=llm, threshold=0.7)
         ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
         score = await metric.a_measure(ec)
         assert score.passed
         assert score.value == 1.0
+        assert score.metadata["status"] == "resolved"
+
+    async def test_waiting_user_passes(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Awaiting HITL approval",
+                "status": "waiting_user",
+                "score": 0.8,
+            }
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm, threshold=0.7, use_waiting_user_heuristic=False
+        )
+        ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
+        score = await metric.a_measure(ec)
+        assert score.passed
+        assert score.metadata["status"] == "waiting_user"
+
+    async def test_blocked_error_fails(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "harness_create failed and ask left unresolved",
+                "status": "blocked_error",
+                "score": 0.1,
+            }
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm, threshold=0.7, use_waiting_user_heuristic=False
+        )
+        ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
+        score = await metric.a_measure(ec)
+        assert not score.passed
+        assert score.metadata["status"] == "blocked_error"
+
+    async def test_unsatisfactory_despite_tools_fails(self):
+        llm = MockLLM(
+            default={
+                "reasoning": "Tools succeeded but answer did not address the ask",
+                "status": "unsatisfactory",
+                "score": 0.2,
+            }
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm, threshold=0.7, use_waiting_user_heuristic=False
+        )
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=COHERENT_MESSAGES,
+            tool_calls=[ToolCall(name="harness_list", input={"resource_type": "pipeline"}, output={"items": []})],
+        )
+        score = await metric.a_measure(ec)
+        assert not score.passed
+        assert score.metadata["status"] == "unsatisfactory"
+        assert "Tool evidence" in llm.prompts[0]
+        assert "harness_list" in llm.prompts[0]
+
+    async def test_partial_fails_by_default(self):
+        llm = MockLLM(
+            default={"reasoning": "Only partly done", "status": "partial", "score": 0.5}
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm, threshold=0.7, use_waiting_user_heuristic=False
+        )
+        ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
+        score = await metric.a_measure(ec)
+        assert not score.passed
+        assert score.metadata["status"] == "partial"
+
+    async def test_partial_soft_pass_when_configured(self):
+        llm = MockLLM(
+            default={"reasoning": "Only partly done", "status": "partial", "score": 0.5}
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm,
+            threshold=0.7,
+            fail_partial=False,
+            use_waiting_user_heuristic=False,
+        )
+        ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
+        score = await metric.a_measure(ec)
+        assert score.passed
+
+    async def test_waiting_user_heuristic_short_circuits(self):
+        llm = MockLLM(default={"reasoning": "should not be called", "status": "abandoned", "score": 0.0})
+        metric = ConversationResolutionMetric(llm=llm, threshold=0.7)
+        ec = EvalCase(
+            input="q",
+            output="a",
+            messages=[
+                Message(role="user", content="Create a pipeline"),
+                Message(
+                    role="assistant",
+                    content="Waiting for user to review the entity before continuing.",
+                    tool_calls=[ToolCall(name="AskUserQuestion", input={"questions": ["org?"]})],
+                ),
+            ],
+        )
+        score = await metric.a_measure(ec)
+        assert score.passed
+        assert score.metadata["status"] == "waiting_user"
+        assert score.metadata.get("heuristic") is True
+        assert llm.prompts == []
 
     async def test_unresolved_conversation(self):
-        llm = MockLLM(default={"reasoning": "Question not answered", "score": 0.1})
-        metric = ConversationResolutionMetric(llm=llm, threshold=0.7)
+        llm = MockLLM(
+            default={
+                "reasoning": "Question not answered",
+                "status": "abandoned",
+                "score": 0.1,
+            }
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm, threshold=0.7, use_waiting_user_heuristic=False
+        )
         ec = EvalCase(input="q", output="a", messages=INCOHERENT_MESSAGES)
         score = await metric.a_measure(ec)
         assert not score.passed
-        assert score.value == 0.1
+        assert score.metadata["status"] == "abandoned"
 
-    async def test_missing_messages(self):
+    async def test_missing_messages_insufficient_evidence(self):
         llm = MockLLM()
         metric = ConversationResolutionMetric(llm=llm)
         ec = EvalCase(input="q", output="a")
         score = await metric.a_measure(ec)
-        assert score.value == 0.0
-        assert "missing" in score.reason
+        assert score.metadata["status"] == "insufficient_evidence"
+        assert score.metadata.get("skipped") is True
+        assert score.passed  # skipped — not counted as unresolved failure
+        assert "insufficient_evidence" in score.reason
 
-    async def test_single_turn(self):
+    async def test_single_turn_insufficient_evidence(self):
         llm = MockLLM()
         metric = ConversationResolutionMetric(llm=llm)
         ec = EvalCase(
@@ -192,11 +320,16 @@ class TestConversationResolution:
             messages=[Message(role="user", content="hi")],
         )
         score = await metric.a_measure(ec)
-        assert score.value == 0.0
+        assert score.metadata["status"] == "insufficient_evidence"
+        assert score.metadata.get("skipped") is True
 
     def test_sync_measure(self):
-        llm = MockLLM(default={"reasoning": "resolved", "score": 0.9})
-        metric = ConversationResolutionMetric(llm=llm, threshold=0.7)
+        llm = MockLLM(
+            default={"reasoning": "resolved", "status": "resolved", "score": 0.9}
+        )
+        metric = ConversationResolutionMetric(
+            llm=llm, threshold=0.7, use_waiting_user_heuristic=False
+        )
         ec = EvalCase(input="q", output="a", messages=COHERENT_MESSAGES)
         score = metric.measure(ec)
         assert score.passed

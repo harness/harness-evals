@@ -485,3 +485,220 @@ class TestMultiTurnUserRecovery:
         assert roles == ["user", "assistant", "user", "assistant"]
         assert ec.messages[2].content == "second question"
         assert ec.output == "second answer"
+
+
+def _chat_spans(user: str, assistant: str, *, session: str, trace_id: str, start_nano: int) -> list[dict]:
+    return [
+        {
+            "name": "chat",
+            "span_id": f"{trace_id}-llm",
+            "trace_id": trace_id,
+            "parent_span_id": None,
+            "start_time_unix_nano": start_nano,
+            "end_time_unix_nano": start_nano + 1_000_000_000,
+            "attributes": {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.conversation.id": session,
+                "gen_ai.input_messages": json.dumps(
+                    [{"role": "user", "parts": [{"type": "text", "content": user}]}]
+                ),
+                "gen_ai.output_messages": json.dumps(
+                    [{"role": "assistant", "parts": [{"type": "text", "content": assistant}]}]
+                ),
+            },
+        }
+    ]
+
+
+@pytest.mark.unit
+class TestOTELSessionGrouping:
+    def test_merges_traces_that_share_session_id(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        traces = [
+            SpanTrace(
+                spans=_chat_spans("first", "ack", session="sess-1", trace_id="t1", start_nano=1_000_000_000),
+                trace_id="t1",
+                session_id="sess-1",
+            ),
+            SpanTrace(
+                spans=_chat_spans("second", "done", session="sess-1", trace_id="t2", start_nano=3_000_000_000),
+                trace_id="t2",
+                session_id="sess-1",
+            ),
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 1
+        roles = [m.role for m in cases[0].messages]
+        assert roles == ["user", "assistant", "user", "assistant"]
+        assert cases[0].messages[2].content == "second"
+        assert cases[0].output == "done"
+        assert cases[0].metadata["session_id"] == "sess-1"
+        assert cases[0].metadata["trace_ids"] == ["t1", "t2"]
+
+    def test_missing_session_id_stays_one_case_per_trace(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        traces = [
+            SpanTrace(spans=_chat_spans("a", "b", session="", trace_id="t1", start_nano=1), trace_id="t1"),
+            SpanTrace(spans=_chat_spans("c", "d", session="", trace_id="t2", start_nano=2), trace_id="t2"),
+        ]
+        # strip conversation ids so grouping cannot collapse them
+        for trace in traces:
+            for span in trace.spans:
+                span["attributes"].pop("gen_ai.conversation.id", None)
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 2
+
+    def test_distinct_sessions_stay_separate(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        traces = [
+            SpanTrace(
+                spans=_chat_spans("a", "b", session="s1", trace_id="t1", start_nano=1),
+                trace_id="t1",
+                session_id="s1",
+            ),
+            SpanTrace(
+                spans=_chat_spans("c", "d", session="s2", trace_id="t2", start_nano=2),
+                trace_id="t2",
+                session_id="s2",
+            ),
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 2
+
+
+@pytest.mark.unit
+class TestOTELTimeWindowFetch:
+    @pytest.mark.asyncio
+    async def test_lookback_days_drops_old_file_traces(self, tmp_path):
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 9, 21, tzinfo=timezone.utc)
+        old_nano = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp() * 1e9)
+        new_nano = int(datetime(2026, 9, 20, tzinfo=timezone.utc).timestamp() * 1e9)
+        payload = {
+            "traces": [
+                {
+                    "trace_id": "old",
+                    "session_id": "s-old",
+                    "spans": _chat_spans("old", "old-out", session="s-old", trace_id="old", start_nano=old_nano),
+                },
+                {
+                    "trace_id": "new",
+                    "session_id": "s-new",
+                    "spans": _chat_spans("new", "new-out", session="s-new", trace_id="new", start_nano=new_nano),
+                },
+            ]
+        }
+        path = tmp_path / "traces.json"
+        path.write_text(json.dumps(payload))
+
+        source = OTELEvalCaseSource(now=lambda: now)
+        cases = await source.fetch(
+            ResourceRef(source="otel", id=str(path), extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert cases[0].input == "new"
+
+    @pytest.mark.asyncio
+    async def test_catalog_lists_and_merges_sessions(self):
+        from datetime import datetime, timezone
+
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        class _Catalog:
+            def list_traces(self, **kwargs):
+                assert kwargs["from_timestamp"] is not None
+                return [
+                    SpanTrace(spans=[], trace_id="t1", session_id="sess"),
+                    SpanTrace(spans=[], trace_id="t2", session_id="sess"),
+                ]
+
+            def load_spans(self, trace_id: str):
+                start = 1_000_000_000 if trace_id == "t1" else 3_000_000_000
+                user = "first" if trace_id == "t1" else "second"
+                return _chat_spans(user, user + "-out", session="sess", trace_id=trace_id, start_nano=start)
+
+        source = OTELEvalCaseSource(
+            catalog=_Catalog(),
+            now=lambda: datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        cases = await source.fetch(
+            ResourceRef(source="otel", id="", extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert [m.content for m in cases[0].messages if m.role == "user"] == ["first", "second"]
+
+    @pytest.mark.asyncio
+    async def test_time_filters_without_catalog_or_path_raise(self):
+        source = OTELEvalCaseSource()
+        with pytest.raises(ValueError, match="TraceCatalog"):
+            await source.fetch(ResourceRef(source="otel", id="", extra={"lookback_days": 7}))
+
+
+@pytest.mark.unit
+class TestLangfuseTraceIoRecovery:
+    """UA runner_v3 traces stamp prompt on langfuse.trace.input; recover when tools dominate."""
+
+    def test_prefers_prompt_over_user_message_when_only_tools(self):
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "rest.request",
+                "span_id": "1",
+                "trace_id": "t1",
+                "parent_span_id": "root",
+                "attributes": {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.name": "rest.request",
+                    "gen_ai.tool.call.result": '{"ok": true}',
+                    "langfuse.trace.input": {
+                        "prompt": "Analyze the error for the pipeline execution",
+                        "user_message": "<current_context>\nAnalyze the error",
+                    },
+                    "langfuse.trace.output": {
+                        "status": "completed",
+                        "text": "## Analysis: Missing Terraform Variable",
+                    },
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.input == "Analyze the error for the pipeline execution"
+        assert ec.output == "## Analysis: Missing Terraform Variable"
+
+    def test_prefers_trace_prompt_over_system_reminder_input_messages(self):
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "litellm_request",
+                "span_id": "2",
+                "trace_id": "t2",
+                "parent_span_id": None,
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.input_messages": [
+                        {
+                            "role": "user",
+                            "content": "<system-reminder>\nThe following skills are available\n",
+                        }
+                    ],
+                    "gen_ai.output_messages": [{"role": "assistant", "content": "done"}],
+                    "langfuse.trace.input": {
+                        "prompt": "Ask a support question",
+                        "user_message": "<current_context>\nAsk a support question",
+                    },
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.input == "Ask a support question"
+        assert ec.output == "done"

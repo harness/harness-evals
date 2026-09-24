@@ -186,6 +186,30 @@ class TestAEvaluateTokenCapture:
         assert scores[0].metadata["cost_usd"] == pytest.approx(0.001)
         assert scores[0].metadata["llm_model"] == "gpt-4o"
 
+    def test_sync_evaluate_attaches_token_usage(self):
+        from harness_evals.core.metric import BaseMetric, Dimension
+        from harness_evals.llm.usage import record_token_usage
+
+        class TokenMetric(BaseMetric):
+            def __init__(self):
+                super().__init__(name="j1", dimension=Dimension.CORRECTNESS, threshold=0.5)
+
+            def measure(self, eval_case):
+                record_token_usage(
+                    input_tokens=40,
+                    output_tokens=10,
+                    cost_usd=0.002,
+                    model="gpt-4o-mini",
+                )
+                return Score(name=self.name, value=1.0, threshold=self.threshold)
+
+        ec = EvalCase(input="x", output="y", expected="y")
+        scores = evaluate(ec, metrics=[TokenMetric()])
+        assert scores[0].metadata["input_tokens"] == 40
+        assert scores[0].metadata["output_tokens"] == 10
+        assert scores[0].metadata["cost_usd"] == pytest.approx(0.002)
+        assert scores[0].metadata["llm_model"] == "gpt-4o-mini"
+
     async def test_per_metric_token_isolation(self):
         from harness_evals.core.metric import BaseMetric, Dimension
         from harness_evals.llm.usage import record_token_usage

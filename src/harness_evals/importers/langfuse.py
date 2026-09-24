@@ -20,11 +20,140 @@ from harness_evals._langfuse_compat import flush_langfuse_client
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.importers.base import BaseEvalCaseSource
+from harness_evals.importers.trace_batch import SpanTrace
 from harness_evals.plugins import register_eval_case_source
 from harness_evals.refs import ResourceRef
 
 # Filter keys that, when present in ref.extra, trigger from_traces() dispatch.
 _FILTER_KEYS = {"name", "tags", "user_id", "session_id", "from_timestamp", "to_timestamp", "limit"}
+
+
+class LangfuseTraceCatalog:
+    """``TraceCatalog`` adapter: list Langfuse traces as OTel-shaped span batches.
+
+    Used with :class:`~harness_evals.importers.otel.OTELEvalCaseSource` so
+    time-window listing and session merge stay generic on the OTEL importer.
+    """
+
+    def __init__(self, client: Langfuse) -> None:
+        self._client = client
+
+    def list_traces(
+        self,
+        *,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
+        session_id: str | None = None,
+        name: str | None = None,
+        tags: list[str] | None = None,
+        user_id: str | None = None,
+        environment: str | list[str] | None = None,
+        limit: int = 100,
+    ) -> list[SpanTrace]:
+        kwargs: dict[str, object] = {}
+        if name is not None:
+            kwargs["name"] = name
+        if tags is not None:
+            kwargs["tags"] = tags
+        if user_id is not None:
+            kwargs["user_id"] = user_id
+        if session_id is not None:
+            kwargs["session_id"] = session_id
+        if environment is not None:
+            kwargs["environment"] = environment
+        if from_timestamp is not None:
+            kwargs["from_timestamp"] = from_timestamp
+        if to_timestamp is not None:
+            kwargs["to_timestamp"] = to_timestamp
+
+        collected: list[SpanTrace] = []
+        for page_data in _iter_trace_pages(self._client, limit=limit, **kwargs):
+            for trace in page_data:
+                tid = getattr(trace, "id", None)
+                if not tid:
+                    continue
+                collected.append(
+                    SpanTrace(
+                        spans=[],
+                        trace_id=str(tid),
+                        session_id=_trace_session_id(trace),
+                        start_time=getattr(trace, "timestamp", None) or getattr(trace, "start_time", None),
+                        metadata=_list_trace_metadata(trace),
+                    )
+                )
+                if len(collected) >= limit:
+                    return collected[:limit]
+        return collected
+
+    def load_spans(self, trace_id: str) -> list[dict[str, object]]:
+        trace = self._client.api.trace.get(trace_id)
+        session_id = _trace_session_id(trace)
+        observations = self._client.api.observations.get_many(
+            trace_id=trace_id,
+        )
+        obs_list = observations.data if hasattr(observations, "data") else []
+        spans = [
+            _observation_to_span(obs, trace_id=trace_id, session_id=session_id) for obs in obs_list
+        ]
+        # Stamp Langfuse trace-level I/O onto every span so the OTEL conversation
+        # builder can recover the user prompt when generation observations omit
+        # input/output (common for UA runner_v3 traces).
+        trace_input = getattr(trace, "input", None)
+        trace_output = getattr(trace, "output", None)
+        trace_cost = getattr(trace, "total_cost", None)
+        if trace_cost is None:
+            trace_cost = getattr(trace, "totalCost", None)
+        if trace_input is not None or trace_output is not None or trace_cost is not None:
+            for i, span in enumerate(spans):
+                attrs = span.setdefault("attributes", {})
+                if not isinstance(attrs, dict):
+                    attrs = {}
+                    span["attributes"] = attrs
+                if trace_input is not None:
+                    attrs.setdefault("langfuse.trace.input", trace_input)
+                if trace_output is not None:
+                    attrs.setdefault("langfuse.trace.output", trace_output)
+                # Stamp trace cost once (first span only) to avoid N× inflation
+                # when the OTEL builder sums gen_ai.usage.cost across spans.
+                if i == 0 and trace_cost is not None:
+                    try:
+                        cost_val = float(trace_cost)
+                    except (TypeError, ValueError):
+                        cost_val = None
+                    if cost_val is not None and cost_val > 0:
+                        attrs.setdefault("langfuse.trace.total_cost", cost_val)
+        if not spans and (trace_input is not None or trace_output is not None):
+            # No observations — still emit a root span so prompt/output survive.
+            attrs: dict[str, object] = {"langfuse.observation.type": "agent"}
+            if session_id:
+                attrs["gen_ai.conversation.id"] = session_id
+            if trace_input is not None:
+                attrs["langfuse.trace.input"] = trace_input
+            if trace_output is not None:
+                attrs["langfuse.trace.output"] = trace_output
+            spans = [
+                {
+                    "trace_id": trace_id,
+                    "span_id": f"{trace_id}:trace-root",
+                    "name": "langfuse.trace",
+                    "attributes": attrs,
+                }
+            ]
+        return spans
+
+    def list_session_trace_ids(self, session_id: str) -> list[str] | None:
+        sessions_api = getattr(self._client.api, "sessions", None)
+        getter = getattr(sessions_api, "get", None) if sessions_api is not None else None
+        if getter is None:
+            return None
+        session = getter(session_id)
+        traces = getattr(session, "traces", None) or []
+        ids: list[str] = []
+        for item in traces:
+            tid = item if isinstance(item, str) else getattr(item, "id", None)
+            if tid:
+                ids.append(str(tid))
+        return ids
 
 
 @register_eval_case_source("langfuse")
@@ -141,24 +270,14 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
             kwargs["to_timestamp"] = to_timestamp
 
         collected: list[str] = []
-        cursor: str | None = None
-        page_size = min(limit, 100)
-
-        while len(collected) < limit:
-            page = self._client.api.trace.list(limit=page_size, cursor=cursor, **kwargs)
-            page_data = page.data if hasattr(page, "data") else []
-            if not page_data:
-                break
+        for page_data in _iter_trace_pages(self._client, limit=limit, **kwargs):
             for trace in page_data:
                 tid = getattr(trace, "id", None)
                 if tid:
-                    collected.append(tid)
-            page_meta = getattr(page, "meta", None)
-            cursor = getattr(page_meta, "next_cursor", None) if page_meta else None
-            if not cursor:
-                break
-
-        return collected[:limit]
+                    collected.append(str(tid))
+                if len(collected) >= limit:
+                    return collected[:limit]
+        return collected
 
     # ------------------------------------------------------------------
     # Convenience methods
@@ -180,7 +299,6 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
 
         observations = self._client.api.observations.get_many(
             trace_id=trace_id,
-            fields="core,basic,io,usage",
         )
         obs_list = observations.data if hasattr(observations, "data") else []
 
@@ -260,7 +378,7 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
     ) -> list[EvalCase]:
         """Fetch multiple Langfuse traces matching filters and convert each to an EvalCase.
 
-        Uses cursor-based pagination to collect up to ``limit`` traces.
+        Uses page-based pagination to collect up to ``limit`` traces.
 
         Args:
             name: Filter by trace name.
@@ -288,28 +406,14 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
         if to_timestamp is not None:
             kwargs["to_timestamp"] = to_timestamp
 
-        collected: list[object] = []
-        cursor: str | None = None
-        page_size = min(limit, 100)
-
-        while len(collected) < limit:
-            page = self._client.api.trace.list(limit=page_size, cursor=cursor, **kwargs)
-            page_data = page.data if hasattr(page, "data") else []
-            if not page_data:
-                break
-            collected.extend(page_data)
-            page_meta = getattr(page, "meta", None)
-            cursor = getattr(page_meta, "next_cursor", None) if page_meta else None
-            if not cursor:
-                break
-
-        collected = collected[:limit]
-
         results: list[EvalCase] = []
-        for trace in collected:
-            trace_id = getattr(trace, "id", None)
-            if trace_id:
-                results.append(self.from_trace(trace_id))
+        for page_data in _iter_trace_pages(self._client, limit=limit, **kwargs):
+            for trace in page_data:
+                trace_id = getattr(trace, "id", None)
+                if trace_id:
+                    results.append(self.from_trace(str(trace_id)))
+                if len(results) >= limit:
+                    return results
         return results
 
     # ------------------------------------------------------------------
@@ -393,3 +497,164 @@ def _to_str_or_dict_or_none(val: object) -> str | dict | None:
     if isinstance(val, (str, dict)):
         return val
     return None
+
+
+def _iter_trace_pages(client: Langfuse, *, limit: int, **filters: object):
+    """Yield ``trace.list`` pages (1-indexed ``page``) until ``limit`` or exhaustion.
+
+    The Langfuse SDK paginates with ``page`` / ``limit``, not cursors. Stop when a
+    page is empty, shorter than the requested page size, or ``meta.page >=
+    meta.total_pages`` when that metadata is present.
+    """
+    page_size = min(max(limit, 1), 100)
+    page_num = 1
+    seen = 0
+    while seen < limit:
+        page = client.api.trace.list(limit=min(page_size, limit - seen), page=page_num, **filters)
+        page_data = list(page.data) if hasattr(page, "data") else []
+        if not page_data:
+            break
+        yield page_data
+        seen += len(page_data)
+        page_meta = getattr(page, "meta", None)
+        total_pages = getattr(page_meta, "total_pages", None) if page_meta else None
+        current = getattr(page_meta, "page", None) if page_meta else None
+        if total_pages is not None and current is not None:
+            if current >= total_pages:
+                break
+        elif len(page_data) < page_size:
+            break
+        page_num += 1
+
+
+def _trace_session_id(trace: object) -> str | None:
+    sid = getattr(trace, "session_id", None) or getattr(trace, "sessionId", None)
+    return str(sid) if sid else None
+
+
+def _list_trace_metadata(trace: object) -> dict[str, object]:
+    """Capture list-API fields needed for module/env stratified sampling."""
+    meta: dict[str, object] = {}
+    tags = getattr(trace, "tags", None)
+    if tags is not None:
+        meta["tags"] = list(tags) if isinstance(tags, (list, tuple)) else tags
+    raw_md = getattr(trace, "metadata", None)
+    if isinstance(raw_md, dict):
+        meta["metadata"] = raw_md
+    env = getattr(trace, "environment", None)
+    if env:
+        meta["environment"] = str(env)
+    for key in ("input", "output", "name", "total_cost", "totalCost"):
+        val = getattr(trace, key, None)
+        if val is not None:
+            meta[key if key != "totalCost" else "total_cost"] = val
+    return meta
+
+
+def _dt_to_nano(value: object) -> int | None:
+    if not isinstance(value, datetime):
+        return None
+    return int(value.timestamp() * 1_000_000_000)
+
+
+def _observation_to_span(obs: object, *, trace_id: str, session_id: str | None) -> dict[str, object]:
+    """Map a Langfuse observation onto the OTEL span dict the conversation builder expects."""
+    obs_type = getattr(obs, "type", None)
+    if isinstance(obs_type, str):
+        obs_type = obs_type.lower()
+    name = getattr(obs, "name", None) or "observation"
+    start = _dt_to_nano(getattr(obs, "start_time", None))
+    end = _dt_to_nano(getattr(obs, "end_time", None))
+    attrs: dict[str, object] = {}
+    if session_id:
+        attrs["gen_ai.conversation.id"] = session_id
+
+    obs_input = getattr(obs, "input", None)
+    obs_output = getattr(obs, "output", None)
+
+    if obs_type == "generation":
+        attrs["langfuse.observation.type"] = "generation"
+        if obs_input is not None:
+            attrs["gen_ai.input_messages"] = obs_input
+        if obs_output is not None:
+            if isinstance(obs_output, list):
+                attrs["gen_ai.output_messages"] = obs_output
+            elif isinstance(obs_output, dict):
+                attrs["gen_ai.output_messages"] = [obs_output]
+            else:
+                attrs["gen_ai.output_messages"] = [{"role": "assistant", "content": obs_output}]
+    elif obs_type == "tool" or (isinstance(name, str) and name.lower().startswith("tool:")):
+        # Only real tool observations — do NOT map generic Langfuse SPAN here.
+        # UA traces emit dozens of SPAN (mcp/rest/provider_call); treating them as
+        # execute_tool drops AGENT/GENERATION recovery of langfuse.trace.input.
+        attrs["gen_ai.operation.name"] = "execute_tool"
+        tool_name = name[5:] if isinstance(name, str) and name.lower().startswith("tool:") else name
+        attrs["gen_ai.tool.name"] = tool_name
+        if obs_input is not None:
+            attrs["gen_ai.tool.call.arguments"] = json.dumps(obs_input) if not isinstance(obs_input, str) else obs_input
+        if obs_output is not None:
+            attrs["gen_ai.tool.call.result"] = (
+                json.dumps(obs_output) if isinstance(obs_output, dict) else obs_output
+            )
+    elif obs_type == "agent":
+        attrs["langfuse.observation.type"] = "agent"
+        attrs["gen_ai.operation.name"] = "invoke_agent"
+        # Agent I/O is often {prompt, user_message} — keep on langfuse keys so
+        # _extract_user_input_from_span can read it; do not force input_messages.
+        if obs_input is not None:
+            if isinstance(obs_input, list):
+                attrs["gen_ai.input_messages"] = obs_input
+            else:
+                attrs["langfuse.observation.input"] = obs_input
+        if obs_output is not None:
+            if isinstance(obs_output, list):
+                attrs["gen_ai.output_messages"] = obs_output
+            else:
+                attrs["langfuse.observation.output"] = obs_output
+    else:
+        # Generic SPAN / unknown — preserve I/O without forcing tool classification.
+        attrs["langfuse.observation.type"] = obs_type or "span"
+        if isinstance(name, str) and name.lower().startswith("llm_turn"):
+            attrs["langfuse.observation.type"] = "generation"
+        if obs_input is not None:
+            attrs["langfuse.observation.input"] = obs_input
+        if obs_output is not None:
+            attrs["langfuse.observation.output"] = obs_output
+
+    span: dict[str, object] = {
+        "name": name,
+        "span_id": getattr(obs, "id", None),
+        "trace_id": trace_id,
+        "parent_span_id": getattr(obs, "parent_observation_id", None),
+        "attributes": attrs,
+    }
+    if start is not None:
+        span["start_time_unix_nano"] = start
+    if end is not None:
+        span["end_time_unix_nano"] = end
+
+    # Usage / cost — let the OTEL EvalCase builder aggregate session totals.
+    usage = getattr(obs, "usage_details", None) or {}
+    if isinstance(usage, dict):
+        inp = usage.get("input")
+        out = usage.get("output")
+        total = usage.get("total")
+        if inp is not None:
+            attrs["gen_ai.usage.input_tokens"] = inp
+        if out is not None:
+            attrs["gen_ai.usage.output_tokens"] = out
+        if total is not None:
+            attrs["gen_ai.usage.total_tokens"] = total
+    for cost_attr in ("total_cost", "calculated_total_cost"):
+        raw_cost = getattr(obs, cost_attr, None)
+        if raw_cost is None:
+            continue
+        try:
+            cost_val = float(raw_cost)
+        except (TypeError, ValueError):
+            continue
+        if cost_val > 0:
+            attrs["gen_ai.usage.cost"] = cost_val
+            break
+
+    return span

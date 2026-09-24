@@ -531,6 +531,17 @@ def build_llm_provider(config: dict[str, Any]) -> Any:
             **token_kwargs,
         )
 
+    if provider == "bedrock_converse":
+        from harness_evals.llm.bedrock import BedrockConverseLLM
+
+        return BedrockConverseLLM(
+            model=model,
+            api_key=api_key,
+            aws_region=metadata.get("region") or metadata.get("aws_region"),
+            temperature=temperature,
+            **token_kwargs,
+        )
+
     if provider == "anthropic" and metadata.get("bedrock"):
         if BedrockAnthropicLLM is None:
             raise ValueError("Bedrock provider requires: pip install 'harness-evals[llm]'")

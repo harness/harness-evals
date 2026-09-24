@@ -2,10 +2,60 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from harness_evals.core.types import Message
+
+_CONDITION_TYPES = {"contains", "not_contains", "equals", "regex"}
+
+
+def _compile_condition(condition: dict) -> Callable[[Message], bool]:
+    """Compile a declarative edge condition into a predicate over the routed-on Message.
+
+    Shape: {"type": contains|not_contains|equals|regex, "value": str, "case_sensitive"?: bool}
+
+    String matching (contains/not_contains/equals) and regex matching are both
+    case-insensitive unless "case_sensitive": true is set. Matches against
+    `message.content`, treating None content as "".
+
+    Raises ValueError on an unknown/missing type, a missing/non-str value, or an
+    invalid regex pattern — always at compile time, never at match time.
+    """
+    ctype = condition.get("type")
+    if ctype not in _CONDITION_TYPES:
+        raise ValueError(f"unknown condition type '{ctype}'; expected one of {sorted(_CONDITION_TYPES)}")
+
+    value = condition.get("value")
+    if not isinstance(value, str):
+        raise ValueError(f"condition '{ctype}' requires a string 'value'")
+
+    case_sensitive = bool(condition.get("case_sensitive", False))
+
+    if ctype == "regex":
+        try:
+            pattern = re.compile(value, 0 if case_sensitive else re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError(f"invalid regex pattern {value!r}: {exc}") from exc
+
+        def _match_regex(message: Message) -> bool:
+            return pattern.search(message.content or "") is not None
+
+        return _match_regex
+
+    needle = value if case_sensitive else value.lower()
+
+    def _match_string(message: Message) -> bool:
+        content = message.content or ""
+        haystack = content if case_sensitive else content.lower()
+        if ctype == "contains":
+            return needle in haystack
+        if ctype == "not_contains":
+            return needle not in haystack
+        return haystack == needle  # equals
+
+    return _match_string
 
 
 @dataclass
@@ -45,11 +95,25 @@ SimulationNode = ScriptedNode | LLMNode | StopNode | BranchNode
 
 @dataclass
 class Edge:
-    """Directed edge from source to target, optionally guarded by a named predicate."""
+    """Directed edge from source to target, optionally guarded by a predicate.
+
+    A guard is either a named callable predicate (looked up in the graph's
+    `predicates` dict — not serializable, requires a caller-supplied dict on
+    `from_dict`) or a declarative `condition` dict (contains/not_contains/equals/
+    regex — fully data-authorable, no predicates dict required). Set at most one.
+    """
 
     source: str
     target: str
     predicate: str | None = None
+    condition: dict | None = None
+    _matcher: Callable[[Message], bool] | None = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.predicate is not None and self.condition is not None:
+            raise ValueError(f"edge {self.source}->{self.target}: set only one of 'predicate' or 'condition'")
+        if self.condition is not None:
+            self._matcher = _compile_condition(self.condition)
 
 
 @dataclass
@@ -91,7 +155,7 @@ class SimulationGraph:
 
         default_edges: dict[str, int] = {}
         for edge in self.edges:
-            if edge.predicate is None:
+            if edge.predicate is None and edge.condition is None:
                 default_edges[edge.source] = default_edges.get(edge.source, 0) + 1
                 if default_edges[edge.source] > 1:
                     raise ValueError(f"node '{edge.source}' has multiple unconditional edges; at most one is allowed")
@@ -132,18 +196,21 @@ class SimulationGraph:
     def resolve_next(self, node_id: str, last_response: Message) -> str | None:
         """Determine next node given current node and last agent response.
 
-        Evaluates predicated edges in order; first match wins.
-        An edge with predicate=None acts as default fallback.
-        Returns None if no edge matches (stay on current node).
+        Evaluates guarded edges (named predicate or declarative condition) in
+        order; first match wins. An edge with neither guard acts as default
+        fallback. Returns None if no edge matches (stay on current node).
         """
         outgoing = self.get_outgoing_edges(node_id)
         default_target: str | None = None
         for edge in outgoing:
-            if edge.predicate is None:
-                default_target = edge.target
-            else:
+            if edge.condition is not None:
+                if edge._matcher(last_response):
+                    return edge.target
+            elif edge.predicate is not None:
                 if self.predicates[edge.predicate](last_response):
                     return edge.target
+            else:
+                default_target = edge.target
         return default_target
 
     def to_dict(self) -> dict:
@@ -168,6 +235,8 @@ class SimulationGraph:
             e: dict = {"source": edge.source, "target": edge.target}
             if edge.predicate is not None:
                 e["predicate"] = edge.predicate
+            if edge.condition is not None:
+                e["condition"] = edge.condition
             serialized_edges.append(e)
 
         return {
@@ -180,11 +249,13 @@ class SimulationGraph:
     def from_dict(cls, data: dict, predicates: dict[str, Callable[[Message], bool]] | None = None) -> SimulationGraph:
         """Reconstruct graph from serialized dict and caller-supplied predicates.
 
-        Predicate functions are not serializable, so edges with predicate guards
-        require the caller to supply a matching predicates dict. If the serialized
-        data references predicates but none are provided, validation will raise
-        ValueError. For graphs loaded from golden.graph_config without explicit
-        predicates, only unconditional edges are supported.
+        Predicate functions are not serializable, so edges with named `predicate`
+        guards require the caller to supply a matching predicates dict — if the
+        serialized data references predicates but none are provided, this raises
+        ValueError. Edges with a declarative `condition` guard (contains/
+        not_contains/equals/regex) need no predicates dict at all, so graphs
+        loaded from golden.graph_config with only `condition`-guarded branching
+        work with zero caller-supplied callables.
         """
         for key in ("start", "nodes", "edges"):
             if key not in data:
@@ -222,7 +293,15 @@ class SimulationGraph:
             elif ntype == "branch":
                 nodes[nid] = BranchNode()
 
-        edges = [Edge(source=e["source"], target=e["target"], predicate=e.get("predicate")) for e in data["edges"]]
+        edges = [
+            Edge(
+                source=e["source"],
+                target=e["target"],
+                predicate=e.get("predicate"),
+                condition=e.get("condition"),
+            )
+            for e in data["edges"]
+        ]
 
         if not predicates:
             predicated = [e.predicate for e in edges if e.predicate is not None]

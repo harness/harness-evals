@@ -5,6 +5,26 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0]
+
+### Added
+
+- **Declarative `condition` guards on `SimulationGraph` edges**: GRAPH-mode conversation
+  edges can now branch on the agent's last response using a data-authorable condition —
+  `{"type": "contains" | "not_contains" | "equals" | "regex", "value": "...",
+  "case_sensitive"?: bool}` — instead of a named Python callable looked up in a
+  `predicates` dict. `SimulationGraph.from_dict()` accepts a purely `condition`-guarded
+  graph with **no** `predicates` argument at all, so a YAML/JSON-authored graph (destined
+  for `ConversationGolden.graph_config`) can express real branching without any custom
+  Python. All operators are **case-insensitive by default**; opt into literal matching
+  with `case_sensitive: true`. (This default intentionally differs from
+  `ContainsMetric`, whose default is case-sensitive — edge routing is intent detection,
+  where forgiving matching is the better default.) `regex` uses `re.search`, and an
+  invalid pattern raises `ValueError` at edge construction, not at match time. An edge
+  may set `predicate` or `condition` but not both. The existing named-callable
+  `predicate` path is unchanged and can still be combined with `condition` edges on the
+  same node — `condition` is additive, not a replacement.
+
 ## [0.23.1]
 
 ### Fixed

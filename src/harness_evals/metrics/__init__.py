@@ -10,6 +10,7 @@ from harness_evals.metrics.agent.step_efficiency import StepEfficiencyMetric
 from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
 from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
+from harness_evals.metrics.coding import StatementCoverageMetric, TestSuitePassMetric
 from harness_evals.metrics.composite.composite import CompositeMetric
 from harness_evals.metrics.composite.decision_composite import DecisionCompositeMetric
 from harness_evals.metrics.conversation.coherence import ConversationCoherenceMetric
@@ -127,6 +128,8 @@ __all__ = [
     "SchemaValidationMetric",
     "StructuralSimilarityMetric",
     "CompositeMetric",
+    "TestSuitePassMetric",
+    "StatementCoverageMetric",
     "DecisionCompositeMetric",
     "LatencyMetric",
     "TokenCostMetric",

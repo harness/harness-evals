@@ -113,6 +113,8 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         ComplianceMetric,
         CompositeMetric,
         ContainsMetric,
+        StatementCoverageMetric,
+        TestSuitePassMetric,
         ContextEntityRecallMetric,
         ContextPrecisionMetric,
         ContextRecallMetric,
@@ -205,6 +207,9 @@ def _build_registry() -> dict[str, type[BaseMetric]]:
         "schema_validation": SchemaValidationMetric,
         "structural_similarity": StructuralSimilarityMetric,
         "composite": CompositeMetric,
+        # Coding (grading-pipeline readers — pure metadata readers, no I/O)
+        "test_suite_pass": TestSuitePassMetric,
+        "statement_coverage": StatementCoverageMetric,
         # Decision primitives
         "decision_choice": ChoiceMetric,
         "decision_score": ScoreMetric,

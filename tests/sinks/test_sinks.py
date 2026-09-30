@@ -387,6 +387,26 @@ class TestJsonSink:
         assert "quality_pass_rate" in summary
         assert "dimensions" in summary
 
+    def test_finalize_summary_includes_avg_turn_latency(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        sink = JsonSink(str(path))
+        case = EvalCase(
+            input="scenario",
+            output="done",
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="a", latency_ms=1000.0),
+                Message(role="assistant", content="b", latency_ms=3000.0),
+            ],
+        )
+        sink.write(scores, case)
+        sink.finalize()
+
+        summary = json.loads(path.read_text().strip().splitlines()[-1])
+        assert summary["latency_scope"] == "turn"
+        assert summary["latency_n"] == 2
+        assert summary["avg_latency_ms"] == 2000.0
+
     def test_finalize_skips_summary_when_disabled(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"
         sink = JsonSink(str(path), include_summary=False)
@@ -473,6 +493,111 @@ class TestCsvSink:
             rows = list(csv.DictReader(f))
         assert rows[0]["passed"] == "False"
         assert rows[0]["reason"] == "too low"
+
+    def test_conversation_pivot_writes_one_row_per_case(self, tmp_path):
+        path = tmp_path / "conversation.csv"
+        sink = CsvSink(str(path), format="conversation_pivot", label="judge-a")
+        ec = EvalCase(
+            input="List unique component names",
+            output="done",
+            metadata={
+                "golden_id": "case-list-components",
+                "scenario": "List unique component names across repositories",
+            },
+        )
+        scores = [
+            Score(name="hallucination", value=1.0, threshold=0.7),
+            Score(
+                name="conversation_resolution",
+                value=0.95,
+                threshold=0.7,
+                metadata={
+                    "observed": {
+                        "duration_ms": 45210,
+                        "cost_usd": 0.12,
+                        "tool_count": 17,
+                        "num_turns": 3,
+                    }
+                },
+            ),
+        ]
+        sink.write(scores, ec)
+        sink.finalize()
+
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert len(rows) == 1
+        assert rows[0]["golden_id"] == "case-list-components"
+        assert rows[0]["scenario"] == "List unique component names across repositories"
+        assert rows[0]["hallucination"] == "judge-a: 1"
+        assert rows[0]["conversation_resolution"] == "judge-a: 0.95"
+        assert rows[0]["total_duration_ms"] == "judge-a: 45210"
+        assert rows[0]["total_cost_usd"] == "judge-a: 0.12"
+        assert rows[0]["total_tool_calls"] == "judge-a: 17"
+        assert rows[0]["total_turns"] == "judge-a: 3"
+
+    def test_conversation_pivot_custom_metrics(self, tmp_path):
+        path = tmp_path / "custom_pivot.csv"
+        sink = CsvSink(
+            str(path),
+            format="conversation_pivot",
+            label="judge-b",
+            pivot_metrics=[
+                "goal_accuracy",
+                "custom_hallucination",
+                "custom_role_violation",
+            ],
+        )
+        ec = EvalCase(
+            input="Create a billing label",
+            output="done",
+            metadata={"golden_id": "case-write-label", "scenario": "Create label"},
+        )
+        scores = [
+            Score(name="goal_accuracy", value=0.5, threshold=0.7),
+            Score(name="custom_hallucination", value=1.0, threshold=0.7),
+            Score(name="custom_role_violation", value=1.0, threshold=0.9),
+        ]
+        sink.write(scores, ec)
+        sink.finalize()
+
+        with open(path, newline="", encoding="utf-8") as f:
+            row = next(csv.DictReader(f))
+        assert "hallucination" not in row
+        assert row["custom_hallucination"] == "judge-b: 1"
+        assert row["custom_role_violation"] == "judge-b: 1"
+
+    def test_conversation_pivot_target_error_shows_question_marks(self, tmp_path):
+        path = tmp_path / "conversation_failed.csv"
+        sink = CsvSink(str(path), format="conversation_pivot", label="judge-b")
+        ec = EvalCase(
+            input="Explain the latest release notes",
+            output="",
+            metadata={
+                "golden_id": "case-release-notes",
+                "scenario": "Summarize the latest release notes",
+                "simulate_error": "401 Unauthorized",
+            },
+        )
+        scores = [
+            Score(
+                name="conversation_resolution",
+                value=0.0,
+                threshold=0.7,
+                metadata={"target_error": True},
+            ),
+            Score(name="hallucination", value=0.0, threshold=0.7),
+        ]
+        sink.write(scores, ec)
+        sink.finalize()
+
+        with open(path, newline="", encoding="utf-8") as f:
+            row = next(csv.DictReader(f))
+        assert row["conversation_resolution"] == "judge-b: ?"
+        assert row["hallucination"] == "judge-b: ?"
+        assert row["total_duration_ms"] == "judge-b: ?"
+        assert row["total_cost_usd"] == "judge-b: ?"
+        assert row["total_tool_calls"] == "judge-b: ?"
 
 
 # ---------------------------------------------------------------------------

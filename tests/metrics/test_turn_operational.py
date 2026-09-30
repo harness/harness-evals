@@ -73,6 +73,36 @@ class TestTurnLatencyMetric:
         assert score.value == 1.0
         assert score.metadata["turn_latencies"] == [200.0]
 
+    def test_metadata_latency_fallback(self):
+        messages = [
+            Message(role="user", content="q"),
+            Message(
+                role="assistant",
+                content="a",
+                metadata={"latency_ms": 250.0},
+            ),
+        ]
+        ec = EvalCase(input="q", output="a", messages=messages)
+        score = TurnLatencyMetric(max_ms_per_turn=500).measure(ec)
+        assert score.value == 1.0
+        assert score.metadata["turn_latencies"] == [250.0]
+
+    def test_non_numeric_metadata_latency_skipped(self):
+        messages = [
+            Message(role="user", content="q1"),
+            Message(
+                role="assistant",
+                content="a1",
+                metadata={"latency_ms": "250ms"},
+            ),
+            Message(role="user", content="q2"),
+            Message(role="assistant", content="a2", latency_ms=100.0),
+        ]
+        ec = EvalCase(input="q", output="a", messages=messages)
+        score = TurnLatencyMetric(max_ms_per_turn=500).measure(ec)
+        assert score.value == 1.0
+        assert score.metadata["turn_latencies"] == [100.0]
+
     def test_negative_latency_skipped(self):
         messages = [
             Message(role="user", content="q"),

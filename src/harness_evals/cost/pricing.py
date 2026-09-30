@@ -687,6 +687,17 @@ class ResolvedRateCardProvider:
             return None, winners
         return winners[0].canonical_model, winners
 
+    def _resolve_canonical_model(self, provider: str, requested_model: str, occurred_at: datetime) -> str | None:
+        candidates = [
+            row
+            for usage_type in _USAGE_TYPES
+            for row in self._rates_by_identity.get((provider, requested_model.casefold(), usage_type), ())
+            if row.account_id in {self.snapshot.account_id, GLOBAL_SCOPE}
+            and _active_at(row.effective_from, row.effective_to, occurred_at)
+        ]
+        models = {row.model.casefold() for row in candidates}
+        return candidates[0].model if len(models) == 1 else None
+
     @staticmethod
     def _dimension_rank(
         row: ResolvedRateRow,
@@ -777,6 +788,8 @@ class ResolvedRateCardProvider:
             return self._identity_incomplete(normalized_provider, requested_model)
 
         resolved_model, alias_winners = self._resolve_alias(normalized_provider, requested_model, occurred)
+        if resolved_model is None and not alias_winners:
+            resolved_model = self._resolve_canonical_model(normalized_provider, requested_model, occurred)
         if resolved_model is None:
             return self._identity_incomplete(normalized_provider, requested_model, alias_winners)
 

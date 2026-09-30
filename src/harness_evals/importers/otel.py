@@ -9,11 +9,29 @@ import asyncio
 import contextlib
 import enum
 import json
+import logging
+from collections.abc import Callable, Sequence
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.importers.base import BaseEvalCaseSource
+from harness_evals.importers.trace_batch import (
+    SpanTrace,
+    TraceCatalog,
+    complete_trace,
+    filter_traces,
+    group_traces,
+    merge_span_groups,
+    parse_bool,
+    parse_group_by,
+    parse_limit,
+    parse_tags,
+    time_window_from_extra,
+    traces_from_json,
+)
 from harness_evals.plugins import register_eval_case_source
 from harness_evals.refs import ResourceRef
 
@@ -72,21 +90,19 @@ def classify_span(span: dict[str, Any]) -> SpanType:
 
     if "gen_ai.tool.name" in attrs or "tool.name" in attrs:
         return SpanType.TOOL_CALL
-    # mcp.* spans are transport-layer (HTTP calls under execute_tool) — skip them
+    # Nested transport spans (e.g. MCP client HTTP under a tool call) — skip.
     if name.startswith("mcp."):
         return SpanType.OTHER
     if name.startswith("execute_tool") or ("tool" in name and "gen_ai" not in name):
         return SpanType.TOOL_CALL
 
-    # Langfuse-instrumented agent run spans
+    # Langfuse observation-type hints (agent / generation / tool:* naming).
     if attrs.get("langfuse.observation.type") == "agent":
         return SpanType.AGENT_ROOT
 
-    # Langfuse-instrumented LLM turn spans (e.g. "llm_turn_N")
     if attrs.get("langfuse.observation.type") == "generation":
         return SpanType.LLM_TURN
 
-    # Langfuse-instrumented tool spans (e.g. "tool:Read", "tool:Skill")
     if (
         attrs.get("langfuse.observation.type") == "span"
         and "gen_ai.tool.name" not in attrs
@@ -115,8 +131,9 @@ def classify_span(span: dict[str, Any]) -> SpanType:
 class OTELEvalCaseSource(BaseEvalCaseSource):
     """Fetch EvalCases from OpenTelemetry span data.
 
-    Produces a single EvalCase per trace with a deduplicated conversation
-    trajectory suitable for both per-turn and whole-conversation metrics.
+    Produces a conversation ``EvalCase`` (one per trace, or one per session when
+    ``group_by=session_id``) with a deduplicated trajectory suitable for both
+    per-turn and whole-conversation metrics.
 
     Follows the `OpenTelemetry Semantic Conventions for Generative AI
     <https://github.com/open-telemetry/semantic-conventions-genai>`_.
@@ -125,6 +142,29 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
 
         source = OTELEvalCaseSource()
         cases = await source.fetch(resolve("otel://./trace_spans.json"))
+
+        # Optional TraceCatalog (e.g. Langfuse) lists traces in a time window:
+        source = OTELEvalCaseSource(catalog=catalog)
+        cases = await source.fetch(ResourceRef(
+            source="otel",
+            id="",
+            extra={"lookback_days": 7, "group_by": "session_id", "limit": 200},
+        ))
+
+    ``ref.extra`` (all optional, vendor-neutral)::
+
+        lookback_days       Rolling window ending at ``now`` (int).
+        from_timestamp      Inclusive ISO-8601 / datetime start.
+        to_timestamp        Exclusive ISO-8601 / datetime end.
+        group_by            ``session_id`` / ``conversation_id`` to merge traces
+                            that share ``gen_ai.conversation.id`` (or ``session.id``).
+                            Default is one EvalCase per trace.
+        expand_sessions     If true and the catalog implements
+                            ``list_session_trace_ids``, hydrate every trace in
+                            each in-window session (resume / follow-up siblings).
+        limit               Cap listed traces (catalog) or output cases (files).
+        name, tags, user_id, session_id
+                            Forwarded to ``TraceCatalog.list_traces``.
 
     **Convenience methods**::
 
@@ -137,15 +177,65 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
 
     name = "otel"
 
-    async def fetch(self, ref: ResourceRef) -> list[EvalCase]:
-        """Load span JSON from the file path in ``ref.id`` and convert to EvalCase.
+    def __init__(
+        self,
+        catalog: TraceCatalog | None = None,
+        *,
+        now: Callable[[], datetime] | None = None,
+        concurrency: int = 10,
+    ) -> None:
+        self._catalog = catalog
+        self._now = now
+        self._concurrency = concurrency
 
-        ``ref.id`` must be a path to a JSON file containing a list of span dicts
-        (OTLP JSON export format).
+    async def fetch(self, ref: ResourceRef) -> list[EvalCase]:
+        """Load traces from a file/directory or a ``TraceCatalog``, then convert.
+
+        ``ref.id`` is a JSON file or directory of JSON files when no catalog
+        listing is requested. Catalog listing is used when ``catalog`` is set
+        and ``ref.id`` is empty, or when a time/filter extra is present.
         """
-        path = ref.id
-        raw = await asyncio.to_thread(_read_json_file, path)
-        return [self.from_span_json(raw)]
+        extra = ref.extra
+        group_by = parse_group_by(extra.get("group_by"))
+        window = time_window_from_extra(extra, now=self._now)
+        expand = parse_bool(extra.get("expand_sessions"))
+        has_list_filters = any(
+            extra.get(k) not in (None, "")
+            for k in ("lookback_days", "from_timestamp", "to_timestamp", "name", "tags", "user_id", "session_id")
+        )
+        use_catalog = self._catalog is not None and (not ref.id or has_list_filters)
+
+        if use_catalog:
+            if self._catalog is None:
+                raise ValueError(
+                    "OTELEvalCaseSource.fetch() time/filter extras require a TraceCatalog "
+                    "(pass catalog=... when constructing the source)"
+                )
+            limit = parse_limit(extra.get("limit"), default=100) or 100
+            listed = await asyncio.to_thread(
+                self._catalog.list_traces,
+                from_timestamp=window.from_timestamp,
+                to_timestamp=window.to_timestamp,
+                session_id=extra.get("session_id") or None,
+                name=extra.get("name") or None,
+                tags=parse_tags(extra.get("tags")),
+                user_id=extra.get("user_id") or None,
+                limit=limit,
+            )
+            traces = await self._hydrate_catalog_traces(listed, expand_sessions=expand)
+        elif ref.id:
+            traces = await asyncio.to_thread(_load_traces_from_path, ref.id)
+            traces = filter_traces(traces, window)
+            file_limit = parse_limit(extra.get("limit"), default=None)
+            if file_limit is not None:
+                traces = traces[:file_limit]
+        else:
+            raise ValueError(
+                "OTELEvalCaseSource.fetch() requires a file path in ref.id, or a TraceCatalog "
+                "with lookback_days / from_timestamp / filter extras"
+            )
+
+        return self.from_span_traces(traces, group_by=group_by)
 
     @staticmethod
     def from_spans(spans: list[Any]) -> EvalCase:
@@ -157,7 +247,7 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         return _build_conversation_eval_case(converted)
 
     @staticmethod
-    def from_span_json(data: list[dict[str, Any]]) -> EvalCase:
+    def from_span_json(data: list[dict[str, Any]] | dict[str, Any]) -> EvalCase:
         """Convert exported OTEL JSON span data to a single EvalCase.
 
         Builds a deduplicated conversation trajectory from all LLM and tool
@@ -170,8 +260,112 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         - ``tool_calls``: flattened list from execute_tool spans (authoritative)
         - ``token_count``: aggregated across all LLM turns
         - ``metadata``: trace_id, model, provider, per-turn token breakdown
+
+        For several traces (and optional session merge), use
+        :meth:`from_span_traces` or :meth:`fetch`.
         """
-        return _build_conversation_eval_case(data)
+        traces = traces_from_json(data)
+        if not traces:
+            return _build_conversation_eval_case([])
+        spans = [span for trace in traces for span in trace.spans]
+        return _build_conversation_eval_case(spans)
+
+    @staticmethod
+    def from_span_traces(
+        traces: Sequence[SpanTrace | dict[str, Any]],
+        *,
+        group_by: str | None = None,
+    ) -> list[EvalCase]:
+        """Convert one or more traces to EvalCases, optionally merging by session."""
+        normalized: list[SpanTrace] = []
+        for item in traces:
+            if isinstance(item, SpanTrace):
+                normalized.append(complete_trace(item))
+            elif isinstance(item, dict):
+                normalized.extend(traces_from_json([item]))
+            else:
+                raise TypeError(f"expected SpanTrace or dict, got {type(item).__name__}")
+
+        cases: list[EvalCase] = []
+        for group in group_traces(normalized, group_by=group_by):
+            spans, grouping_meta = merge_span_groups(group)
+            try:
+                case = _build_conversation_eval_case(spans)
+            except Exception as exc:
+                # One malformed session must not abort an online batch hydrate.
+                sample_id = None
+                if grouping_meta:
+                    sample_id = grouping_meta.get("session_id") or grouping_meta.get("trace_id")
+                if sample_id is None and spans:
+                    sample_id = (spans[0].get("attributes") or {}).get("session.id") or spans[0].get(
+                        "trace_id"
+                    )
+                logging.getLogger(__name__).warning(
+                    "Skipping session/trace that failed EvalCase build (%s): %s",
+                    sample_id or "unknown",
+                    exc,
+                )
+                continue
+            if grouping_meta:
+                meta = dict(case.metadata or {})
+                meta.update(grouping_meta)
+                case.metadata = meta
+            cases.append(case)
+        return cases
+
+    async def _hydrate_catalog_traces(
+        self,
+        listed: Sequence[SpanTrace],
+        *,
+        expand_sessions: bool,
+    ) -> list[SpanTrace]:
+        catalog = self._catalog
+        assert catalog is not None
+        stubs = [complete_trace(t) for t in listed]
+        if expand_sessions:
+            expander = getattr(catalog, "list_session_trace_ids", None)
+            if callable(expander):
+                seen: dict[str, SpanTrace] = {t.trace_id: t for t in stubs if t.trace_id}
+                session_ids = {t.session_id for t in stubs if t.session_id}
+                for session_id in session_ids:
+                    extra_ids = expander(session_id) or []
+                    for tid in extra_ids:
+                        if tid not in seen:
+                            seen[tid] = SpanTrace(spans=[], trace_id=tid, session_id=session_id)
+                stubs = list(seen.values())
+
+        sem = asyncio.Semaphore(self._concurrency)
+        log = logging.getLogger(__name__)
+
+        async def _load(stub: SpanTrace) -> SpanTrace | None:
+            if stub.spans:
+                return complete_trace(stub)
+            if not stub.trace_id:
+                return stub
+            try:
+                async with sem:
+                    spans = await asyncio.to_thread(catalog.load_spans, stub.trace_id)
+            except Exception as exc:
+                # Langfuse rejects some traces (e.g. observations > 80MB). Skip
+                # that id so the rest of the online batch can still hydrate.
+                log.warning(
+                    "Skipping trace that failed span hydrate (%s / session=%s): %s",
+                    stub.trace_id,
+                    stub.session_id or "unknown",
+                    exc,
+                )
+                return None
+            filled = SpanTrace(
+                spans=spans,
+                trace_id=stub.trace_id,
+                session_id=stub.session_id,
+                start_time=stub.start_time,
+                metadata=stub.metadata,
+            )
+            return complete_trace(filled)
+
+        loaded = await asyncio.gather(*[_load(s) for s in stubs])
+        return [trace for trace in loaded if trace is not None]
 
 
 # ------------------------------------------------------------------
@@ -254,8 +448,19 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
         elif span_type == SpanType.TOOL_CALL:
             tc = _extract_tool_from_span(span)
             tool_calls.append(tc)
-            if tc.output:
-                messages.append(Message(role="tool", content=str(tc.output)))
+            if tc.output is not None:
+                # Prefer structured JSON so hallucination grounding keeps list payloads.
+                if isinstance(tc.output, (dict, list)):
+                    content = json.dumps(tc.output, ensure_ascii=False)
+                else:
+                    content = str(tc.output)
+                messages.append(
+                    Message(
+                        role="tool",
+                        content=content,
+                        tool_calls=[ToolCall(name=tc.name, input=tc.input, output=tc.output)],
+                    )
+                )
 
     # If we found a user input, prepend it as the first message
     if user_input and (not messages or messages[0].role != "user"):
@@ -311,11 +516,79 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
 
     latency_ms = _compute_trace_latency(sorted_spans)
 
+    # Prefer per-span usage cost. When both agent-root and child spans carry
+    # cost, keep children only (roots may stamp a rolled-up total). Otherwise
+    # fall back to per-trace totals stamped once per source trace — session
+    # merges concatenate traces, so summing those stamps is required.
     cost_usd: float | None = None
-    raw_cost = meta_attrs.get("gen_ai.usage.cost")
-    if raw_cost is not None:
-        with contextlib.suppress(TypeError, ValueError):
-            cost_usd = float(raw_cost)
+    child_cost_total = 0.0
+    root_cost_total = 0.0
+    saw_child_cost = False
+    saw_root_cost = False
+    trace_cost_total = 0.0
+    saw_trace_cost = False
+    for span in sorted_spans:
+        attrs = span.get("attributes") or {}
+        raw_obs = attrs.get("gen_ai.usage.cost")
+        if raw_obs is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                value = float(raw_obs)
+                if classify_span(span) == SpanType.AGENT_ROOT:
+                    root_cost_total += value
+                    saw_root_cost = True
+                else:
+                    child_cost_total += value
+                    saw_child_cost = True
+        raw_trace = attrs.get("langfuse.trace.total_cost")
+        if raw_trace is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                trace_cost_total += float(raw_trace)
+                saw_trace_cost = True
+    if saw_child_cost and child_cost_total > 0:
+        cost_usd = child_cost_total
+    elif saw_root_cost and root_cost_total > 0:
+        cost_usd = root_cost_total
+    elif saw_trace_cost and trace_cost_total > 0:
+        cost_usd = trace_cost_total
+    else:
+        raw_cost = meta_attrs.get("gen_ai.usage.cost")
+        if raw_cost is not None:
+            with contextlib.suppress(TypeError, ValueError):
+                parsed = float(raw_cost)
+                if parsed > 0:
+                    cost_usd = parsed
+
+    # Prefer Langfuse trace-level I/O when generation spans omitted payloads.
+    # For session merges, earliest non-empty prompt is the initial user input;
+    # latest non-empty text is the final agent answer.
+    if not user_input:
+        for span in sorted_spans:
+            attrs = span.get("attributes") or {}
+            text = _text_from_langfuse_io(
+                attrs.get("langfuse.trace.input"),
+                # Prefer short `prompt` over fuller `user_message` wrappers.
+                keys=("prompt", "user_message", "text", "input"),
+            )
+            if text:
+                user_input = text
+                break
+    if not last_output:
+        for span in reversed(sorted_spans):
+            attrs = span.get("attributes") or {}
+            text = _text_from_langfuse_io(
+                attrs.get("langfuse.trace.output"),
+                keys=("text", "output", "content"),
+            )
+            if text:
+                last_output = text
+                break
+
+    if user_input and (not messages or messages[0].role != "user"):
+        messages.insert(0, Message(role="user", content=user_input))
+    elif user_input and messages and messages[0].role == "user" and _looks_like_injected_user_context(
+        messages[0].content or ""
+    ):
+        messages[0] = Message(role="user", content=user_input)
 
     return EvalCase(
         input=user_input or "",
@@ -338,9 +611,21 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
 def _extract_user_input_from_span(attrs: dict) -> str:
     """Extract the user's text input from span attributes.
 
-    Checks (in order): gen_ai.input_messages, gen_ai.input.messages,
-    gen_ai.prompt, gen_ai.input.
+    Prefer Langfuse *trace*-level input (the session prompt) over generation
+    ``input_messages``, which may end with injected role=user context that is
+    not the original user question.
     """
+    # Langfuse trace I/O: common dict shapes ({prompt}, {user_message}, …).
+    for key in ("langfuse.trace.input", "langfuse.observation.input"):
+        raw = attrs.get(key)
+        if not raw:
+            continue
+        text = _text_from_langfuse_io(
+            raw, keys=("prompt", "user_message", "text", "input")
+        )
+        if text:
+            return text
+
     # New semconv: gen_ai.input_messages or gen_ai.input.messages
     for key in ("gen_ai.input_messages", "gen_ai.input.messages"):
         raw = attrs.get(key)
@@ -349,16 +634,15 @@ def _extract_user_input_from_span(attrs: dict) -> str:
         parsed = raw if isinstance(raw, list) else _try_json(raw)
         if not isinstance(parsed, list):
             continue
-        # Walk in reverse to find the last user message
+        # Walk in reverse to find the last real user message (skip injections).
         for msg in reversed(parsed):
             if not isinstance(msg, dict) or msg.get("role") != "user":
                 continue
             text = _text_from_parts(msg.get("parts", []))
-            if text:
+            if not text and "content" in msg and isinstance(msg["content"], str):
+                text = msg["content"]
+            if text and not _looks_like_injected_user_context(text):
                 return text
-            # Fallback: direct content field
-            if "content" in msg and isinstance(msg["content"], str):
-                return msg["content"]
 
     # Legacy: gen_ai.prompt / gen_ai.input
     prompt = attrs.get("gen_ai.prompt") or attrs.get("gen_ai.input")
@@ -368,24 +652,36 @@ def _extract_user_input_from_span(attrs: dict) -> str:
             if isinstance(parsed, list):
                 for entry in reversed(parsed):
                     if isinstance(entry, dict) and entry.get("role") == "user":
-                        return entry.get("content", "")
+                        content = entry.get("content", "")
+                        if isinstance(content, str) and content and not _looks_like_injected_user_context(
+                            content
+                        ):
+                            return content
         except (json.JSONDecodeError, TypeError):
-            return prompt
-
-    # Langfuse instrumentation: langfuse.trace.input / langfuse.observation.input
-    # These are JSON objects with a "user_message" or "prompt" field on root/agent spans.
-    for key in ("langfuse.trace.input", "langfuse.observation.input"):
-        raw = attrs.get(key)
-        if not raw:
-            continue
-        parsed = raw if isinstance(raw, dict) else _try_json(raw)
-        if not isinstance(parsed, dict):
-            continue
-        text = parsed.get("user_message") or parsed.get("prompt")
-        if isinstance(text, str) and text:
-            return text
+            if not _looks_like_injected_user_context(prompt):
+                return prompt
 
     return ""
+
+
+def _text_from_langfuse_io(raw: object, *, keys: tuple[str, ...]) -> str:
+    """Pull a human prompt/answer string out of Langfuse trace input/output shapes."""
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    parsed = raw if isinstance(raw, dict) else _try_json(raw)
+    if not isinstance(parsed, dict):
+        return ""
+    for key in keys:
+        val = parsed.get(key)
+        if isinstance(val, str) and val.strip():
+            return val
+    return ""
+
+
+def _looks_like_injected_user_context(text: str) -> bool:
+    """True for common role=user injections that are not the session prompt."""
+    head = text.lstrip()[:80].lower()
+    return head.startswith("<system-reminder>") or head.startswith("base directory for this skill:")
 
 
 def _recover_intermediate_user_messages(attrs: dict, messages: list[Message]) -> None:
@@ -417,6 +713,38 @@ def _recover_intermediate_user_messages(attrs: dict, messages: list[Message]) ->
         return
 
 
+def _stringify_content(value: Any) -> str | None:
+    """Normalize message/part content to a plain string (or ``None`` if empty).
+
+    Langfuse / GenAI exporters sometimes store assistant ``content`` as a
+    multipart list (``[{"type": "text", "text": "..."}]``) or nest lists.
+    Callers that ``"\\n".join(...)`` need scalars only.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, list):
+        # Prefer structured parts extraction; otherwise flatten recursively.
+        from_parts = _text_from_parts(value)
+        if from_parts:
+            return from_parts
+        chunks: list[str] = []
+        for item in value:
+            chunk = _stringify_content(item)
+            if chunk:
+                chunks.append(chunk)
+        return "\n".join(chunks) if chunks else None
+    if isinstance(value, dict):
+        for key in ("text", "content", "response", "result"):
+            if key in value:
+                chunk = _stringify_content(value.get(key))
+                if chunk:
+                    return chunk
+        return None
+    return str(value) or None
+
+
 def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
     """Extract assistant output text and tool calls from an LLM span's output.
 
@@ -438,14 +766,16 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
             if not isinstance(msg, dict):
                 continue
             parts = msg.get("parts", [])
-            text = _text_from_parts(parts)
+            text = _text_from_parts(parts) if isinstance(parts, list) else None
             if text:
                 text_parts.append(text)
-            tcs = _tool_calls_from_parts(parts)
-            tool_calls.extend(tcs)
-            # Fallback: direct content
+            if isinstance(parts, list):
+                tool_calls.extend(_tool_calls_from_parts(parts))
+            # Fallback: direct content (may be str or multipart list)
             if not parts and "content" in msg:
-                text_parts.append(msg["content"])
+                chunk = _stringify_content(msg.get("content"))
+                if chunk:
+                    text_parts.append(chunk)
 
         content = "\n".join(text_parts) if text_parts else None
         return content, tool_calls
@@ -456,13 +786,13 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
         try:
             parsed = json.loads(completion)
             if isinstance(parsed, dict) and "content" in parsed:
-                return parsed["content"], []
+                return _stringify_content(parsed["content"]), []
             if isinstance(parsed, dict) and "role" in parsed:
-                return parsed.get("content"), []
+                return _stringify_content(parsed.get("content")), []
             if isinstance(parsed, list):
                 for entry in parsed:
                     if isinstance(entry, dict) and "content" in entry:
-                        return entry["content"], []
+                        return _stringify_content(entry["content"]), []
         except (json.JSONDecodeError, TypeError):
             return completion, []
 
@@ -480,9 +810,12 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
                 tcs: list[ToolCall] = []
                 for part in content:
                     if not isinstance(part, dict):
+                        chunk = _stringify_content(part)
+                        if chunk:
+                            text_parts.append(chunk)
                         continue
                     if part.get("type") == "text":
-                        t = part.get("text") or part.get("content") or ""
+                        t = _stringify_content(part.get("text") or part.get("content"))
                         if t:
                             text_parts.append(t)
                     elif part.get("type") == "tool_use":
@@ -562,11 +895,16 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
     if not tool_output:
         raw = attrs.get("langfuse.observation.output")
         if raw:
-            parsed = raw if isinstance(raw, dict) else _try_json(raw)
+            parsed = raw if isinstance(raw, (dict, list, str, int, float, bool)) else _try_json(raw)
             if isinstance(parsed, dict):
                 content = parsed.get("content")
                 if content is not None:
                     tool_output = content if isinstance(content, str) else json.dumps(content)
+                else:
+                    # Full observation payload (list/get responses often omit nested content).
+                    tool_output = parsed
+            elif parsed is not None:
+                tool_output = parsed
 
     return ToolCall(name=tool_name, input=tool_input, output=tool_output)
 
@@ -584,21 +922,25 @@ def _text_from_parts(parts: list) -> str | None:
     """
     if not parts:
         return None
-    texts = []
+    texts: list[str] = []
     for part in parts:
         if not isinstance(part, dict):
+            chunk = _stringify_content(part)
+            if chunk:
+                texts.append(chunk)
             continue
         ptype = part.get("type", "text")
         if ptype == "text":
-            text = part.get("content") or part.get("text") or ""
+            text = _stringify_content(part.get("content") or part.get("text"))
             if text:
                 texts.append(text)
         elif ptype == "tool_call_response":
             # Include tool results as text in the trajectory
             # spec field is "response"; fall back to "result"/"content" for older exporters
             result = part.get("response") or part.get("content") or part.get("result") or ""
-            if result:
-                texts.append(result if isinstance(result, str) else json.dumps(result))
+            text = _stringify_content(result)
+            if text:
+                texts.append(text)
     return "\n".join(texts) if texts else None
 
 
@@ -719,9 +1061,19 @@ def _set_if(d: dict, key: str, val: Any) -> None:
         d[key] = val
 
 
-def _read_json_file(path: str) -> list[dict[str, Any]]:
+def _read_json_file(path: str) -> Any:
     with open(path) as f:
-        return json.load(f)  # type: ignore[no-any-return]
+        return json.load(f)
+
+
+def _load_traces_from_path(path: str) -> list[SpanTrace]:
+    target = Path(path)
+    if target.is_dir():
+        traces: list[SpanTrace] = []
+        for file_path in sorted(target.glob("*.json")):
+            traces.extend(traces_from_json(_read_json_file(str(file_path))))
+        return traces
+    return traces_from_json(_read_json_file(path))
 
 
 def _try_json(val: Any) -> Any:

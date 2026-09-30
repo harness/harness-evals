@@ -28,6 +28,36 @@ def _enrich_score(score: Score, metric: BaseMetric) -> None:
     score.metadata.setdefault("dimension", metric.dimension.value)
 
 
+def _attach_usage(score: Score, usage: TokenUsage) -> None:
+    """Copy captured LLM judge usage onto score metadata (setdefault)."""
+    if usage.input_tokens is not None or usage.output_tokens is not None:
+        if score.metadata is None:
+            score.metadata = {}
+        score.metadata.setdefault("input_tokens", usage.input_tokens)
+        score.metadata.setdefault("output_tokens", usage.output_tokens)
+    if usage.cost_usd is not None:
+        if score.metadata is None:
+            score.metadata = {}
+        score.metadata.setdefault("cost_usd", usage.cost_usd)
+    if usage.by_model:
+        if score.metadata is None:
+            score.metadata = {}
+        score.metadata.setdefault(
+            "llm_spend_by_model",
+            {
+                model: {
+                    "input_tokens": spend.input_tokens,
+                    "output_tokens": spend.output_tokens,
+                    "cost_usd": round(spend.cost_usd, 8),
+                    "call_count": spend.call_count,
+                }
+                for model, spend in usage.by_model.items()
+            },
+        )
+        if len(usage.by_model) == 1:
+            score.metadata.setdefault("llm_model", next(iter(usage.by_model)))
+
+
 def _finalize_sinks(sinks: list[BaseSink] | None) -> None:
     """Call finalize() and shutdown() on all sinks (no-op for sinks that don't override)."""
     if not sinks:
@@ -56,19 +86,21 @@ def evaluate(
     scores: list[Score] = []
     for metric in metrics:
         t0 = time.perf_counter()
-        try:
-            score = metric.measure(eval_case)
-        except Exception as e:
-            score = Score(
-                name=metric.name,
-                value=0.0,
-                threshold=metric.threshold,
-                reason=f"Metric raised: {e}",
-            )
+        with collect_token_usage() as usage:
+            try:
+                score = metric.measure(eval_case)
+            except Exception as e:
+                score = Score(
+                    name=metric.name,
+                    value=0.0,
+                    threshold=metric.threshold,
+                    reason=f"Metric raised: {e}",
+                )
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         if score is not None:
             score.scoring_duration_ms = elapsed_ms
             _enrich_score(score, metric)
+            _attach_usage(score, usage)
             scores.append(score)
 
     if sinks:
@@ -126,32 +158,7 @@ async def a_evaluate(
         if score is not None:
             score.scoring_duration_ms = elapsed_ms
             _enrich_score(score, metric)
-            if usage.input_tokens is not None or usage.output_tokens is not None:
-                if score.metadata is None:
-                    score.metadata = {}
-                score.metadata.setdefault("input_tokens", usage.input_tokens)
-                score.metadata.setdefault("output_tokens", usage.output_tokens)
-            if usage.cost_usd is not None:
-                if score.metadata is None:
-                    score.metadata = {}
-                score.metadata.setdefault("cost_usd", usage.cost_usd)
-            if usage.by_model:
-                if score.metadata is None:
-                    score.metadata = {}
-                score.metadata.setdefault(
-                    "llm_spend_by_model",
-                    {
-                        model: {
-                            "input_tokens": spend.input_tokens,
-                            "output_tokens": spend.output_tokens,
-                            "cost_usd": round(spend.cost_usd, 8),
-                            "call_count": spend.call_count,
-                        }
-                        for model, spend in usage.by_model.items()
-                    },
-                )
-                if len(usage.by_model) == 1:
-                    score.metadata.setdefault("llm_model", next(iter(usage.by_model)))
+            _attach_usage(score, usage)
             scores.append(score)
 
     if sinks:

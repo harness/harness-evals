@@ -485,3 +485,387 @@ class TestMultiTurnUserRecovery:
         assert roles == ["user", "assistant", "user", "assistant"]
         assert ec.messages[2].content == "second question"
         assert ec.output == "second answer"
+
+
+def _chat_spans(user: str, assistant: str, *, session: str, trace_id: str, start_nano: int) -> list[dict]:
+    return [
+        {
+            "name": "chat",
+            "span_id": f"{trace_id}-llm",
+            "trace_id": trace_id,
+            "parent_span_id": None,
+            "start_time_unix_nano": start_nano,
+            "end_time_unix_nano": start_nano + 1_000_000_000,
+            "attributes": {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.conversation.id": session,
+                "gen_ai.input_messages": json.dumps(
+                    [{"role": "user", "parts": [{"type": "text", "content": user}]}]
+                ),
+                "gen_ai.output_messages": json.dumps(
+                    [{"role": "assistant", "parts": [{"type": "text", "content": assistant}]}]
+                ),
+            },
+        }
+    ]
+
+
+@pytest.mark.unit
+class TestOTELSessionGrouping:
+    def test_merges_traces_that_share_session_id(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        traces = [
+            SpanTrace(
+                spans=_chat_spans("first", "ack", session="sess-1", trace_id="t1", start_nano=1_000_000_000),
+                trace_id="t1",
+                session_id="sess-1",
+            ),
+            SpanTrace(
+                spans=_chat_spans("second", "done", session="sess-1", trace_id="t2", start_nano=3_000_000_000),
+                trace_id="t2",
+                session_id="sess-1",
+            ),
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 1
+        roles = [m.role for m in cases[0].messages]
+        assert roles == ["user", "assistant", "user", "assistant"]
+        assert cases[0].messages[2].content == "second"
+        assert cases[0].output == "done"
+        assert cases[0].metadata["session_id"] == "sess-1"
+        assert cases[0].metadata["trace_ids"] == ["t1", "t2"]
+
+    def test_session_merge_sums_per_trace_total_cost(self):
+        """Trace-level cost stamps (one per source trace) must sum on merge."""
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        t1 = _chat_spans("first", "ack", session="sess-1", trace_id="t1", start_nano=1_000_000_000)
+        t2 = _chat_spans("second", "done", session="sess-1", trace_id="t2", start_nano=3_000_000_000)
+        # Mirror Langfuse load_spans: stamp total_cost once on the first span
+        # of each trace (no gen_ai.usage.cost → fallback path).
+        t1[0]["attributes"]["langfuse.trace.total_cost"] = 0.01
+        t2[0]["attributes"]["langfuse.trace.total_cost"] = 0.02
+        traces = [
+            SpanTrace(spans=t1, trace_id="t1", session_id="sess-1"),
+            SpanTrace(spans=t2, trace_id="t2", session_id="sess-1"),
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 1
+        assert cases[0].cost_usd == pytest.approx(0.03)
+
+    def test_prefers_child_usage_cost_over_rolled_up_root(self):
+        """Skip agent-root usage cost when child spans also carry cost."""
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "agent",
+                "span_id": "root",
+                "trace_id": "t1",
+                "parent_span_id": None,
+                "attributes": {
+                    "gen_ai.operation.name": "invoke_agent",
+                    "langfuse.observation.type": "agent",
+                    "gen_ai.usage.cost": 0.03,
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
+                    ),
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 4,
+            },
+            {
+                "name": "llm_turn_1",
+                "span_id": "llm1",
+                "trace_id": "t1",
+                "parent_span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.usage.cost": 0.01,
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "a"}]}]
+                    ),
+                },
+                "start_time_unix_nano": 2,
+                "end_time_unix_nano": 3,
+            },
+            {
+                "name": "llm_turn_2",
+                "span_id": "llm2",
+                "trace_id": "t1",
+                "parent_span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.usage.cost": 0.02,
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "b"}]}]
+                    ),
+                },
+                "start_time_unix_nano": 3,
+                "end_time_unix_nano": 4,
+            },
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.cost_usd == pytest.approx(0.03)
+
+    def test_root_only_usage_cost_is_kept(self):
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "agent",
+                "span_id": "root",
+                "trace_id": "t1",
+                "parent_span_id": None,
+                "attributes": {
+                    "gen_ai.operation.name": "invoke_agent",
+                    "langfuse.observation.type": "agent",
+                    "gen_ai.usage.cost": 0.05,
+                    "gen_ai.input_messages": json.dumps(
+                        [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
+                    ),
+                    "gen_ai.output_messages": json.dumps(
+                        [{"role": "assistant", "parts": [{"type": "text", "content": "ok"}]}]
+                    ),
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.cost_usd == pytest.approx(0.05)
+
+    def test_missing_session_id_stays_one_case_per_trace(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        traces = [
+            SpanTrace(spans=_chat_spans("a", "b", session="", trace_id="t1", start_nano=1), trace_id="t1"),
+            SpanTrace(spans=_chat_spans("c", "d", session="", trace_id="t2", start_nano=2), trace_id="t2"),
+        ]
+        # strip conversation ids so grouping cannot collapse them
+        for trace in traces:
+            for span in trace.spans:
+                span["attributes"].pop("gen_ai.conversation.id", None)
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 2
+
+    def test_distinct_sessions_stay_separate(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        traces = [
+            SpanTrace(
+                spans=_chat_spans("a", "b", session="s1", trace_id="t1", start_nano=1),
+                trace_id="t1",
+                session_id="s1",
+            ),
+            SpanTrace(
+                spans=_chat_spans("c", "d", session="s2", trace_id="t2", start_nano=2),
+                trace_id="t2",
+                session_id="s2",
+            ),
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 2
+
+
+@pytest.mark.unit
+class TestOTELTimeWindowFetch:
+    @pytest.mark.asyncio
+    async def test_lookback_days_drops_old_file_traces(self, tmp_path):
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 9, 21, tzinfo=timezone.utc)
+        old_nano = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp() * 1e9)
+        new_nano = int(datetime(2026, 9, 20, tzinfo=timezone.utc).timestamp() * 1e9)
+        payload = {
+            "traces": [
+                {
+                    "trace_id": "old",
+                    "session_id": "s-old",
+                    "spans": _chat_spans("old", "old-out", session="s-old", trace_id="old", start_nano=old_nano),
+                },
+                {
+                    "trace_id": "new",
+                    "session_id": "s-new",
+                    "spans": _chat_spans("new", "new-out", session="s-new", trace_id="new", start_nano=new_nano),
+                },
+            ]
+        }
+        path = tmp_path / "traces.json"
+        path.write_text(json.dumps(payload))
+
+        source = OTELEvalCaseSource(now=lambda: now)
+        cases = await source.fetch(
+            ResourceRef(source="otel", id=str(path), extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert cases[0].input == "new"
+
+    @pytest.mark.asyncio
+    async def test_catalog_lists_and_merges_sessions(self):
+        from datetime import datetime, timezone
+
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        class _Catalog:
+            def list_traces(self, **kwargs):
+                assert kwargs["from_timestamp"] is not None
+                return [
+                    SpanTrace(spans=[], trace_id="t1", session_id="sess"),
+                    SpanTrace(spans=[], trace_id="t2", session_id="sess"),
+                ]
+
+            def load_spans(self, trace_id: str):
+                start = 1_000_000_000 if trace_id == "t1" else 3_000_000_000
+                user = "first" if trace_id == "t1" else "second"
+                return _chat_spans(user, user + "-out", session="sess", trace_id=trace_id, start_nano=start)
+
+        source = OTELEvalCaseSource(
+            catalog=_Catalog(),
+            now=lambda: datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        cases = await source.fetch(
+            ResourceRef(source="otel", id="", extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert [m.content for m in cases[0].messages if m.role == "user"] == ["first", "second"]
+
+    @pytest.mark.asyncio
+    async def test_hydrate_skips_traces_that_fail_load_spans(self):
+        from datetime import datetime, timezone
+
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        class _Catalog:
+            def list_traces(self, **kwargs):
+                return [
+                    SpanTrace(spans=[], trace_id="ok", session_id="s-ok"),
+                    SpanTrace(spans=[], trace_id="huge", session_id="s-huge"),
+                ]
+
+            def load_spans(self, trace_id: str):
+                if trace_id == "huge":
+                    raise RuntimeError(
+                        "Observations in trace are too large: 80.11MB exceeds limit of 80.00MB"
+                    )
+                return _chat_spans(
+                    "ok prompt",
+                    "ok-out",
+                    session="s-ok",
+                    trace_id="ok",
+                    start_nano=1_000_000_000,
+                )
+
+        source = OTELEvalCaseSource(
+            catalog=_Catalog(),
+            now=lambda: datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        cases = await source.fetch(
+            ResourceRef(source="otel", id="", extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert cases[0].input == "ok prompt"
+
+    @pytest.mark.asyncio
+    async def test_time_filters_without_catalog_or_path_raise(self):
+        source = OTELEvalCaseSource()
+        with pytest.raises(ValueError, match="TraceCatalog"):
+            await source.fetch(ResourceRef(source="otel", id="", extra={"lookback_days": 7}))
+
+
+@pytest.mark.unit
+class TestLangfuseTraceIoRecovery:
+    """Recover session prompt from langfuse.trace.input when tool spans dominate."""
+
+    def test_prefers_prompt_over_user_message_when_only_tools(self):
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "http.request",
+                "span_id": "1",
+                "trace_id": "t1",
+                "parent_span_id": "root",
+                "attributes": {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.name": "http.request",
+                    "gen_ai.tool.call.result": '{"ok": true}',
+                    "langfuse.trace.input": {
+                        "prompt": "Summarize the failed job logs",
+                        "user_message": "<extra_context>\nSummarize the failed job logs",
+                    },
+                    "langfuse.trace.output": {
+                        "status": "completed",
+                        "text": "## Summary: Missing configuration key",
+                    },
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.input == "Summarize the failed job logs"
+        assert ec.output == "## Summary: Missing configuration key"
+
+    def test_prefers_trace_prompt_over_system_reminder_input_messages(self):
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "chat.completion",
+                "span_id": "2",
+                "trace_id": "t2",
+                "parent_span_id": None,
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.input_messages": [
+                        {
+                            "role": "user",
+                            "content": "<system-reminder>\nThe following skills are available\n",
+                        }
+                    ],
+                    "gen_ai.output_messages": [{"role": "assistant", "content": "done"}],
+                    "langfuse.trace.input": {
+                        "prompt": "Ask a support question",
+                        "user_message": "<extra_context>\nAsk a support question",
+                    },
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.input == "Ask a support question"
+        assert ec.output == "done"
+
+    def test_output_messages_list_content_does_not_crash(self):
+        """Assistant content may be multipart list (Langfuse / GenAI exporters)."""
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "chat.completion",
+                "span_id": "1",
+                "trace_id": "t-list-content",
+                "parent_span_id": None,
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.input_messages": [{"role": "user", "content": "hi"}],
+                    "gen_ai.output_messages": [
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "hello "},
+                                {"type": "text", "text": "world"},
+                            ],
+                        }
+                    ],
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert "hello" in (ec.output or "")
+        assert "world" in (ec.output or "")

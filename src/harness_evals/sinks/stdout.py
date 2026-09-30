@@ -6,9 +6,11 @@ from harness_evals.core.sink import BaseSink
 from harness_evals.summary import (
     UNKNOWN_DIMENSION,
     format_judge_spend,
+    format_turn_latency,
     order_dimensions,
     summarize,
     summarize_judge_spend,
+    summarize_turn_latency,
 )
 
 
@@ -29,6 +31,7 @@ class StdoutSink(BaseSink):
         self._summary = summary
         self._label = label
         self._all_scores: list[list[Score]] = []
+        self._eval_cases: list[EvalCase] = []
 
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
         print(f"--- Eval: input={str(eval_case.input)[:60]!r} ---")
@@ -40,6 +43,7 @@ class StdoutSink(BaseSink):
             print(line)
         if self._summary:
             self._all_scores.append(list(scores))
+            self._eval_cases.append(eval_case)
 
     def finalize(self) -> None:
         if not self._summary or not self._all_scores:
@@ -75,7 +79,11 @@ class StdoutSink(BaseSink):
                 print(
                     f"  ({unknown.metric_count} metric(s) with no declared dimension, shown as '{UNKNOWN_DIMENSION}')"
                 )
+        turn_latency = summarize_turn_latency(self._eval_cases)
+        if turn_latency is not None:
+            print(format_turn_latency(turn_latency))
         judge_spend = summarize_judge_spend(self._all_scores)
         if judge_spend is not None:
             print(format_judge_spend(judge_spend))
         self._all_scores.clear()
+        self._eval_cases.clear()

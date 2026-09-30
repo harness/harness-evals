@@ -5,7 +5,7 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.24.0]
+## [0.24.5]
 
 ### Added
 
@@ -65,6 +65,90 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   calling nothing is the strongest defence against a tool-abuse attack, every
   correctly-refused attack was being reported as ungradeable. It now returns
   `[]`, matching `coerce_messages`.
+
+## [0.24.4]
+
+### Added
+
+- **Golden / conversation summary turn latency**: JSONL summary records and
+  stdout now report mean assistant-turn latency (`avg_latency_ms`,
+  `latency_n`, `latency_scope=turn`). `ConversationalStreamingHttpTarget`
+  stamps `Message.latency_ms` (not only metadata), and conversation
+  `EvalCase.latency_ms` is the sum of measured turn latencies.
+
+### Fixed
+
+- **Langfuse self-hosted observations hydrate**: SDK 4+ maps
+  `api.observations.get_many` to Cloud-only `/api/public/v2/observations`.
+  The importer now falls back to `api.legacy.observations_v1` (or embedded
+  `trace.observations`) on that 404, pins `langfuse>=2.0,<4`, and paginates
+  v1 observation pages.
+- **OTEL / Langfuse list-shaped assistant content**:
+  `_extract_output_from_span` no longer crashes with
+  `TypeError: sequence item 0: expected str instance, list found` when
+  `gen_ai.output_messages[].content` is a multipart list. Session merges
+  also skip individual malformed traces instead of aborting the batch.
+- **`pyjwt`**: bump optional `[harness]` floor to `>=2.14.0` (CVE-2026-102268
+  and related HIGH findings).
+
+## [0.24.3]
+
+### Fixed
+
+- **OTEL / Langfuse hydrate**: `_hydrate_catalog_traces` skips individual traces
+  that fail `load_spans` (e.g. Langfuse `Observations in trace are too large`)
+  instead of aborting the whole online session batch via `asyncio.gather`.
+
+## [0.24.2]
+
+### Fixed
+
+- **Canonical rate-card models**: price a requested model directly when it already
+  matches an active canonical rate identity and no alias row matches, while
+  preserving explicit alias precedence and ambiguity handling.
+
+## [0.24.1]
+
+### Added
+
+- **Production-trace conversation eval path**: `TraceCatalog` /
+  `LangfuseTraceCatalog`, OTEL `lookback_days` + `group_by=session_id` session
+  merge, and conversation-pivot CSV duration/cost/tool totals from generic
+  score ``metadata.observed`` usage telemetry.
+
+### Fixed
+
+- **`evaluate()` judge spend**: sync path records token/cost metadata (parity with
+  `a_evaluate()`).
+- **Langfuse → OTEL**: stamp observation cost/tokens and trace I/O onto spans;
+  keep fuller tool results for downstream grounding.
+- **Session-merge cost**: when falling back to a per-trace total stamped once
+  per source trace, sum those stamps across a merged session instead of
+  keeping only the first. When both agent-root and child spans carry
+  per-span usage cost, prefer children so a rolled-up root total is not
+  double-counted.
+- **Dependency CVEs**: bump locked `anyio` (≥4.14.2), `httpx2` / `httpcore2`
+  (≥2.12.0 / ≥2.10.0) for CVE-2026-63374 / CVE-2026-84381 / CVE-2026-84382.
+
+## [0.24.0]
+
+### Added
+
+- **Declarative `condition` guards on `SimulationGraph` edges**: GRAPH-mode conversation
+  edges can now branch on the agent's last response using a data-authorable condition —
+  `{"type": "contains" | "not_contains" | "equals" | "regex", "value": "...",
+  "case_sensitive"?: bool}` — instead of a named Python callable looked up in a
+  `predicates` dict. `SimulationGraph.from_dict()` accepts a purely `condition`-guarded
+  graph with **no** `predicates` argument at all, so a YAML/JSON-authored graph (destined
+  for `ConversationGolden.graph_config`) can express real branching without any custom
+  Python. All operators are **case-insensitive by default**; opt into literal matching
+  with `case_sensitive: true`. (This default intentionally differs from
+  `ContainsMetric`, whose default is case-sensitive — edge routing is intent detection,
+  where forgiving matching is the better default.) `regex` uses `re.search`, and an
+  invalid pattern raises `ValueError` at edge construction, not at match time. An edge
+  may set `predicate` or `condition` but not both. The existing named-callable
+  `predicate` path is unchanged and can still be combined with `condition` edges on the
+  same node — `condition` is additive, not a replacement.
 
 ## [0.23.1]
 

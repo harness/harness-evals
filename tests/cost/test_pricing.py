@@ -252,6 +252,41 @@ def test_prefix_alias_matching_is_case_insensitive() -> None:
 
 
 @pytest.mark.unit
+def test_canonical_model_prices_directly_when_no_alias_row_exists() -> None:
+    model = "gpt-4o"
+    rows = tuple(rate(kind, model=model) for kind in ("Input", "Output", "CacheRead", "CacheWrite"))
+    observation = price_observed_usage(
+        "openai",
+        "GPT-4O",
+        DEFAULT_USAGE,
+        occurred_at=NOW,
+        pricing_provider=ResolvedRateCardProvider(snapshot(aliases=(), rates=rows)),
+    )
+
+    assert observation.complete is True
+    assert observation.resolved_model == model
+    assert observation.usd == Decimal("2")
+    assert observation.provenance is not None
+    assert observation.provenance.alias_ids == ()
+    assert observation.provenance.rate_ids == tuple(row.rate_id for row in rows)
+
+
+@pytest.mark.unit
+def test_canonical_model_fallback_does_not_override_ambiguous_aliases() -> None:
+    aliases = (
+        alias(alias_id="alias-a", model="model-a"),
+        alias(alias_id="alias-b", model="model-b"),
+    )
+    rows = tuple(rate(kind, model="gpt-4o") for kind in ("Input", "Output", "CacheRead", "CacheWrite"))
+    observation = price(snapshot(aliases=aliases, rates=rows))
+
+    assert observation.complete is False
+    assert observation.resolved_model is None
+    assert observation.provenance is not None
+    assert observation.provenance.alias_ids == ("alias-a", "alias-b")
+
+
+@pytest.mark.unit
 def test_provider_wildcard_alias_resolves_for_normalized_provider() -> None:
     model = "claude-sonnet"
     card = snapshot(

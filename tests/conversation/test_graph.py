@@ -281,6 +281,200 @@ class TestSimulationGraphSerialization:
 
 
 @pytest.mark.unit
+class TestEdgeConditionCompilation:
+    def test_contains_matches_case_insensitively_by_default(self):
+        edge = Edge(source="a", target="b", condition={"type": "contains", "value": "HELLO"})
+        assert edge._matcher(Message(role="assistant", content="well hello there")) is True
+        assert edge._matcher(Message(role="assistant", content="goodbye")) is False
+
+    def test_contains_case_sensitive_opt_in(self):
+        edge = Edge(
+            source="a",
+            target="b",
+            condition={"type": "contains", "value": "HELLO", "case_sensitive": True},
+        )
+        assert edge._matcher(Message(role="assistant", content="HELLO there")) is True
+        assert edge._matcher(Message(role="assistant", content="hello there")) is False
+
+    def test_not_contains(self):
+        edge = Edge(source="a", target="b", condition={"type": "not_contains", "value": "error"})
+        assert edge._matcher(Message(role="assistant", content="all good")) is True
+        assert edge._matcher(Message(role="assistant", content="an ERROR occurred")) is False
+
+    def test_equals_case_insensitive_by_default(self):
+        edge = Edge(source="a", target="b", condition={"type": "equals", "value": "Yes"})
+        assert edge._matcher(Message(role="assistant", content="yes")) is True
+        assert edge._matcher(Message(role="assistant", content="yes please")) is False
+
+    def test_equals_case_sensitive_opt_in(self):
+        edge = Edge(
+            source="a",
+            target="b",
+            condition={"type": "equals", "value": "Yes", "case_sensitive": True},
+        )
+        assert edge._matcher(Message(role="assistant", content="Yes")) is True
+        assert edge._matcher(Message(role="assistant", content="yes")) is False
+
+    def test_regex_uses_search_and_is_case_insensitive_by_default(self):
+        edge = Edge(source="a", target="b", condition={"type": "regex", "value": r"order #\d+"})
+        assert edge._matcher(Message(role="assistant", content="Your ORDER #12345 shipped")) is True
+        assert edge._matcher(Message(role="assistant", content="no order here")) is False
+
+    def test_regex_case_sensitive_opt_in(self):
+        edge = Edge(
+            source="a",
+            target="b",
+            condition={"type": "regex", "value": "ERROR", "case_sensitive": True},
+        )
+        assert edge._matcher(Message(role="assistant", content="an ERROR occurred")) is True
+        assert edge._matcher(Message(role="assistant", content="an error occurred")) is False
+
+    def test_none_content_treated_as_empty_string(self):
+        edge = Edge(source="a", target="b", condition={"type": "contains", "value": "x"})
+        assert edge._matcher(Message(role="assistant", content=None)) is False
+        not_contains_edge = Edge(source="a", target="b", condition={"type": "not_contains", "value": "x"})
+        assert not_contains_edge._matcher(Message(role="assistant", content=None)) is True
+
+    def test_unknown_condition_type_raises(self):
+        with pytest.raises(ValueError, match="unknown condition type"):
+            Edge(source="a", target="b", condition={"type": "startswith", "value": "x"})
+
+    def test_missing_value_raises(self):
+        with pytest.raises(ValueError, match="requires a string 'value'"):
+            Edge(source="a", target="b", condition={"type": "contains"})
+
+    def test_non_string_value_raises(self):
+        with pytest.raises(ValueError, match="requires a string 'value'"):
+            Edge(source="a", target="b", condition={"type": "contains", "value": 123})
+
+    def test_invalid_regex_raises_at_construction(self):
+        with pytest.raises(ValueError, match="invalid regex pattern"):
+            Edge(source="a", target="b", condition={"type": "regex", "value": "("})
+
+    def test_both_predicate_and_condition_raises(self):
+        with pytest.raises(ValueError, match="set only one of 'predicate' or 'condition'"):
+            Edge(
+                source="a",
+                target="b",
+                predicate="some_predicate",
+                condition={"type": "contains", "value": "x"},
+            )
+
+
+@pytest.mark.unit
+class TestSimulationGraphConditionRouting:
+    def test_condition_edge_routes_on_match(self):
+        graph = SimulationGraph(
+            nodes={
+                "a": ScriptedNode(message="hi"),
+                "b": StopNode(),
+                "c": ScriptedNode(message="more"),
+            },
+            edges=[
+                Edge(source="a", target="b", condition={"type": "contains", "value": "done"}),
+                Edge(source="a", target="c"),  # default
+            ],
+            predicates={},
+            start="a",
+        )
+        assert graph.resolve_next("a", Message(role="assistant", content="all done")) == "b"
+        assert graph.resolve_next("a", Message(role="assistant", content="keep going")) == "c"
+
+    def test_condition_edge_first_match_wins_mixed_with_predicate(self):
+        graph = SimulationGraph(
+            nodes={
+                "a": ScriptedNode(message="hi"),
+                "b": StopNode(),
+                "c": ScriptedNode(message="more"),
+                "d": StopNode(),
+            },
+            edges=[
+                Edge(source="a", target="b", condition={"type": "contains", "value": "done"}),
+                Edge(source="a", target="c", predicate="is_question"),
+                Edge(source="a", target="d"),  # default
+            ],
+            predicates={"is_question": lambda m: "?" in (m.content or "")},
+            start="a",
+        )
+        assert graph.resolve_next("a", Message(role="assistant", content="all done")) == "b"
+        assert graph.resolve_next("a", Message(role="assistant", content="need more?")) == "c"
+        assert graph.resolve_next("a", Message(role="assistant", content="nothing matches")) == "d"
+
+    def test_condition_edge_plus_default_is_valid(self):
+        graph = SimulationGraph(
+            nodes={"a": ScriptedNode(message="hi"), "b": StopNode(), "c": StopNode()},
+            edges=[
+                Edge(source="a", target="b", condition={"type": "contains", "value": "x"}),
+                Edge(source="a", target="c"),
+            ],
+            predicates={},
+            start="a",
+        )
+        assert graph.resolve_next("a", Message(role="assistant", content="no match")) == "c"
+
+    def test_two_unconditional_edges_still_raises_with_condition_present(self):
+        with pytest.raises(ValueError, match="multiple unconditional edges"):
+            SimulationGraph(
+                nodes={"a": ScriptedNode(message="hi"), "b": StopNode(), "c": StopNode()},
+                edges=[Edge(source="a", target="b"), Edge(source="a", target="c")],
+                predicates={},
+                start="a",
+            )
+
+
+@pytest.mark.unit
+class TestSimulationGraphConditionSerialization:
+    def test_from_dict_condition_edges_need_no_predicates_dict(self):
+        data = {
+            "start": "a",
+            "nodes": [
+                {"id": "a", "type": "scripted", "message": "hi"},
+                {"id": "b", "type": "stop"},
+                {"id": "c", "type": "stop"},
+            ],
+            "edges": [
+                {"source": "a", "target": "b", "condition": {"type": "contains", "value": "yes"}},
+                {"source": "a", "target": "c"},
+            ],
+        }
+        graph = SimulationGraph.from_dict(data)  # no predicates dict supplied
+        assert graph.resolve_next("a", Message(role="assistant", content="yes please")) == "b"
+        assert graph.resolve_next("a", Message(role="assistant", content="nope")) == "c"
+
+    def test_condition_round_trip(self):
+        data = {
+            "start": "a",
+            "nodes": [
+                {"id": "a", "type": "scripted", "message": "hi"},
+                {"id": "b", "type": "stop"},
+                {"id": "c", "type": "stop"},
+            ],
+            "edges": [
+                {
+                    "source": "a",
+                    "target": "b",
+                    "condition": {"type": "regex", "value": "order #\\d+", "case_sensitive": True},
+                },
+                {"source": "a", "target": "c"},
+            ],
+        }
+        graph = SimulationGraph.from_dict(data)
+        assert graph.to_dict() == data
+
+    def test_from_dict_still_raises_for_predicate_edges_without_predicates_dict(self):
+        data = {
+            "start": "a",
+            "nodes": [
+                {"id": "a", "type": "scripted", "message": "hi"},
+                {"id": "b", "type": "stop"},
+            ],
+            "edges": [{"source": "a", "target": "b", "predicate": "check"}],
+        }
+        with pytest.raises(ValueError, match="no predicates dict was supplied"):
+            SimulationGraph.from_dict(data)
+
+
+@pytest.mark.unit
 class TestGraphSimulation:
     async def test_scripted_linear_path(self):
         graph = SimulationGraph(
@@ -495,6 +689,49 @@ class TestGraphSimulation:
 
         assert result.messages is not None
         assert len(result.messages) == 2
+
+    async def test_condition_branch_from_pure_data_with_no_predicates_dict(self):
+        """A condition-guarded graph loaded from golden.graph_config drives simulation
+        with zero caller-supplied predicates and no simulator LLM."""
+        graph_data = {
+            "start": "ask",
+            "nodes": [
+                {"id": "ask", "type": "scripted", "message": "What's the status of my order?"},
+                {"id": "route", "type": "branch"},
+                {"id": "clarify", "type": "scripted", "message": "Order #12345"},
+                {"id": "done", "type": "stop"},
+            ],
+            "edges": [
+                {"source": "ask", "target": "route"},
+                {
+                    "source": "route",
+                    "target": "clarify",
+                    "condition": {"type": "contains", "value": "order number"},
+                },
+                {"source": "route", "target": "done"},
+                {"source": "clarify", "target": "done"},
+            ],
+        }
+        graph = SimulationGraph.from_dict(graph_data)  # no predicates dict
+
+        async def agent_fn(messages: list[Message]) -> Message:
+            if len(messages) == 1:
+                return Message(role="assistant", content="Can you provide your order number?")
+            return Message(role="assistant", content="Order #12345 has shipped!")
+
+        golden = ConversationGolden(
+            scenario="Order status check",
+            expected_outcome="Get order status",
+            graph_config=graph.to_dict(),
+        )
+
+        simulator = ConversationSimulator(graph=graph)  # no simulator_llm
+        result = await simulator.simulate(golden, agent_fn)
+
+        assert result.messages is not None
+        assert len(result.messages) == 4
+        assert result.messages[0].content == "What's the status of my order?"
+        assert result.messages[2].content == "Order #12345"
 
 
 @pytest.mark.unit

@@ -44,10 +44,20 @@ class TurnLatencyMetric(BaseMetric):
 
         latencies = []
         for msg in messages:
-            if msg.role == "assistant" and msg.latency_ms is not None:
-                if msg.latency_ms < 0:
-                    continue
-                latencies.append(msg.latency_ms)
+            if msg.role != "assistant":
+                continue
+            raw = msg.latency_ms
+            if raw is None and isinstance(msg.metadata, dict):
+                raw = msg.metadata.get("latency_ms")
+            if raw is None:
+                continue
+            try:
+                latency = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if latency < 0:
+                continue
+            latencies.append(latency)
 
         if not latencies:
             return Score(

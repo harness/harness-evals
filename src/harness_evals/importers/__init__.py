@@ -12,6 +12,7 @@ Built-in implementations::
 
     from harness_evals.importers import LangfuseEvalCaseSource  # [langfuse] extra
     from harness_evals.importers import OTELEvalCaseSource      # [otlp] extra
+    from harness_evals.importers import LangfuseTraceCatalog    # [langfuse] extra, OTEL listing backend
 """
 
 from harness_evals.importers.base import BaseEvalCaseSource, BaseEvalConfigSource
@@ -20,6 +21,7 @@ __all__ = [
     "BaseEvalCaseSource",
     "BaseEvalConfigSource",
     "LangfuseEvalCaseSource",
+    "LangfuseTraceCatalog",
     "OTELEvalCaseSource",
 ]
 
@@ -29,6 +31,10 @@ def __getattr__(name: str) -> object:
         from harness_evals.importers.langfuse import LangfuseEvalCaseSource
 
         return LangfuseEvalCaseSource
+    if name == "LangfuseTraceCatalog":
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+
+        return LangfuseTraceCatalog
     if name == "OTELEvalCaseSource":
         from harness_evals.importers.otel import OTELEvalCaseSource
 

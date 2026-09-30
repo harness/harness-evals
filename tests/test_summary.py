@@ -307,6 +307,39 @@ class TestSummaryToDict:
         assert payload["judge_spend"]["total_cost_usd"] == 0.003
         assert payload["judge_spend"]["by_model"]["gpt-4o"]["input_tokens"] == 100
 
+    def test_summary_to_dict_includes_turn_latency(self):
+        from harness_evals.core.eval_case import EvalCase
+        from harness_evals.core.types import Message
+        from harness_evals.summary import summarize_turn_latency
+
+        cases = [
+            EvalCase(
+                input="a",
+                output="b",
+                messages=[
+                    Message(role="user", content="hi"),
+                    Message(role="assistant", content="ok", latency_ms=1000.0),
+                    Message(role="assistant", content="done", latency_ms=3000.0),
+                ],
+            ),
+            EvalCase(
+                input="c",
+                output="d",
+                messages=[
+                    Message(
+                        role="assistant",
+                        content="meta-only",
+                        metadata={"latency_ms": 2000.0},
+                    )
+                ],
+            ),
+        ]
+        turn_latency = summarize_turn_latency(cases)
+        payload = summary_to_dict(summarize([[_score("exact_match", 1.0, 0.5, "correctness")]]), turn_latency=turn_latency)
+        assert payload["latency_scope"] == "turn"
+        assert payload["latency_n"] == 3
+        assert payload["avg_latency_ms"] == 2000.0
+
     def test_summarize_judge_spend_ignores_non_judge_cost_usd(self):
         scores = [
             [

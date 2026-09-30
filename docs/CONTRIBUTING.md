@@ -90,6 +90,7 @@ pytest tests/metrics/test_exact_match.py -v   # Specific file
 | `docs/architecture.md` | System design, data flow, extension points |
 | `docs/metrics-guide.md` | Detailed metric authoring guide |
 | `docs/integration-guide.md` | pytest, CI/CD, Harness CI integration |
+| `docs/redteam-guide.md` | Security scanning: attack plugins, verdicts, tool-trace contract |
 | `docs/adr/` | Architecture Decision Records |
 
 ## Questions?

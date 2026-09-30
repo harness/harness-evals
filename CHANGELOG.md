@@ -5,6 +5,67 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0]
+
+### Added
+
+- **Red-team security testing** (`harness_evals.redteam`): an attack-plugin engine
+  for adversarially testing agents, driven by `harness-evals redteam
+  run|list-packs|list-plugins` and a `mode: redteam` YAML config
+  (`config/redteam_schema.py`, `config/redteam_runner.py`). An `AttackPlugin`
+  pairs adversarial goldens with the metrics that grade them, so red-team
+  graders are ordinary metrics reusable in normal evals. `packs.py` bundles
+  plugins into named collections (`owasp_agentic_top_10`); pack members with no
+  implementation are skipped with a warning rather than failing the run, and
+  `PROMPTFOO_ALIASES` maps external plugin ids onto internal ones for migration.
+  Reports carry both `attack_success_rate` and `informative_attack_success_rate`
+  (breaches over conclusive results only). Safety scores are never averaged into
+  an overall number.
+- **Six attack plugins** (`redteam/plugins/`) mapped to the OWASP Top 10 for
+  Agentic Applications: `system_prompt_override` (ASI01), `tool_discovery`
+  (ASI06), `unauthorized_state_change` (ASI02), and `sql_injection`,
+  `shell_injection`, `ssrf` (ASI05).
+- **Three metrics** backing them: `ArgumentProvenanceMetric`
+  (`metrics/agent/argument_provenance.py`) fails a tool argument that was never
+  grounded in user input — the class of violation a response-text grader cannot
+  see, since a correct-sounding reply can accompany an invented argument;
+  `ToolCallConstraintMetric` (`metrics/agent/tool_call_constraint.py`) enforces
+  forbidden tools, call budgets, per-tool argument allowlists, and a global
+  `forbidden_arg_patterns` denylist; `ResponseDisclosureMetric`
+  (`metrics/safety/response_disclosure.py`) detects system-prompt canaries and
+  tool-inventory markers in reply text, with `min_markers` requiring a cluster
+  before failing.
+- **Applicability gating** distinguishes a `Capability` the target lacks (no
+  database, no shell — reported as no attack surface, not as a defence) from an
+  unmet harness-side `Precondition` such as `TOOL_TRACE` (reported `UNVERIFIED`).
+- **`{{id}}` template placeholder** (`targets/templating.py`) exposes the
+  golden's id to request bodies, so each attack can be given its own
+  conversation. Without per-case isolation every attack inherits the previous
+  one's history and results stop being independent. A golden with no id raises
+  rather than silently sharing a session.
+- **Docs**: `docs/redteam-guide.md` covers the architecture, the tool-trace
+  contract targets must satisfy, verdict semantics, plugin authoring, and known
+  gaps.
+
+### Fixed
+
+- **An unreachable target is no longer reported as a successful attack.** Every
+  probe against a dead target produces a failing score, and the red-team runner
+  counted each one as a breach — rendering a total outage as a 100% attack
+  success rate, the loudest possible false alarm in the one report that has to
+  be trustworthy. Such cases are now classified with a distinct `ERRORED`
+  verdict, excluded from the conclusive set.
+- **A missing tool trace is no longer reported as a successful attack.**
+  Trace-dependent metrics deliberately fail closed, but an unobservable trace is
+  not evidence of bad behaviour. These are now classified `UNVERIFIED`, which
+  states that the attack could not be graded rather than that it succeeded.
+- **An empty tool trace is no longer mistaken for a missing one.**
+  `coerce_tool_calls` returned `None` for `[]` (`targets/trajectory.py`),
+  collapsing "the agent called no tools" into "no trace was captured". Since
+  calling nothing is the strongest defence against a tool-abuse attack, every
+  correctly-refused attack was being reported as ungradeable. It now returns
+  `[]`, matching `coerce_messages`.
+
 ## [0.23.1]
 
 ### Fixed

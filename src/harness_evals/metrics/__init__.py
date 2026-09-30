@@ -4,11 +4,13 @@ Import metrics from their category subpackages or directly from here.
 """
 
 from harness_evals.metrics.agent.argument_correctness import ArgumentCorrectnessMetric
+from harness_evals.metrics.agent.argument_provenance import ArgumentProvenanceMetric
 from harness_evals.metrics.agent.plan_adherence import PlanAdherenceMetric
 from harness_evals.metrics.agent.plan_quality import PlanQualityMetric
 from harness_evals.metrics.agent.step_efficiency import StepEfficiencyMetric
 from harness_evals.metrics.agent.task_completion import TaskCompletionMetric
 from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMetric
+from harness_evals.metrics.agent.tool_call_constraint import ToolCallConstraintMetric
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from harness_evals.metrics.composite.composite import CompositeMetric
 from harness_evals.metrics.composite.decision_composite import DecisionCompositeMetric
@@ -96,6 +98,7 @@ from harness_evals.metrics.safety.harmful_advice import HarmfulAdviceMetric
 from harness_evals.metrics.safety.misuse_detection import MisuseDetectionMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
+from harness_evals.metrics.safety.response_disclosure import ResponseDisclosureMetric
 from harness_evals.metrics.safety.role_violation import RoleViolationMetric
 from harness_evals.metrics.safety.toxicity import ToxicityMetric
 from harness_evals.metrics.security.actionability import ActionabilityMetric
@@ -153,12 +156,15 @@ __all__ = [
     "PIIMetric",
     "ToxicityMetric",
     "PromptInjectionMetric",
+    "ResponseDisclosureMetric",
     "HallucinationMetric",
     "ArgumentCorrectnessMetric",
+    "ArgumentProvenanceMetric",
     "PlanAdherenceMetric",
     "PlanQualityMetric",
     "StepEfficiencyMetric",
     "ToolArgumentMatchMetric",
+    "ToolCallConstraintMetric",
     "ToolCorrectnessMetric",
     "TaskCompletionMetric",
     "ConversationCoherenceMetric",

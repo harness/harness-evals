@@ -20,6 +20,7 @@ TARGETS = "targets"
 METRICS = "metrics"
 BASELINE_STORES = "baseline_stores"
 SINKS = "sinks"
+ATTACK_PLUGINS = "attack_plugins"
 
 FAMILIES: tuple[str, ...] = (
     DATASET_SOURCES,
@@ -30,6 +31,7 @@ FAMILIES: tuple[str, ...] = (
     METRICS,
     BASELINE_STORES,
     SINKS,
+    ATTACK_PLUGINS,
 )
 
 _DATASET_SOURCES: dict[str, type] = {}
@@ -40,6 +42,7 @@ _TARGETS: dict[str, type] = {}
 _METRICS: dict[str, type] = {}
 _BASELINE_STORES: dict[str, type] = {}
 _SINKS: dict[str, type] = {}
+_ATTACK_PLUGINS: dict[str, type] = {}
 _ELICITATION_ADAPTERS: dict[str, type] = {}
 _PLAIN_TEXT_FOLLOWUP_RESOLVERS: list[object] = []
 
@@ -52,6 +55,7 @@ _REGISTRIES: dict[str, dict[str, type]] = {
     METRICS: _METRICS,
     BASELINE_STORES: _BASELINE_STORES,
     SINKS: _SINKS,
+    ATTACK_PLUGINS: _ATTACK_PLUGINS,
 }
 
 _ENTRY_POINTS: dict[str, dict[str, EntryPoint]] = {family: {} for family in FAMILIES}
@@ -111,6 +115,12 @@ def register_sink(name: str) -> Callable[[T], T]:
     """Register a sink class. Later registrations with the same name win."""
 
     return _register(SINKS, name)
+
+
+def register_attack_plugin(plugin_id: str) -> Callable[[T], T]:
+    """Register a red-team attack plugin class. Later registrations with the same id win."""
+
+    return _register(ATTACK_PLUGINS, plugin_id)
 
 
 def register_elicitation_adapter(name: str) -> Callable[[T], T]:
@@ -231,6 +241,18 @@ def sink(name: str) -> type:
     """Return the registered sink class for ``name``."""
 
     return _lookup(SINKS, name)
+
+
+def attack_plugin(plugin_id: str) -> type:
+    """Return the registered attack plugin class for ``plugin_id``."""
+
+    return _lookup(ATTACK_PLUGINS, plugin_id)
+
+
+def registered_attack_plugins() -> dict[str, type]:
+    """Return all registered attack plugin classes, including lazy entry points."""
+
+    return _registered(ATTACK_PLUGINS)
 
 
 def load_plugins(modules: list[str]) -> None:

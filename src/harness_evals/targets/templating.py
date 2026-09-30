@@ -8,6 +8,8 @@ current golden. Placeholders address golden fields by dotted path:
     {{input.question}}   -> golden.input["question"]
     {{input.items.0}}    -> golden.input["items"][0]
     {{metadata.user_id}} -> (golden.metadata or {})["user_id"]
+    {{id}}               -> golden.id (useful as a per-request session key, so
+                            each case gets its own conversation)
     {{env.VAR}}          -> os.environ["VAR"] (for secrets injected at runtime)
 
 A string that is *exactly* one placeholder resolves to the referenced value with
@@ -70,7 +72,15 @@ def render_headers(headers: dict[str, str], golden: Golden) -> dict[str, str]:
 
 
 def _context(golden: Golden) -> dict[str, Any]:
-    return {"input": golden.input, "metadata": golden.metadata or {}}
+    return {
+        "input": golden.input,
+        "metadata": golden.metadata or {},
+        # Exposed mainly so a body template can derive a per-case session id.
+        # Red-team runs depend on it: without a distinct conversation per
+        # attack, each attack inherits the previous one's history and the
+        # results stop being independent.
+        "id": golden.id,
+    }
 
 
 def _render(node: Any, context: dict[str, Any]) -> Any:
@@ -121,6 +131,12 @@ def _resolve(expr: str, context: dict[str, Any]) -> Any:
                 f"template placeholder {{{{{expr}}}}} references environment variable {var_name!r} which is not set"
             )
         return value
+
+    if root == "id" and context.get("id") is None:
+        raise ValueError(
+            f"template placeholder {{{{{expr}}}}} requires the golden to have an 'id', but this one has none. "
+            "Give each golden an id, or drop the placeholder."
+        )
 
     if root not in context:
         raise ValueError(

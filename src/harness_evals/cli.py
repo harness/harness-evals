@@ -92,6 +92,43 @@ def main(argv: list[str] | None = None) -> int:
         help="Custom glob pattern (default: **/*.eval.yaml for YAML configs, **/eval_*.py for Python eval files)",
     )
 
+    # --- redteam ---
+    redteam_parser = sub.add_parser("redteam", help="Security testing — run adversarial attack plugins")
+    redteam_sub = redteam_parser.add_subparsers(dest="redteam_command")
+
+    redteam_run = redteam_sub.add_parser("run", help="Run a red-team scan from a YAML config")
+    redteam_run.add_argument("config", help="Path to red-team YAML config file")
+    redteam_run.add_argument("--validate", action="store_true", help="Parse and validate config without running")
+    redteam_run.add_argument(
+        "--fail-on",
+        choices=["any", "critical", "high", "medium", "never"],
+        default="any",
+        help="Minimum severity of a breach that exits non-zero (default: any)",
+    )
+    redteam_run.add_argument("--json", action="store_true", help="Emit the report as JSON instead of a table")
+    redteam_run.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error", "critical"],
+        default=None,
+        help="Framework log level (overrides HARNESS_EVALS_LOG_LEVEL)",
+    )
+
+    redteam_sub.add_parser("list-packs", help="List available attack packs")
+
+    redteam_plugins = redteam_sub.add_parser("list-plugins", help="List attack plugins and how each is graded")
+    redteam_plugins.add_argument("--pack", default=None, help="Only show plugins in this pack")
+
+    # --- init ---
+    init_parser = sub.add_parser("init", help="Scaffold a new eval or red-team config")
+    init_parser.add_argument(
+        "--mode",
+        choices=["eval", "redteam"],
+        default=None,
+        help="Skip the interactive prompt and scaffold this mode directly",
+    )
+    init_parser.add_argument("--name", default=None, help="Config name (default: prompted, or the directory name)")
+    init_parser.add_argument("-o", "--output", default=None, help="Output file (default: <name>.<mode>.yaml)")
+
     # --- recommend ---
     recommend_parser = sub.add_parser("recommend", help="Recommend evals for a prompt, endpoint, or traces")
     recommend_parser.add_argument("--prompt", default=None, help="Path to a prompt file or prompt text")
@@ -117,6 +154,18 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_recommend(args)
         if args.command == "run":
             return _cmd_run(args)
+        if args.command == "redteam":
+            if args.redteam_command is None:
+                redteam_parser.print_help()
+                return 0
+            if args.redteam_command == "run":
+                return _cmd_redteam_run(args)
+            if args.redteam_command == "list-packs":
+                return _cmd_redteam_list_packs()
+            if args.redteam_command == "list-plugins":
+                return _cmd_redteam_list_plugins(args)
+        if args.command == "init":
+            return _cmd_init(args)
         if args.command == "import":
             return _cmd_import(args)
         if args.command == "list-metrics":
@@ -204,6 +253,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from harness_evals.logging_config import configure_logging
 
     configure_logging(args.log_level)
+    _reject_redteam_config(args.config)
     cfg = load_config(args.config)
 
     if args.golden_ids:
@@ -271,6 +321,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"Baseline saved as run {run_id!r}", file=sys.stderr)
 
     return exit_code
+
+
+def _reject_redteam_config(path: str) -> None:
+    """Point the user at the right subcommand instead of a confusing schema error."""
+    from harness_evals.config.redteam_schema import config_mode
+
+    text = Path(path).read_text(encoding="utf-8")
+    if config_mode(text) == "redteam":
+        raise HarnessEvalsError(f"{path} is a red-team config (mode: redteam). Run `harness-evals redteam run {path}`.")
 
 
 def _any_metric_failed(scores: list[list]) -> bool:
@@ -379,6 +438,389 @@ def _cmd_list_metrics() -> int:
 
     print(f"\n{len(entries)} metrics available")
     return 0
+
+
+_SEVERITY_ORDER = ("critical", "high", "medium", "low")
+
+# Findings are for triage, not forensics — a wall of near-identical violations
+# buries the distinct ones. --json carries the complete record.
+_MAX_FINDING_LINES = 4
+
+
+def _cmd_redteam_run(args: argparse.Namespace) -> int:
+    import json
+
+    from harness_evals.config.redteam_runner import run_redteam_config
+    from harness_evals.config.redteam_schema import load_redteam_config
+    from harness_evals.logging_config import configure_logging
+
+    configure_logging(args.log_level)
+    if args.log_level is None:
+        # The dataset runner logs a full traceback per failing case. In a scan
+        # that is dozens of near-identical stack traces burying the report,
+        # which already names every failure. Opt back in with --log-level.
+        logging.getLogger("harness_evals.core.runner").setLevel(logging.CRITICAL)
+
+    cfg = load_redteam_config(args.config)
+
+    if args.validate:
+        from harness_evals.config.redteam_runner import resolve_plugins
+
+        plugins = resolve_plugins(cfg)
+        print(f"Config valid: {cfg.name} ({len(plugins)} plugin(s))", file=sys.stderr)
+        return 0
+
+    report = run_redteam_config(cfg)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        _print_redteam_report(report)
+
+    return _redteam_exit_code(report, args.fail_on)
+
+
+def _redteam_exit_code(report, fail_on: str) -> int:
+    """Exit non-zero when a breach meets the severity floor, or the scan broke.
+
+    A scan that could not reach its target exits 2 rather than 0. Exiting
+    clean would let CI go green on a scan that tested nothing, which is the
+    failure mode a security gate exists to prevent.
+    """
+    from harness_evals.redteam.report import Verdict
+
+    if report.by_verdict(Verdict.ERRORED):
+        return 2
+
+    if fail_on == "never":
+        return 0
+    breached = report.breached_plugins
+    if fail_on != "any":
+        floor = _SEVERITY_ORDER.index(fail_on)
+        breached = [r for r in breached if _SEVERITY_ORDER.index(r.severity.value) <= floor]
+    return 1 if breached else 0
+
+
+def _print_redteam_report(report) -> None:
+    """Render the per-plugin results table plus the ASR summary."""
+    from harness_evals.redteam.report import Verdict
+
+    _VERDICT_LABEL = {
+        Verdict.BREACHED: "BREACHED",
+        Verdict.DEFENDED: "defended",
+        Verdict.DEFENDED_STRUCTURAL: "n/a (no surface)",
+        Verdict.UNVERIFIED: "UNVERIFIED",
+        Verdict.ERRORED: "ERRORED",
+        Verdict.SKIPPED: "skipped",
+    }
+
+    results = sorted(
+        report.results,
+        key=lambda r: (r.verdict is not Verdict.BREACHED, _SEVERITY_ORDER.index(r.severity.value), r.plugin_id),
+    )
+
+    print(f"\nRed team: {report.name}")
+    print("=" * 96)
+
+    if not results:
+        print("No plugins ran.")
+        return
+
+    col_id = max(max(len(r.plugin_id) for r in results), len("PLUGIN")) + 2
+    col_verdict = max(len(v) for v in _VERDICT_LABEL.values()) + 2
+    header = (
+        f"{'PLUGIN':<{col_id}}{'SEVERITY':<10}{'VERDICT':<{col_verdict}}"
+        f"{'ASR':>6}{'BREACHED':>10}   {'TRACE':<7}{'THREAT'}"
+    )
+    print(header)
+    print("-" * 96)
+
+    for result in results:
+        threat = ", ".join((*result.owasp_agentic, *result.owasp_llm, *result.atlas)) or "—"
+        asr = f"{result.attack_success_rate:.0%}" if result.tests else "—"
+        counts = f"{result.breached}/{result.tests}"
+        print(
+            f"{result.plugin_id:<{col_id}}{result.severity.value:<10}"
+            f"{_VERDICT_LABEL[result.verdict]:<{col_verdict}}"
+            f"{asr:>6}{counts:>10}   "
+            f"{'yes' if result.requires_trace else '':<7}{threat}"
+        )
+
+    print()
+    _print_metric_breakdown(results, col_id)
+
+    breaches = [r for r in results if r.verdict is Verdict.BREACHED]
+    if breaches:
+        print("Findings")
+        print("-" * 96)
+        for result in breaches:
+            _print_breach_detail(result)
+
+    _print_redteam_footer(report, results)
+
+
+def _print_metric_breakdown(results, col_id: int) -> None:
+    """Per-metric pass rates — every grader that ran, not just plugin verdicts."""
+    rows: list[tuple[str, str, int, int, float]] = []
+    for result in results:
+        passed: dict[str, int] = {}
+        total: dict[str, int] = {}
+        value_sum: dict[str, float] = {}
+        for case_scores in result.scores:
+            for score in case_scores:
+                total[score.name] = total.get(score.name, 0) + 1
+                passed[score.name] = passed.get(score.name, 0) + (1 if score.passed else 0)
+                value_sum[score.name] = value_sum.get(score.name, 0.0) + score.value
+        for name in sorted(total):
+            rows.append((result.plugin_id, name, passed[name], total[name], value_sum[name] / total[name]))
+
+    if not rows:
+        return
+
+    col_metric = max(max(len(r[1]) for r in rows), len("METRIC")) + 4
+    print("Metrics")
+    print(f"{'PLUGIN':<{col_id}}{'METRIC':<{col_metric}}{'PASSED':>9}{'MEAN':>8}")
+    print("-" * 96)
+    for plugin_id, name, passed_n, total_n, mean in rows:
+        flag = "" if passed_n == total_n else "  <-- failed"
+        print(f"{plugin_id:<{col_id}}{name:<{col_metric}}{f'{passed_n}/{total_n}':>9}{mean:>8.2f}{flag}")
+    print()
+
+
+def _print_redteam_footer(report, results) -> None:
+    """Aggregate totals plus the caveats that make a clean result honest."""
+    from harness_evals.redteam.report import Verdict
+
+    print("-" * 96)
+    print(
+        f"{report.total_tests} attacks · {report.total_breached} succeeded · "
+        f"attack success rate {report.attack_success_rate:.1%}"
+    )
+
+    conclusive = sum(r.tests for r in results if r.conclusive)
+    if conclusive != report.total_tests:
+        print(
+            f"informative attack success rate {report.informative_attack_success_rate:.1%} "
+            f"({conclusive}/{report.total_tests} attacks conclusive)"
+        )
+
+    by_severity = {s.value: n for s, n in report.count_by_severity().items() if n}
+    if by_severity:
+        print("breached by severity: " + ", ".join(f"{sev}={n}" for sev, n in by_severity.items()))
+
+    for result in report.by_verdict(Verdict.DEFENDED_STRUCTURAL):
+        missing = ", ".join(sorted(c.value for c in result.missing_capabilities))
+        print(f"not applicable: {result.plugin_id} — target has no {missing}")
+
+    for result in report.by_verdict(Verdict.ERRORED):
+        print(f"ERRORED: {result.plugin_id} — {result.reason or 'target unreachable'}")
+
+    for result in report.by_verdict(Verdict.UNVERIFIED):
+        unmet = ", ".join(sorted(p.value for p in result.unmet_preconditions))
+        detail = result.reason or f"unmet precondition(s): {unmet}"
+        print(f"UNVERIFIED: {result.plugin_id} — {detail}")
+
+    for result in report.by_verdict(Verdict.SKIPPED):
+        print(f"skipped: {result.plugin_id} — {result.reason or 'no reason given'}")
+
+    print()
+    if not report.passed:
+        print("FAIL — at least one attack succeeded.")
+        return
+
+    inconclusive = report.by_verdict(Verdict.ERRORED) + report.by_verdict(Verdict.UNVERIFIED)
+    if inconclusive:
+        # Not "PASS": nothing was demonstrated about the plugins that could
+        # not run, and saying otherwise is how a broken scan gets signed off.
+        print(f"INCONCLUSIVE — no attack succeeded, but {len(inconclusive)} plugin(s) could not be verified.")
+        return
+
+    print("PASS — no attack succeeded.")
+
+
+def _print_breach_detail(result) -> None:
+    """Print the failing metric reasons for one breached plugin."""
+    print(f"  {result.plugin_id} — {result.breached}/{result.tests} attacks succeeded:")
+
+    # Attacks in the same family fail the same way, so collapse identical
+    # reasons into one line with a count rather than printing seven copies.
+    counts: dict[tuple[str, str], int] = {}
+    for case_scores in result.scores:
+        for score in case_scores:
+            if not score.passed:
+                key = (score.name, score.reason or "failed")
+                counts[key] = counts.get(key, 0) + 1
+
+    ordered = sorted(counts.items(), key=lambda kv: -kv[1])
+    for (metric_name, reason), n in ordered[:_MAX_FINDING_LINES]:
+        times = f" (x{n})" if n > 1 else ""
+        print(f"    [{metric_name}]{times} {_truncate(reason)}")
+
+    hidden = sum(n for _, n in ordered[_MAX_FINDING_LINES:])
+    if hidden:
+        print(f"    … and {hidden} more failure(s) across {len(ordered) - _MAX_FINDING_LINES} other reason(s)")
+        print("    Run with --json for the full detail.")
+    print()
+
+
+def _truncate(text: str, limit: int = 180) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _cmd_redteam_list_packs() -> int:
+    from harness_evals.redteam.packs import packs
+
+    for attack_pack in packs():
+        total = len(attack_pack.plugin_ids)
+        pending = len(attack_pack.unimplemented())
+        print(f"{attack_pack.id}")
+        print(f"  {attack_pack.name}")
+        print(f"  {total - pending}/{total} plugins implemented")
+        print(f"  {attack_pack.description}")
+        print()
+    return 0
+
+
+def _cmd_redteam_list_plugins(args: argparse.Namespace) -> int:
+    from harness_evals.plugins import registered_attack_plugins
+    from harness_evals.redteam.packs import pack as lookup_pack
+
+    if args.pack:
+        try:
+            attack_pack = lookup_pack(args.pack)
+        except KeyError as err:
+            raise HarnessEvalsError(err.args[0]) from None
+        ids = list(attack_pack.plugin_ids)
+    else:
+        ids = sorted(registered_attack_plugins())
+
+    if not ids:
+        print("No attack plugins registered.")
+        return 0
+
+    registered = registered_attack_plugins()
+    col_id = max(max(len(i) for i in ids), len("PLUGIN")) + 2
+
+    header = f"{'PLUGIN':<{col_id}}{'SEVERITY':<10}{'STATUS':<14}{'TRACE':<7}{'METRICS'}"
+    print(header)
+    print("-" * max(len(header), 76))
+
+    implemented = 0
+    for plugin_id in ids:
+        cls = registered.get(plugin_id)
+        if cls is None:
+            print(f"{plugin_id:<{col_id}}{'—':<10}{'pending':<14}{'':<7}—")
+            continue
+        implemented += 1
+        plugin = cls()
+        metric_names = ", ".join(_plugin_metric_names(plugin)) or "—"
+        print(
+            f"{plugin_id:<{col_id}}{plugin.severity.value:<10}{'implemented':<14}"
+            f"{'yes' if plugin.requires_trace else '':<7}{metric_names}"
+        )
+
+    print(f"\n{implemented}/{len(ids)} plugin(s) implemented")
+    return 0
+
+
+def _plugin_metric_names(plugin) -> list[str]:
+    """Metric names a plugin grades with, tolerating ones that need a judge."""
+    try:
+        return [m.name for m in plugin.metrics(llm=None)]
+    except Exception:
+        return ["(requires judge_llm)"]
+
+
+_EVAL_TEMPLATE = """\
+name: {name}
+dataset: ./goldens.jsonl
+
+target:
+  type: http
+  url: http://localhost:3000/chat
+  output_path: $.response
+
+metrics:
+  - exact_match
+  - {{kind: latency, params: {{max_ms: 10000}}}}
+
+sinks: [stdout]
+"""
+
+_REDTEAM_TEMPLATE = """\
+name: {name}
+mode: redteam
+
+target:
+  type: http
+  url: http://localhost:3000/chat
+  output_path: $.response
+
+redteam:
+  packs: [owasp_agentic_top_10]
+
+  # Capabilities the target actually has. Plugins attacking an absent
+  # capability still run, but a clean result is reported as "no surface"
+  # rather than counted as a defence.
+  capabilities:
+    - state_changing_tools
+
+  # Harness conditions you have verified. Unmet preconditions downgrade a
+  # clean result to UNVERIFIED instead of letting it read as a pass.
+  preconditions:
+    - tool_trace
+
+sinks: [stdout]
+"""
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    mode = args.mode
+    if mode is None:
+        mode = _prompt_mode()
+        if mode is None:
+            print("Cancelled.", file=sys.stderr)
+            return 1
+
+    name = args.name or Path.cwd().name
+    template = _EVAL_TEMPLATE if mode == "eval" else _REDTEAM_TEMPLATE
+    suffix = "eval.yaml" if mode == "eval" else "redteam.yaml"
+    out_path = Path(args.output) if args.output else Path(f"{name}.{suffix}")
+
+    if out_path.exists():
+        print(f"Refusing to overwrite existing file: {out_path}", file=sys.stderr)
+        return 2
+
+    out_path.write_text(template.format(name=name), encoding="utf-8")
+
+    print(f"Wrote {out_path}")
+    if mode == "eval":
+        print(f"Next: edit the target and goldens, then run `harness-evals run {out_path}`")
+    else:
+        print("Next: check coverage with `harness-evals redteam list-plugins --pack owasp_agentic_top_10`")
+        print(f"Then run `harness-evals redteam run {out_path}`")
+    return 0
+
+
+def _prompt_mode() -> str | None:
+    """Ask which kind of testing to scaffold. Returns None if cancelled."""
+    print("What would you like to set up?")
+    print("  1) Evals            — measure quality: correctness, groundedness, cost, latency")
+    print("  2) Security testing — attack the agent: OWASP Top 10 for Agentic Applications")
+
+    try:
+        answer = input("Choose [1/2]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+    if answer in {"1", "eval", "evals"}:
+        return "eval"
+    if answer in {"2", "security", "redteam"}:
+        return "redteam"
+
+    print(f"Unrecognised choice {answer!r}.", file=sys.stderr)
+    return None
 
 
 def _cmd_discover(args: argparse.Namespace) -> int:

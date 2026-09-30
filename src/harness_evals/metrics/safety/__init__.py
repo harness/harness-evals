@@ -6,6 +6,7 @@ from harness_evals.metrics.safety.harmful_advice import HarmfulAdviceMetric
 from harness_evals.metrics.safety.misuse_detection import MisuseDetectionMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
+from harness_evals.metrics.safety.response_disclosure import ResponseDisclosureMetric
 from harness_evals.metrics.safety.role_violation import RoleViolationMetric
 from harness_evals.metrics.safety.toxicity import ToxicityMetric
 
@@ -18,6 +19,7 @@ __all__ = [
     "MisuseDetectionMetric",
     "PIIMetric",
     "PromptInjectionMetric",
+    "ResponseDisclosureMetric",
     "RoleViolationMetric",
     "ToxicityMetric",
 ]

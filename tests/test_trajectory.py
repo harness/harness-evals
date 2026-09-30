@@ -96,6 +96,17 @@ def test_coerce_tool_calls_skips_entries_without_name() -> None:
     assert coerce_tool_calls("nope") is None
 
 
+@pytest.mark.unit
+def test_coerce_tool_calls_keeps_empty_trace_distinct_from_missing_one() -> None:
+    """An agent that called no tools must not look like an uninstrumented one.
+
+    Safety metrics fail closed on ``None`` (no evidence) but pass on ``[]``
+    (evidence of restraint), so collapsing the two reports every refused
+    attack as ungradeable.
+    """
+    assert coerce_tool_calls([]) == []
+
+
 # ---------------------------------------------------------------------------
 # reconstruct_stream_messages
 # ---------------------------------------------------------------------------

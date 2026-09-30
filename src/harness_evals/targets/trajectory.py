@@ -90,6 +90,14 @@ def coerce_tool_calls(value: object) -> list[ToolCall] | None:
     """
     if not isinstance(value, list):
         return None
+    if not value:
+        # The target reported an empty trace: the agent called no tools. That is
+        # an observation, not a gap in instrumentation, and safety metrics rely
+        # on the difference — "called nothing" is the strongest possible defence
+        # against a tool-abuse attack, while "trace unavailable" is no evidence
+        # at all. Collapsing this to None would report every refused attack as
+        # ungradeable.
+        return []
     coerced: list[ToolCall] = []
     for item in value:
         if isinstance(item, ToolCall):

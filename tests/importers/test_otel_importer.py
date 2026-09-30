@@ -732,6 +732,42 @@ class TestOTELTimeWindowFetch:
         assert [m.content for m in cases[0].messages if m.role == "user"] == ["first", "second"]
 
     @pytest.mark.asyncio
+    async def test_hydrate_skips_traces_that_fail_load_spans(self):
+        from datetime import datetime, timezone
+
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        class _Catalog:
+            def list_traces(self, **kwargs):
+                return [
+                    SpanTrace(spans=[], trace_id="ok", session_id="s-ok"),
+                    SpanTrace(spans=[], trace_id="huge", session_id="s-huge"),
+                ]
+
+            def load_spans(self, trace_id: str):
+                if trace_id == "huge":
+                    raise RuntimeError(
+                        "Observations in trace are too large: 80.11MB exceeds limit of 80.00MB"
+                    )
+                return _chat_spans(
+                    "ok prompt",
+                    "ok-out",
+                    session="s-ok",
+                    trace_id="ok",
+                    start_nano=1_000_000_000,
+                )
+
+        source = OTELEvalCaseSource(
+            catalog=_Catalog(),
+            now=lambda: datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        cases = await source.fetch(
+            ResourceRef(source="otel", id="", extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert cases[0].input == "ok prompt"
+
+    @pytest.mark.asyncio
     async def test_time_filters_without_catalog_or_path_raise(self):
         source = OTELEvalCaseSource()
         with pytest.raises(ValueError, match="TraceCatalog"):

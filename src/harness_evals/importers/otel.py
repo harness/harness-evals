@@ -335,14 +335,26 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
                 stubs = list(seen.values())
 
         sem = asyncio.Semaphore(self._concurrency)
+        log = logging.getLogger(__name__)
 
-        async def _load(stub: SpanTrace) -> SpanTrace:
+        async def _load(stub: SpanTrace) -> SpanTrace | None:
             if stub.spans:
                 return complete_trace(stub)
             if not stub.trace_id:
                 return stub
-            async with sem:
-                spans = await asyncio.to_thread(catalog.load_spans, stub.trace_id)
+            try:
+                async with sem:
+                    spans = await asyncio.to_thread(catalog.load_spans, stub.trace_id)
+            except Exception as exc:
+                # Langfuse rejects some traces (e.g. observations > 80MB). Skip
+                # that id so the rest of the online batch can still hydrate.
+                log.warning(
+                    "Skipping trace that failed span hydrate (%s / session=%s): %s",
+                    stub.trace_id,
+                    stub.session_id or "unknown",
+                    exc,
+                )
+                return None
             filled = SpanTrace(
                 spans=spans,
                 trace_id=stub.trace_id,
@@ -352,7 +364,8 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
             )
             return complete_trace(filled)
 
-        return list(await asyncio.gather(*[_load(s) for s in stubs]))
+        loaded = await asyncio.gather(*[_load(s) for s in stubs])
+        return [trace for trace in loaded if trace is not None]
 
 
 # ------------------------------------------------------------------

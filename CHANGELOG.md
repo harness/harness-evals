@@ -14,6 +14,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `TypeError: sequence item 0: expected str instance, list found` when
   `gen_ai.output_messages[].content` is a multipart list. Session merges
   also skip individual malformed traces instead of aborting the batch.
+- **OTEL / Langfuse hydrate**: `_hydrate_catalog_traces` skips individual traces
+  that fail `load_spans` (e.g. Langfuse `Observations in trace are too large`)
+  instead of aborting the whole online session batch via `asyncio.gather`.
 
 ## [0.24.2]
 

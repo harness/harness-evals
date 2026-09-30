@@ -526,3 +526,60 @@ class TestLangfuseTraceCatalog:
         assert cases[0].input == "Analyze the error"
         assert cases[0].output == "## Analysis"
 
+    def test_load_spans_falls_back_to_legacy_v1_on_cloud_only_v2(self):
+        """SDK 4 v2 observations 404 on self-hosted → use legacy.observations_v1."""
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+
+        client = MagicMock()
+        client.api.trace.get.return_value = _FakeTrace(
+            input={"prompt": "hello"},
+            output={"text": "ok"},
+            session_id="sess-v1",
+        )
+
+        class _CloudOnlyV2Error(Exception):
+            def __init__(self) -> None:
+                super().__init__("NotFoundError")
+                self.body = {
+                    "message": "v2 APIs are currently in beta and only available on Langfuse Cloud",
+                    "error": "LangfuseNotFoundError",
+                }
+
+        client.api.observations.get_many.side_effect = _CloudOnlyV2Error()
+        client.api.legacy.observations_v1.get_many.return_value = _FakeObservationList(
+            data=[
+                _FakeObservation(
+                    type="GENERATION",
+                    name="chat",
+                    input=[{"role": "user", "content": "hello"}],
+                    output="ok",
+                    start_time=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 9, 20, 1, 0, 1, tzinfo=timezone.utc),
+                )
+            ]
+        )
+
+        spans = LangfuseTraceCatalog(client).load_spans("t-v2-fail")
+        assert len(spans) == 1
+        assert spans[0]["name"] == "chat"
+        client.api.legacy.observations_v1.get_many.assert_called()
+
+    def test_load_spans_uses_embedded_trace_observations(self):
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+
+        client = MagicMock()
+        obs = _FakeObservation(
+            type="GENERATION",
+            name="embedded",
+            input=[{"role": "user", "content": "hi"}],
+            output="yo",
+        )
+        trace = _FakeTrace(session_id="sess-emb")
+        trace.observations = [obs]  # type: ignore[attr-defined]
+        client.api.trace.get.return_value = trace
+
+        spans = LangfuseTraceCatalog(client).load_spans("t-emb")
+        assert len(spans) == 1
+        assert spans[0]["name"] == "embedded"
+        client.api.observations.get_many.assert_not_called()
+

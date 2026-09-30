@@ -186,6 +186,73 @@ class JudgeSpendSummary:
     by_metric: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass
+class TurnLatencySummary:
+    """Mean assistant-turn latency across eval cases (target SUT, not judges)."""
+
+    avg_latency_ms: float
+    latency_n: int
+    latency_scope: str = "turn"
+
+
+def turn_latencies_from_case(eval_case: object) -> list[float]:
+    """Per-assistant-turn latencies (ms) from an EvalCase.
+
+    Prefers ``Message.latency_ms``; falls back to ``Message.metadata["latency_ms"]``
+    for older conversational targets that only stamped metadata.
+    """
+    out: list[float] = []
+    messages = getattr(eval_case, "messages", None) or []
+    for msg in messages:
+        if getattr(msg, "role", None) != "assistant":
+            continue
+        raw = getattr(msg, "latency_ms", None)
+        if raw is None:
+            meta = getattr(msg, "metadata", None) or {}
+            if isinstance(meta, dict):
+                raw = meta.get("latency_ms")
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            out.append(value)
+    return out
+
+
+def summarize_turn_latency(eval_cases: list[object]) -> TurnLatencySummary | None:
+    """Mean assistant-turn latency across cases. ``None`` when no turn data."""
+    latencies: list[float] = []
+    for case in eval_cases:
+        latencies.extend(turn_latencies_from_case(case))
+    if not latencies:
+        return None
+    return TurnLatencySummary(
+        avg_latency_ms=sum(latencies) / len(latencies),
+        latency_n=len(latencies),
+        latency_scope="turn",
+    )
+
+
+def turn_latency_to_dict(summary: TurnLatencySummary) -> dict[str, object]:
+    return {
+        "avg_latency_ms": round(summary.avg_latency_ms, 1),
+        "avg_latency_s": round(summary.avg_latency_ms / 1000.0, 3),
+        "latency_n": summary.latency_n,
+        "latency_scope": summary.latency_scope,
+    }
+
+
+def format_turn_latency(summary: TurnLatencySummary) -> str:
+    avg_s = summary.avg_latency_ms / 1000.0
+    return (
+        f"  Avg turn latency: {avg_s:.3f} s "
+        f"({summary.avg_latency_ms:.1f} ms, n={summary.latency_n} turns)"
+    )
+
+
 def summarize_judge_spend(all_scores: list[list[Score]]) -> JudgeSpendSummary | None:
     """Aggregate judge token/cost metadata attached to metric scores.
 
@@ -315,6 +382,7 @@ def summary_to_dict(
     result: ScoreSummary,
     *,
     judge_spend: JudgeSpendSummary | None = None,
+    turn_latency: TurnLatencySummary | None = None,
 ) -> dict[str, object]:
     """Serialize a :class:`ScoreSummary` for JSON output (e.g. JSONL footer record)."""
     metrics: dict[str, object] = {}
@@ -350,4 +418,6 @@ def summary_to_dict(
     }
     if judge_spend is not None:
         payload["judge_spend"] = judge_spend_to_dict(judge_spend)
+    if turn_latency is not None:
+        payload.update(turn_latency_to_dict(turn_latency))
     return payload

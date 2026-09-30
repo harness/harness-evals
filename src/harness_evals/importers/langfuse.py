@@ -88,10 +88,7 @@ class LangfuseTraceCatalog:
     def load_spans(self, trace_id: str) -> list[dict[str, object]]:
         trace = self._client.api.trace.get(trace_id)
         session_id = _trace_session_id(trace)
-        observations = self._client.api.observations.get_many(
-            trace_id=trace_id,
-        )
-        obs_list = observations.data if hasattr(observations, "data") else []
+        obs_list = _list_observations_for_trace(self._client, trace_id, trace=trace)
         spans = [
             _observation_to_span(obs, trace_id=trace_id, session_id=session_id) for obs in obs_list
         ]
@@ -296,11 +293,7 @@ class LangfuseEvalCaseSource(BaseEvalCaseSource):
           - trace.metadata -> metadata (includes langfuse_trace_id)
         """
         trace = self._client.api.trace.get(trace_id)
-
-        observations = self._client.api.observations.get_many(
-            trace_id=trace_id,
-        )
-        obs_list = observations.data if hasattr(observations, "data") else []
+        obs_list = _list_observations_for_trace(self._client, trace_id, trace=trace)
 
         messages: list[Message] = []
         tool_calls: list[ToolCall] = []
@@ -530,6 +523,101 @@ def _iter_trace_pages(client: Langfuse, *, limit: int, **filters: object):
 def _trace_session_id(trace: object) -> str | None:
     sid = getattr(trace, "session_id", None) or getattr(trace, "sessionId", None)
     return str(sid) if sid else None
+
+
+def _is_langfuse_v2_cloud_only_error(exc: BaseException) -> bool:
+    """True when self-hosted Langfuse rejects the Cloud-only v2 observations API."""
+    chunks: list[str] = [str(exc)]
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        chunks.append(str(body.get("message") or ""))
+        chunks.append(str(body.get("error") or ""))
+    text = " ".join(chunks).lower()
+    return "v2" in text and ("cloud" in text or "beta" in text)
+
+
+def _paginate_observations_get_many(observations_api: object, trace_id: str) -> list[object]:
+    get_many = getattr(observations_api, "get_many", None)
+    if not callable(get_many):
+        return []
+    collected: list[object] = []
+    page = 1
+    page_size = 100
+    while page <= 100:
+        result = get_many(trace_id=trace_id, page=page, limit=page_size)
+        data = getattr(result, "data", None)
+        if data is None:
+            if isinstance(result, list):
+                return list(result)
+            return collected
+        batch = list(data)
+        collected.extend(batch)
+        meta = getattr(result, "meta", None)
+        total_pages = getattr(meta, "total_pages", None) if meta is not None else None
+        current = getattr(meta, "page", None) if meta is not None else None
+        if total_pages is not None and current is not None:
+            if current >= total_pages:
+                break
+        elif len(batch) < page_size:
+            break
+        page += 1
+    return collected
+
+
+def _legacy_observations_v1_client(api: object) -> object | None:
+    """Return SDK 4+ ``api.legacy.observations_v1`` when available."""
+    legacy = getattr(api, "legacy", None)
+    if legacy is None:
+        return None
+    obs_v1 = getattr(legacy, "observations_v1", None)
+    if obs_v1 is None or not callable(getattr(obs_v1, "get_many", None)):
+        return None
+    return obs_v1
+
+
+def _list_observations_for_trace(
+    client: object,
+    trace_id: str,
+    *,
+    trace: object | None = None,
+) -> list[object]:
+    """Fetch observations for a trace using self-hosted-compatible APIs.
+
+    Langfuse Python SDK 4+ routes ``api.observations.get_many`` to
+    ``/api/public/v2/observations`` (Cloud-only). Self-hosted servers still
+    expose v1 at ``/api/public/observations`` via ``api.legacy.observations_v1``
+    (SDK 4+) or ``api.observations`` (SDK 3).
+
+    Order:
+    1. Observations already embedded on ``trace.get`` (avoids a second call).
+    2. ``api.observations.get_many`` (SDK 3 v1 / SDK 4 v2).
+    3. On Cloud-only v2 404, ``api.legacy.observations_v1.get_many``.
+    """
+    if trace is not None:
+        embedded = getattr(trace, "observations", None)
+        if embedded:
+            return list(embedded)
+
+    api = getattr(client, "api", None)
+    if api is None:
+        return []
+
+    observations = getattr(api, "observations", None)
+    if observations is not None and callable(getattr(observations, "get_many", None)):
+        try:
+            return _paginate_observations_get_many(observations, trace_id)
+        except Exception as exc:
+            if not _is_langfuse_v2_cloud_only_error(exc):
+                raise
+            legacy_v1 = _legacy_observations_v1_client(api)
+            if legacy_v1 is None:
+                raise
+            return _paginate_observations_get_many(legacy_v1, trace_id)
+
+    legacy_v1 = _legacy_observations_v1_client(api)
+    if legacy_v1 is not None:
+        return _paginate_observations_get_many(legacy_v1, trace_id)
+    return []
 
 
 def _list_trace_metadata(trace: object) -> dict[str, object]:

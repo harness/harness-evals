@@ -387,6 +387,26 @@ class TestJsonSink:
         assert "quality_pass_rate" in summary
         assert "dimensions" in summary
 
+    def test_finalize_summary_includes_avg_turn_latency(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        sink = JsonSink(str(path))
+        case = EvalCase(
+            input="scenario",
+            output="done",
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="a", latency_ms=1000.0),
+                Message(role="assistant", content="b", latency_ms=3000.0),
+            ],
+        )
+        sink.write(scores, case)
+        sink.finalize()
+
+        summary = json.loads(path.read_text().strip().splitlines()[-1])
+        assert summary["latency_scope"] == "turn"
+        assert summary["latency_n"] == 2
+        assert summary["avg_latency_ms"] == 2000.0
+
     def test_finalize_skips_summary_when_disabled(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"
         sink = JsonSink(str(path), include_summary=False)

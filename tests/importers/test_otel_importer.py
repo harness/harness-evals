@@ -732,6 +732,42 @@ class TestOTELTimeWindowFetch:
         assert [m.content for m in cases[0].messages if m.role == "user"] == ["first", "second"]
 
     @pytest.mark.asyncio
+    async def test_hydrate_skips_traces_that_fail_load_spans(self):
+        from datetime import datetime, timezone
+
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        class _Catalog:
+            def list_traces(self, **kwargs):
+                return [
+                    SpanTrace(spans=[], trace_id="ok", session_id="s-ok"),
+                    SpanTrace(spans=[], trace_id="huge", session_id="s-huge"),
+                ]
+
+            def load_spans(self, trace_id: str):
+                if trace_id == "huge":
+                    raise RuntimeError(
+                        "Observations in trace are too large: 80.11MB exceeds limit of 80.00MB"
+                    )
+                return _chat_spans(
+                    "ok prompt",
+                    "ok-out",
+                    session="s-ok",
+                    trace_id="ok",
+                    start_nano=1_000_000_000,
+                )
+
+        source = OTELEvalCaseSource(
+            catalog=_Catalog(),
+            now=lambda: datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        cases = await source.fetch(
+            ResourceRef(source="otel", id="", extra={"lookback_days": 7, "group_by": "session_id"})
+        )
+        assert len(cases) == 1
+        assert cases[0].input == "ok prompt"
+
+    @pytest.mark.asyncio
     async def test_time_filters_without_catalog_or_path_raise(self):
         source = OTELEvalCaseSource()
         with pytest.raises(ValueError, match="TraceCatalog"):
@@ -802,3 +838,34 @@ class TestLangfuseTraceIoRecovery:
         ec = _build_conversation_eval_case(spans)
         assert ec.input == "Ask a support question"
         assert ec.output == "done"
+
+    def test_output_messages_list_content_does_not_crash(self):
+        """Assistant content may be multipart list (Langfuse / GenAI exporters)."""
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "chat.completion",
+                "span_id": "1",
+                "trace_id": "t-list-content",
+                "parent_span_id": None,
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.input_messages": [{"role": "user", "content": "hi"}],
+                    "gen_ai.output_messages": [
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "hello "},
+                                {"type": "text", "text": "world"},
+                            ],
+                        }
+                    ],
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 2,
+            }
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert "hello" in (ec.output or "")
+        assert "world" in (ec.output or "")

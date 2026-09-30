@@ -163,6 +163,7 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
         return Message(
             role="assistant",
             content=self._message_content(output),
+            latency_ms=latency_ms,
             metadata=metadata,
         )
 

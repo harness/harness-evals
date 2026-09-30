@@ -382,6 +382,7 @@ class ConversationSimulator:
         )
         expected_tools = [call.name for call in expected_tool_calls] if expected_tool_calls is not None else None
 
+        turn_latencies = _assistant_turn_latencies(expanded_messages)
         return EvalCase(
             input=golden.scenario,
             output=last_assistant,
@@ -390,6 +391,8 @@ class ConversationSimulator:
             expected_tool_calls=expected_tool_calls,
             tool_calls=tool_calls,
             messages=expanded_messages,
+            # Sum of measured assistant-turn latencies (excludes idle between turns).
+            latency_ms=sum(turn_latencies) if turn_latencies else None,
             metadata=metadata,
             tags=golden.tags,
         )
@@ -621,6 +624,26 @@ def _finalize_elicitation(
         metadata["elicitation_trace"] = trace
     assistant_msg.metadata = metadata
     return assistant_msg
+
+
+def _assistant_turn_latencies(messages: list[Message] | None) -> list[float]:
+    """Collect per-assistant-turn latencies (ms) from Message fields or metadata."""
+    out: list[float] = []
+    for msg in messages or []:
+        if msg.role != "assistant":
+            continue
+        raw = msg.latency_ms
+        if raw is None and isinstance(msg.metadata, dict):
+            raw = msg.metadata.get("latency_ms")
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            out.append(value)
+    return out
 
 
 def _simulated_user_message(pending: PendingHumanInput, human_input: dict) -> Message:

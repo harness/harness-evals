@@ -9,7 +9,7 @@ from typing import Any
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
-from harness_evals.summary import summarize, summarize_judge_spend, summary_to_dict
+from harness_evals.summary import summarize, summarize_judge_spend, summarize_turn_latency, summary_to_dict
 
 _MAX_TOOL_RESULT_CHARS = 500
 _DEBUG_METADATA_KEYS = (
@@ -207,6 +207,7 @@ class JsonSink(BaseSink):
         self.include_summary = include_summary
         self._write_count = 0
         self._all_scores: list[list[Score]] = []
+        self._eval_cases: list[EvalCase] = []
 
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +238,7 @@ class JsonSink(BaseSink):
         self._write_count += 1
         if self.include_summary:
             self._all_scores.append(list(scores))
+            self._eval_cases.append(eval_case)
 
     def finalize(self) -> None:
         if self._write_count == 0:
@@ -245,11 +247,13 @@ class JsonSink(BaseSink):
             summary_record = summary_to_dict(
                 summarize(self._all_scores),
                 judge_spend=summarize_judge_spend(self._all_scores),
+                turn_latency=summarize_turn_latency(self._eval_cases),
             )
             with open(self.path, "a") as f:
                 f.write(json.dumps(summary_record, default=str) + "\n")
                 f.flush()
             self._all_scores.clear()
+            self._eval_cases.clear()
         resolved = self.path.resolve()
         print(
             f"Wrote {self._write_count} JSONL record(s) to {resolved}"

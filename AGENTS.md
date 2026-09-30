@@ -477,7 +477,7 @@ class SafetyMetric(BaseMetric):
 **LLM**: `openai>=1.40`, `anthropic>=0.30` — optional `[llm]`
 **OTLP**: `opentelemetry-sdk>=1.20`, `opentelemetry-exporter-otlp-proto-grpc>=1.20`, `opentelemetry-exporter-otlp-proto-http>=1.20` — optional `[otlp]`
 **Similarity**: BLEU is dependency-free and included in the core install; `[similarity]` remains a compatibility no-op
-**Harness**: `httpx>=0.27`, `pyjwt>=2.13.0` — optional `[harness]`
+**Harness**: `httpx>=0.27`, `pyjwt>=2.14.0` — optional `[harness]`
 **Benchmarks**: `httpx>=0.27` — optional `[benchmarks]` (datasets fetched from HuggingFace Hub)
 **Langfuse**: `langfuse>=2.0` — optional `[langfuse]`
 **Dev**: `pytest>=8.0`, `ruff>=0.15`, `pytest-cov`, `pytest-asyncio`, `pre-commit`, `build`

@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import enum
 import json
+import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -288,7 +289,23 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         cases: list[EvalCase] = []
         for group in group_traces(normalized, group_by=group_by):
             spans, grouping_meta = merge_span_groups(group)
-            case = _build_conversation_eval_case(spans)
+            try:
+                case = _build_conversation_eval_case(spans)
+            except Exception as exc:
+                # One malformed session must not abort an online batch hydrate.
+                sample_id = None
+                if grouping_meta:
+                    sample_id = grouping_meta.get("session_id") or grouping_meta.get("trace_id")
+                if sample_id is None and spans:
+                    sample_id = (spans[0].get("attributes") or {}).get("session.id") or spans[0].get(
+                        "trace_id"
+                    )
+                logging.getLogger(__name__).warning(
+                    "Skipping session/trace that failed EvalCase build (%s): %s",
+                    sample_id or "unknown",
+                    exc,
+                )
+                continue
             if grouping_meta:
                 meta = dict(case.metadata or {})
                 meta.update(grouping_meta)
@@ -318,14 +335,26 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
                 stubs = list(seen.values())
 
         sem = asyncio.Semaphore(self._concurrency)
+        log = logging.getLogger(__name__)
 
-        async def _load(stub: SpanTrace) -> SpanTrace:
+        async def _load(stub: SpanTrace) -> SpanTrace | None:
             if stub.spans:
                 return complete_trace(stub)
             if not stub.trace_id:
                 return stub
-            async with sem:
-                spans = await asyncio.to_thread(catalog.load_spans, stub.trace_id)
+            try:
+                async with sem:
+                    spans = await asyncio.to_thread(catalog.load_spans, stub.trace_id)
+            except Exception as exc:
+                # Langfuse rejects some traces (e.g. observations > 80MB). Skip
+                # that id so the rest of the online batch can still hydrate.
+                log.warning(
+                    "Skipping trace that failed span hydrate (%s / session=%s): %s",
+                    stub.trace_id,
+                    stub.session_id or "unknown",
+                    exc,
+                )
+                return None
             filled = SpanTrace(
                 spans=spans,
                 trace_id=stub.trace_id,
@@ -335,7 +364,8 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
             )
             return complete_trace(filled)
 
-        return list(await asyncio.gather(*[_load(s) for s in stubs]))
+        loaded = await asyncio.gather(*[_load(s) for s in stubs])
+        return [trace for trace in loaded if trace is not None]
 
 
 # ------------------------------------------------------------------
@@ -683,6 +713,38 @@ def _recover_intermediate_user_messages(attrs: dict, messages: list[Message]) ->
         return
 
 
+def _stringify_content(value: Any) -> str | None:
+    """Normalize message/part content to a plain string (or ``None`` if empty).
+
+    Langfuse / GenAI exporters sometimes store assistant ``content`` as a
+    multipart list (``[{"type": "text", "text": "..."}]``) or nest lists.
+    Callers that ``"\\n".join(...)`` need scalars only.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, list):
+        # Prefer structured parts extraction; otherwise flatten recursively.
+        from_parts = _text_from_parts(value)
+        if from_parts:
+            return from_parts
+        chunks: list[str] = []
+        for item in value:
+            chunk = _stringify_content(item)
+            if chunk:
+                chunks.append(chunk)
+        return "\n".join(chunks) if chunks else None
+    if isinstance(value, dict):
+        for key in ("text", "content", "response", "result"):
+            if key in value:
+                chunk = _stringify_content(value.get(key))
+                if chunk:
+                    return chunk
+        return None
+    return str(value) or None
+
+
 def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
     """Extract assistant output text and tool calls from an LLM span's output.
 
@@ -704,14 +766,16 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
             if not isinstance(msg, dict):
                 continue
             parts = msg.get("parts", [])
-            text = _text_from_parts(parts)
+            text = _text_from_parts(parts) if isinstance(parts, list) else None
             if text:
                 text_parts.append(text)
-            tcs = _tool_calls_from_parts(parts)
-            tool_calls.extend(tcs)
-            # Fallback: direct content
+            if isinstance(parts, list):
+                tool_calls.extend(_tool_calls_from_parts(parts))
+            # Fallback: direct content (may be str or multipart list)
             if not parts and "content" in msg:
-                text_parts.append(msg["content"])
+                chunk = _stringify_content(msg.get("content"))
+                if chunk:
+                    text_parts.append(chunk)
 
         content = "\n".join(text_parts) if text_parts else None
         return content, tool_calls
@@ -722,13 +786,13 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
         try:
             parsed = json.loads(completion)
             if isinstance(parsed, dict) and "content" in parsed:
-                return parsed["content"], []
+                return _stringify_content(parsed["content"]), []
             if isinstance(parsed, dict) and "role" in parsed:
-                return parsed.get("content"), []
+                return _stringify_content(parsed.get("content")), []
             if isinstance(parsed, list):
                 for entry in parsed:
                     if isinstance(entry, dict) and "content" in entry:
-                        return entry["content"], []
+                        return _stringify_content(entry["content"]), []
         except (json.JSONDecodeError, TypeError):
             return completion, []
 
@@ -746,9 +810,12 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
                 tcs: list[ToolCall] = []
                 for part in content:
                     if not isinstance(part, dict):
+                        chunk = _stringify_content(part)
+                        if chunk:
+                            text_parts.append(chunk)
                         continue
                     if part.get("type") == "text":
-                        t = part.get("text") or part.get("content") or ""
+                        t = _stringify_content(part.get("text") or part.get("content"))
                         if t:
                             text_parts.append(t)
                     elif part.get("type") == "tool_use":
@@ -855,21 +922,25 @@ def _text_from_parts(parts: list) -> str | None:
     """
     if not parts:
         return None
-    texts = []
+    texts: list[str] = []
     for part in parts:
         if not isinstance(part, dict):
+            chunk = _stringify_content(part)
+            if chunk:
+                texts.append(chunk)
             continue
         ptype = part.get("type", "text")
         if ptype == "text":
-            text = part.get("content") or part.get("text") or ""
+            text = _stringify_content(part.get("content") or part.get("text"))
             if text:
                 texts.append(text)
         elif ptype == "tool_call_response":
             # Include tool results as text in the trajectory
             # spec field is "response"; fall back to "result"/"content" for older exporters
             result = part.get("response") or part.get("content") or part.get("result") or ""
-            if result:
-                texts.append(result if isinstance(result, str) else json.dumps(result))
+            text = _stringify_content(result)
+            if text:
+                texts.append(text)
     return "\n".join(texts) if texts else None
 
 

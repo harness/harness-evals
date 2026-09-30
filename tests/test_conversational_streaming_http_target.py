@@ -78,6 +78,9 @@ async def test_conversational_streaming_target_detects_pending_elicitation(monke
 
     msg = await target.agenerate([Message(role="user", content="Create a k8s connector")])
 
+    assert msg.role == "assistant"
+    assert msg.latency_ms == 12.0
+    assert (msg.metadata or {}).get("latency_ms") == 12.0
     assert captured["body"] == {"prompt": "Create a k8s connector", "stream": True}
     assert target.conversation_id == "conv-1"
     assert target.session_id == "sess-1"

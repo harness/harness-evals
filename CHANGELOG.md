@@ -5,6 +5,39 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.4]
+
+### Added
+
+- **Golden / conversation summary turn latency**: JSONL summary records and
+  stdout now report mean assistant-turn latency (`avg_latency_ms`,
+  `latency_n`, `latency_scope=turn`). `ConversationalStreamingHttpTarget`
+  stamps `Message.latency_ms` (not only metadata), and conversation
+  `EvalCase.latency_ms` is the sum of measured turn latencies.
+
+### Fixed
+
+- **Langfuse self-hosted observations hydrate**: SDK 4+ maps
+  `api.observations.get_many` to Cloud-only `/api/public/v2/observations`.
+  The importer now falls back to `api.legacy.observations_v1` (or embedded
+  `trace.observations`) on that 404, pins `langfuse>=2.0,<4`, and paginates
+  v1 observation pages.
+- **OTEL / Langfuse list-shaped assistant content**:
+  `_extract_output_from_span` no longer crashes with
+  `TypeError: sequence item 0: expected str instance, list found` when
+  `gen_ai.output_messages[].content` is a multipart list. Session merges
+  also skip individual malformed traces instead of aborting the batch.
+- **`pyjwt`**: bump optional `[harness]` floor to `>=2.14.0` (CVE-2026-102268
+  and related HIGH findings).
+
+## [0.24.3]
+
+### Fixed
+
+- **OTEL / Langfuse hydrate**: `_hydrate_catalog_traces` skips individual traces
+  that fail `load_spans` (e.g. Langfuse `Observations in trace are too large`)
+  instead of aborting the whole online session batch via `asyncio.gather`.
+
 ## [0.24.2]
 
 ### Fixed

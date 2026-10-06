@@ -3,12 +3,17 @@ langfuse-marker, and span_type dialects, plus the unscorable-content signal."""
 
 import json
 
+import pytest
+
 from harness_evals.adapters.trace import (
     SpanType,
     classify_span,
+    extract_span_subtree,
     spans_to_eval_case,
     spans_to_eval_case_for_span,
 )
+from harness_evals.metrics.conversation.tool_use import ToolUseMetric
+from tests.conftest import MockLLM
 
 TS = "2026-08-03T10:00:00Z"
 
@@ -71,6 +76,57 @@ def _semconv_tool(span_id="tool1", parent="root"):
             ),
         },
     )
+
+
+def _langfuse_trace():
+    return [
+        _span(
+            "root",
+            attrs={
+                "langfuse.observation.type": "agent",
+                "langfuse.observation.input": json.dumps(
+                    {"messages": [{"role": "user", "content": "Review this pull request"}]}
+                ),
+            },
+        ),
+        _span(
+            "llm1",
+            parent="root",
+            attrs={
+                "langfuse.observation.type": "generation",
+                "langfuse.observation.output": json.dumps(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "I will inspect the change."},
+                            {"type": "tool_use", "name": "Read", "input": {"path": "app.py"}},
+                        ],
+                    }
+                ),
+            },
+        ),
+        _span(
+            "tool1",
+            parent="root",
+            name="execute_tool Read",
+            attrs={
+                "langfuse.observation.type": "tool",
+                "gen_ai.tool.name": "Read",
+                "langfuse.observation.input": json.dumps({"path": "app.py"}),
+                "langfuse.observation.output": json.dumps({"content": "print('hello')"}),
+            },
+        ),
+        _span(
+            "llm2",
+            parent="root",
+            attrs={
+                "langfuse.observation.type": "generation",
+                "langfuse.observation.output": json.dumps(
+                    {"role": "assistant", "content": [{"type": "text", "text": "No issues found."}]}
+                ),
+            },
+        ),
+    ]
 
 
 class TestClassifyDialects:
@@ -165,6 +221,20 @@ class TestEvalCaseParity:
         case, _ = spans_to_eval_case([_semconv_root(), llm])
         assert case.input_tokens == 99
 
+    def test_zero_token_columns_win_over_attrs(self):
+        first = _semconv_llm("first")
+        first["input_tokens"] = 0
+        first["output_tokens"] = 0
+        second = _semconv_llm("second", span_id="llm2")
+        second["input_tokens"] = 1
+        second["output_tokens"] = 2
+
+        case, _ = spans_to_eval_case([_semconv_root(), first, second])
+
+        assert case.input_tokens == 1
+        assert case.output_tokens == 2
+        assert case.token_count == 3
+
     def test_empty_output_marks_unscorable(self):
         proxy = _span("p", attrs={"gen_ai.operation.name": "chat"})
         case, warnings = spans_to_eval_case([proxy])
@@ -235,3 +305,175 @@ class TestEvalCaseParity:
         )
         case, _ = spans_to_eval_case([span])
         assert case.output == "valid"
+
+    def test_configured_aggregate_tool_calls_are_adapted(self):
+        root = _semconv_root()
+        root["attributes"] = json.dumps(
+            {
+                **json.loads(root["attributes"]),
+                "custom.tool_calls": {
+                    "_type": "ArrayValue",
+                    "values": [
+                        {"_type": "StringValue", "value": "Read"},
+                        {"_type": "StringValue", "value": "Write"},
+                    ],
+                },
+            }
+        )
+
+        case, _ = spans_to_eval_case(
+            [root, _semconv_llm("complete")],
+            aggregate_tool_call_attribute_keys=("custom.tool_calls",),
+        )
+
+        assert [tool_call.name for tool_call in case.tool_calls or []] == ["Read", "Write"]
+        assert case.messages is not None
+        assert any(message.tool_calls for message in case.messages)
+
+    def test_configured_aggregate_tool_call_decodes_otlp_key_value_list(self):
+        root = _semconv_root()
+        root["attributes"] = json.dumps(
+            {
+                **json.loads(root["attributes"]),
+                "custom.tool_calls": {
+                    "kvlistValue": {
+                        "values": [
+                            {"key": "name", "value": {"stringValue": "Read"}},
+                            {
+                                "key": "arguments",
+                                "value": {
+                                    "kvlistValue": {
+                                        "values": [
+                                            {
+                                                "key": "path",
+                                                "value": {"stringValue": "app.py"},
+                                            }
+                                        ]
+                                    }
+                                },
+                            },
+                        ]
+                    }
+                },
+            }
+        )
+
+        case, _ = spans_to_eval_case(
+            [root, _semconv_llm("complete")],
+            aggregate_tool_call_attribute_keys=("custom.tool_calls",),
+        )
+
+        assert case.tool_calls is not None
+        assert case.tool_calls[0].name == "Read"
+        assert case.tool_calls[0].input == {"path": "app.py"}
+
+    def test_aggregate_tool_calls_require_explicit_mapping(self):
+        root = _semconv_root()
+        root["attributes"] = json.dumps(
+            {
+                **json.loads(root["attributes"]),
+                "custom.tool_calls": ["Read"],
+            }
+        )
+
+        case, _ = spans_to_eval_case([root, _semconv_llm("complete")])
+
+        assert case.tool_calls is None
+
+    def test_aggregate_tool_calls_merge_without_duplicate_tool_spans(self):
+        root = _semconv_root()
+        root["attributes"] = json.dumps(
+            {
+                **json.loads(root["attributes"]),
+                "custom.tool_calls": [{"name": "search"}, "Write"],
+            }
+        )
+
+        case, _ = spans_to_eval_case(
+            [root, _semconv_tool(), _semconv_llm("complete")],
+            aggregate_tool_call_attribute_keys=("custom.tool_calls",),
+        )
+
+        assert [tool_call.name for tool_call in case.tool_calls or []] == ["search", "Write"]
+
+    def test_langfuse_trace_preserves_tool_use_trajectory(self):
+        case, warnings = spans_to_eval_case(_langfuse_trace())
+
+        assert case.input == "Review this pull request"
+        assert case.output == "No issues found."
+        assert [message.role for message in case.messages or []] == ["user", "assistant", "tool", "assistant"]
+        assert case.tool_calls is not None
+        assert case.tool_calls[0].name == "Read"
+        assert case.tool_calls[0].input == {"path": "app.py"}
+        assert case.tool_calls[0].output == "print('hello')"
+        assert not warnings
+
+    def test_langfuse_plain_text_and_query_fields_are_preserved(self):
+        spans = [
+            _span(
+                "root",
+                attrs={
+                    "langfuse.observation.type": "agent",
+                    "langfuse.observation.input": json.dumps({"query": "Review this pull request"}),
+                },
+            ),
+            _span(
+                "generation",
+                parent="root",
+                attrs={
+                    "langfuse.observation.type": "generation",
+                    "langfuse.observation.output": "No issues found.",
+                },
+            ),
+        ]
+
+        case, warnings = spans_to_eval_case(spans)
+
+        assert case.input == "Review this pull request"
+        assert case.output == "No issues found."
+        assert [message.role for message in case.messages or []] == ["user", "assistant"]
+        assert not warnings
+
+    def test_langfuse_marker_wins_over_name_heuristic(self):
+        span = _span(
+            "tool",
+            parent="root",
+            name="chat",
+            attrs={"langfuse.observation.type": "tool"},
+        )
+
+        assert classify_span(span) == SpanType.TOOL_CALL
+
+    def test_tool_name_column_populates_tool_call(self):
+        span = _span("tool", parent="root")
+        span["tool_name"] = "search"
+
+        case, _ = spans_to_eval_case([span])
+
+        assert case.tool_calls is not None
+        assert case.tool_calls[0].name == "search"
+
+    @pytest.mark.asyncio
+    async def test_langfuse_trace_is_usable_by_tool_use_metric(self):
+        case, _ = spans_to_eval_case(_langfuse_trace())
+        llm = MockLLM(default={"reasoning": "Appropriate tool use", "score": 0.9})
+
+        score = await ToolUseMetric(llm=llm).a_measure(case)
+
+        assert score.value == 0.9
+        assert score.metadata["n_tool_calls"] == 1
+        assert 'Read args={"path": "app.py"} -> print(\'hello\')' in llm.prompts[0]
+
+    def test_extract_span_subtree_is_public_complete_and_ordered(self):
+        subtree = extract_span_subtree(_langfuse_trace(), "root")
+        assert [span["span_id"] for span in subtree] == ["root", "llm1", "tool1", "llm2"]
+
+    def test_extract_span_subtree_handles_cyclic_parent_ids(self):
+        spans = [
+            _span("root", parent="child"),
+            _span("child", parent="root"),
+        ]
+
+        subtree = extract_span_subtree(spans, "root")
+
+        assert [span["span_id"] for span in subtree] == ["root", "child"]

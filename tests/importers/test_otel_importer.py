@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from harness_evals.importers.otel import OTELEvalCaseSource
+from harness_evals.importers.otel import OTELEvalCaseSource, SpanType, classify_span
 from harness_evals.refs import ResourceRef
 
 
@@ -119,6 +119,15 @@ class TestOTELEvalCaseSourceFromSpanJson:
 @pytest.mark.unit
 class TestOTELSemconvFormat:
     """Tests for the new OTel GenAI semantic conventions format."""
+
+    def test_parentless_langfuse_tool_is_a_tool_call(self):
+        span = {
+            "name": "tool-observation",
+            "attributes": {"langfuse.observation.type": "tool"},
+            "parent_span_id": None,
+        }
+
+        assert classify_span(span) is SpanType.TOOL_CALL
 
     def test_new_semconv_attributes(self):
         """Test spans using gen_ai.operation.name, gen_ai.provider.name, etc."""
@@ -300,6 +309,85 @@ class TestOTELSemconvFormat:
         assert ec.messages[0].role == "user"
         assert ec.messages[1].role == "assistant"
         assert ec.messages[1].content == "hello!"
+
+    def test_langfuse_agent_generation_and_tool_observations(self):
+        spans = [
+            {
+                "name": "review-agent",
+                "span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "agent",
+                    "langfuse.observation.input": json.dumps(
+                        [{"role": "user", "content": [{"type": "text", "text": "Review this pull request"}]}]
+                    ),
+                },
+                "parent_span_id": None,
+            },
+            {
+                "name": "review-turn",
+                "span_id": "llm",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "langfuse.observation.output": json.dumps(
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "I will inspect the change."},
+                                {"type": "tool_use", "name": "Read", "input": {"path": "app.py"}},
+                            ],
+                        }
+                    ),
+                },
+                "parent_span_id": "root",
+            },
+            {
+                "name": "tool-observation",
+                "span_id": "tool",
+                "attributes": {
+                    "langfuse.observation.type": "tool",
+                    "langfuse.observation.name": "Read",
+                    "langfuse.observation.input": json.dumps({"arguments": {"path": "app.py"}}),
+                    "langfuse.observation.output": json.dumps({"content": "print('hello')"}),
+                },
+                "parent_span_id": "root",
+            },
+        ]
+
+        ec = OTELEvalCaseSource.from_span_json(spans)
+
+        assert ec.input == "Review this pull request"
+        assert ec.output == "I will inspect the change."
+        assert ec.tool_calls is not None
+        assert ec.tool_calls[0].name == "Read"
+        assert ec.tool_calls[0].input == {"path": "app.py"}
+        assert ec.tool_calls[0].output == "print('hello')"
+
+    def test_langfuse_plain_text_and_query_fields(self):
+        spans = [
+            {
+                "name": "agent",
+                "span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "agent",
+                    "langfuse.observation.input": json.dumps({"query": "Review this pull request"}),
+                },
+                "parent_span_id": None,
+            },
+            {
+                "name": "generation",
+                "span_id": "llm",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "langfuse.observation.output": "No issues found.",
+                },
+                "parent_span_id": "root",
+            },
+        ]
+
+        ec = OTELEvalCaseSource.from_span_json(spans)
+
+        assert ec.input == "Review this pull request"
+        assert ec.output == "No issues found."
 
 
 @pytest.mark.unit
@@ -499,9 +587,7 @@ def _chat_spans(user: str, assistant: str, *, session: str, trace_id: str, start
             "attributes": {
                 "gen_ai.operation.name": "chat",
                 "gen_ai.conversation.id": session,
-                "gen_ai.input_messages": json.dumps(
-                    [{"role": "user", "parts": [{"type": "text", "content": user}]}]
-                ),
+                "gen_ai.input_messages": json.dumps([{"role": "user", "parts": [{"type": "text", "content": user}]}]),
                 "gen_ai.output_messages": json.dumps(
                     [{"role": "assistant", "parts": [{"type": "text", "content": assistant}]}]
                 ),
@@ -746,9 +832,7 @@ class TestOTELTimeWindowFetch:
 
             def load_spans(self, trace_id: str):
                 if trace_id == "huge":
-                    raise RuntimeError(
-                        "Observations in trace are too large: 80.11MB exceeds limit of 80.00MB"
-                    )
+                    raise RuntimeError("Observations in trace are too large: 80.11MB exceeds limit of 80.00MB")
                 return _chat_spans(
                     "ok prompt",
                     "ok-out",

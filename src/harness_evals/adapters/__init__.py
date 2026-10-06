@@ -3,6 +3,7 @@
 from harness_evals.adapters.trace import (
     SpanType,
     classify_span,
+    extract_span_subtree,
     normalize_span,
     spans_to_eval_case,
     spans_to_eval_case_for_span,
@@ -11,6 +12,7 @@ from harness_evals.adapters.trace import (
 __all__ = [
     "SpanType",
     "classify_span",
+    "extract_span_subtree",
     "normalize_span",
     "spans_to_eval_case",
     "spans_to_eval_case_for_span",

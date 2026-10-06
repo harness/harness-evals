@@ -71,6 +71,14 @@ def classify_span(span: dict[str, Any]) -> SpanType:
     if operation == _OP_EXECUTE_TOOL:
         return SpanType.TOOL_CALL
 
+    langfuse_type = attrs.get("langfuse.observation.type")
+    if langfuse_type == "agent":
+        return SpanType.AGENT_ROOT
+    if langfuse_type == "generation":
+        return SpanType.LLM_TURN
+    if langfuse_type == "tool":
+        return SpanType.TOOL_CALL
+
     # Legacy heuristics
     name = (span.get("name") or span.get("span_name") or "").lower()
 
@@ -95,13 +103,6 @@ def classify_span(span: dict[str, Any]) -> SpanType:
         return SpanType.OTHER
     if name.startswith("execute_tool") or ("tool" in name and "gen_ai" not in name):
         return SpanType.TOOL_CALL
-
-    # Langfuse observation-type hints (agent / generation / tool:* naming).
-    if attrs.get("langfuse.observation.type") == "agent":
-        return SpanType.AGENT_ROOT
-
-    if attrs.get("langfuse.observation.type") == "generation":
-        return SpanType.LLM_TURN
 
     if (
         attrs.get("langfuse.observation.type") == "span"
@@ -297,9 +298,7 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
                 if grouping_meta:
                     sample_id = grouping_meta.get("session_id") or grouping_meta.get("trace_id")
                 if sample_id is None and spans:
-                    sample_id = (spans[0].get("attributes") or {}).get("session.id") or spans[0].get(
-                        "trace_id"
-                    )
+                    sample_id = (spans[0].get("attributes") or {}).get("session.id") or spans[0].get("trace_id")
                 logging.getLogger(__name__).warning(
                     "Skipping session/trace that failed EvalCase build (%s): %s",
                     sample_id or "unknown",
@@ -585,8 +584,11 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
 
     if user_input and (not messages or messages[0].role != "user"):
         messages.insert(0, Message(role="user", content=user_input))
-    elif user_input and messages and messages[0].role == "user" and _looks_like_injected_user_context(
-        messages[0].content or ""
+    elif (
+        user_input
+        and messages
+        and messages[0].role == "user"
+        and _looks_like_injected_user_context(messages[0].content or "")
     ):
         messages[0] = Message(role="user", content=user_input)
 
@@ -620,9 +622,7 @@ def _extract_user_input_from_span(attrs: dict) -> str:
         raw = attrs.get(key)
         if not raw:
             continue
-        text = _text_from_langfuse_io(
-            raw, keys=("prompt", "user_message", "text", "input")
-        )
+        text = _text_from_langfuse_io(raw, keys=("prompt", "user_message", "text", "input", "query"))
         if text:
             return text
 
@@ -653,9 +653,7 @@ def _extract_user_input_from_span(attrs: dict) -> str:
                 for entry in reversed(parsed):
                     if isinstance(entry, dict) and entry.get("role") == "user":
                         content = entry.get("content", "")
-                        if isinstance(content, str) and content and not _looks_like_injected_user_context(
-                            content
-                        ):
+                        if isinstance(content, str) and content and not _looks_like_injected_user_context(content):
                             return content
         except (json.JSONDecodeError, TypeError):
             if not _looks_like_injected_user_context(prompt):
@@ -666,11 +664,31 @@ def _extract_user_input_from_span(attrs: dict) -> str:
 
 def _text_from_langfuse_io(raw: object, *, keys: tuple[str, ...]) -> str:
     """Pull a human prompt/answer string out of Langfuse trace input/output shapes."""
-    if isinstance(raw, str) and raw.strip():
-        return raw
-    parsed = raw if isinstance(raw, dict) else _try_json(raw)
+    parsed = raw if isinstance(raw, (dict, list)) else _try_json(raw)
+    if isinstance(parsed, str) and parsed.strip():
+        return parsed
+    messages = parsed if isinstance(parsed, list) else parsed.get("messages") if isinstance(parsed, dict) else None
+    if isinstance(messages, list):
+        for message in reversed(messages):
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content:
+                return content
+            if isinstance(content, list):
+                text = _text_from_parts(content)
+                if text:
+                    return text
     if not isinstance(parsed, dict):
         return ""
+    if parsed.get("role") == "user":
+        content = parsed.get("content")
+        if isinstance(content, str) and content:
+            return content
+        if isinstance(content, list):
+            text = _text_from_parts(content)
+            if text:
+                return text
     for key in keys:
         val = parsed.get(key)
         if isinstance(val, str) and val.strip():
@@ -826,6 +844,8 @@ def _extract_output_from_span(attrs: dict) -> tuple[str | None, list[ToolCall]]:
                             )
                         )
                 return "\n".join(text_parts) or None, tcs
+        if isinstance(raw, str):
+            return raw, []
 
     return None, []
 
@@ -836,9 +856,12 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
     name = (span.get("name") or span.get("span_name") or "").lower()
 
     # Tool name from attributes or span name
-    tool_name = attrs.get("gen_ai.tool.name") or attrs.get("tool.name") or ""
+    raw_name = span.get("name") or span.get("span_name") or ""
+    tool_name = attrs.get("gen_ai.tool.name") or attrs.get("tool.name") or attrs.get("langfuse.observation.name") or ""
     if not tool_name and name.startswith("execute_tool "):
-        tool_name = (span.get("name") or span.get("span_name") or "")[len("execute_tool ") :]
+        tool_name = raw_name[len("execute_tool ") :]
+    if not tool_name:
+        tool_name = raw_name
 
     # Arguments from attributes
     tool_input = _parse_json_attr(attrs.get("gen_ai.tool.call.arguments") or attrs.get("tool.input"))
@@ -890,12 +913,12 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
             if isinstance(parsed, dict):
                 if not tool_name:
                     tool_name = parsed.get("name", "")
-                tool_input = parsed.get("arguments") or parsed.get("input")
+                tool_input = parsed.get("arguments") or parsed.get("input") or parsed
 
     if not tool_output:
         raw = attrs.get("langfuse.observation.output")
         if raw:
-            parsed = raw if isinstance(raw, (dict, list, str, int, float, bool)) else _try_json(raw)
+            parsed = raw if isinstance(raw, (dict, list, int, float, bool)) else _try_json(raw)
             if isinstance(parsed, dict):
                 content = parsed.get("content")
                 if content is not None:

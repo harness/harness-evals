@@ -5,6 +5,19 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0]
+
+### Added
+
+- **Trace adapter Langfuse compatibility**: `spans_to_eval_case` now reconstructs
+  user, assistant, and tool trajectories from documented Langfuse agent,
+  generation, and tool observations when canonical GenAI messages are absent.
+  The adapter also exports `extract_span_subtree` for shared span-scoped
+  evaluation.
+- **Configurable aggregate tool calls**: callers can opt in to source-specific
+  aggregate tool-call attributes, including OTLP AnyValue wrappers, without
+  embedding those conventions in the shared adapter.
+
 ## [0.24.4]
 
 ### Added

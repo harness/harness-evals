@@ -43,9 +43,7 @@ CONVERSATION_PIVOT_FIELDNAMES = [
     "total_turns",
 ]
 
-_OBSERVED_USAGE_KEYS = frozenset(
-    {"duration_ms", "cost_usd", "tool_count", "num_turns", "total_tokens"}
-)
+_OBSERVED_USAGE_KEYS = frozenset({"duration_ms", "cost_usd", "tool_count", "num_turns", "total_tokens"})
 
 
 def conversation_pivot_fieldnames(metrics: list[str]) -> list[str]:
@@ -175,9 +173,7 @@ class CsvSink(BaseSink):
             cost_usd = eval_case.cost_usd
         row["total_duration_ms"] = _format_labeled_value(duration_ms, self.label)
         row["total_cost_usd"] = _format_labeled_value(cost_usd, self.label)
-        row["total_tool_calls"] = _format_labeled_value(
-            observed.get("tool_count"), self.label
-        )
+        row["total_tool_calls"] = _format_labeled_value(observed.get("tool_count"), self.label)
         row["total_turns"] = _format_labeled_value(observed.get("num_turns"), self.label)
         return row
 

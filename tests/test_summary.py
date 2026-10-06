@@ -335,7 +335,9 @@ class TestSummaryToDict:
             ),
         ]
         turn_latency = summarize_turn_latency(cases)
-        payload = summary_to_dict(summarize([[_score("exact_match", 1.0, 0.5, "correctness")]]), turn_latency=turn_latency)
+        payload = summary_to_dict(
+            summarize([[_score("exact_match", 1.0, 0.5, "correctness")]]), turn_latency=turn_latency
+        )
         assert payload["latency_scope"] == "turn"
         assert payload["latency_n"] == 3
         assert payload["avg_latency_ms"] == 2000.0

@@ -247,10 +247,7 @@ def turn_latency_to_dict(summary: TurnLatencySummary) -> dict[str, object]:
 
 def format_turn_latency(summary: TurnLatencySummary) -> str:
     avg_s = summary.avg_latency_ms / 1000.0
-    return (
-        f"  Avg turn latency: {avg_s:.3f} s "
-        f"({summary.avg_latency_ms:.1f} ms, n={summary.latency_n} turns)"
-    )
+    return f"  Avg turn latency: {avg_s:.3f} s ({summary.avg_latency_ms:.1f} ms, n={summary.latency_n} turns)"
 
 
 def summarize_judge_spend(all_scores: list[list[Score]]) -> JudgeSpendSummary | None:

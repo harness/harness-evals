@@ -89,9 +89,7 @@ class LangfuseTraceCatalog:
         trace = self._client.api.trace.get(trace_id)
         session_id = _trace_session_id(trace)
         obs_list = _list_observations_for_trace(self._client, trace_id, trace=trace)
-        spans = [
-            _observation_to_span(obs, trace_id=trace_id, session_id=session_id) for obs in obs_list
-        ]
+        spans = [_observation_to_span(obs, trace_id=trace_id, session_id=session_id) for obs in obs_list]
         # Stamp Langfuse trace-level I/O onto every span so the OTEL conversation
         # builder can recover the user prompt when generation observations omit
         # input/output (common for some agent runtimes).
@@ -681,9 +679,7 @@ def _observation_to_span(obs: object, *, trace_id: str, session_id: str | None) 
         if obs_input is not None:
             attrs["gen_ai.tool.call.arguments"] = json.dumps(obs_input) if not isinstance(obs_input, str) else obs_input
         if obs_output is not None:
-            attrs["gen_ai.tool.call.result"] = (
-                json.dumps(obs_output) if isinstance(obs_output, dict) else obs_output
-            )
+            attrs["gen_ai.tool.call.result"] = json.dumps(obs_output) if isinstance(obs_output, dict) else obs_output
     elif obs_type == "agent":
         attrs["langfuse.observation.type"] = "agent"
         attrs["gen_ai.operation.name"] = "invoke_agent"

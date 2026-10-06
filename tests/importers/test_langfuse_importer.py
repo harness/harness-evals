@@ -519,9 +519,7 @@ class TestLangfuseTraceCatalog:
         from harness_evals.importers.otel import OTELEvalCaseSource
         from harness_evals.importers.trace_batch import SpanTrace
 
-        cases = OTELEvalCaseSource.from_span_traces(
-            [SpanTrace(spans=spans, trace_id="t-span", session_id="sess-c")]
-        )
+        cases = OTELEvalCaseSource.from_span_traces([SpanTrace(spans=spans, trace_id="t-span", session_id="sess-c")])
         assert len(cases) == 1
         assert cases[0].input == "Analyze the error"
         assert cases[0].output == "## Analysis"
@@ -582,4 +580,3 @@ class TestLangfuseTraceCatalog:
         assert len(spans) == 1
         assert spans[0]["name"] == "embedded"
         client.api.observations.get_many.assert_not_called()
-

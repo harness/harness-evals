@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
-
 # Well-known conversation-grouping attributes (OTel GenAI + common vendors).
 SESSION_ATTR_KEYS: tuple[str, ...] = (
     "gen_ai.conversation.id",
@@ -161,10 +160,7 @@ def group_traces(traces: Sequence[SpanTrace], *, group_by: str | None) -> list[l
     buckets: dict[str, list[SpanTrace]] = {}
     order: list[str] = []
     for trace in traces:
-        if trace.session_id:
-            key = f"session:{trace.session_id}"
-        else:
-            key = f"trace:{trace.trace_id or id(trace)}"
+        key = f"session:{trace.session_id}" if trace.session_id else f"trace:{trace.trace_id or id(trace)}"
         if key not in buckets:
             buckets[key] = []
             order.append(key)

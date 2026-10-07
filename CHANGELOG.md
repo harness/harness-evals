@@ -5,6 +5,24 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.3]
+
+### Fixed
+
+- **Online eval cost from `harness_agent_run`**: EvalCase `cost_usd` now prefers
+  SDK billing on the `harness_agent_run` observation
+  (`agent.total_cost_usd` / `gen_ai.usage.cost` in metadata) instead of Langfuse
+  trace `total_cost`, which often sums nested litellm generations and leaves
+  the agent span's `calculated_total_cost` at 0.
+
+### Added
+
+- **Golden / conversation session cost**: `ConversationalStreamingHttpTarget`
+  stamps per-turn `cost_usd` from `model_usage` SSE; the conversation simulator
+  sets `EvalCase.cost_usd` to the **sum across the eval session** (all turns).
+  Stdout and JSONL summaries report `Avg session cost` /
+  `avg_cost_usd` (`cost_scope=session`).
+
 ## [0.25.2]
 
 ### Fixed

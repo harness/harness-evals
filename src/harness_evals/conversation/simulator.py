@@ -29,6 +29,7 @@ from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.llm.base import BaseLLM
 from harness_evals.logging_config import compact_json
+from harness_evals.summary import resolve_session_cost
 
 _logger = logging.getLogger(__name__)
 
@@ -393,6 +394,8 @@ class ConversationSimulator:
             messages=expanded_messages,
             # Sum of measured assistant-turn latencies (excludes idle between turns).
             latency_ms=sum(turn_latencies) if turn_latencies else None,
+            # Sum of per-turn model_usage / message costs for the whole conversation.
+            cost_usd=resolve_session_cost(messages=expanded_messages, metadata=metadata),
             metadata=metadata,
             tags=golden.tags,
         )

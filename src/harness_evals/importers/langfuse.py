@@ -739,16 +739,80 @@ def _observation_to_span(obs: object, *, trace_id: str, session_id: str | None) 
             attrs["gen_ai.usage.output_tokens"] = out
         if total is not None:
             attrs["gen_ai.usage.total_tokens"] = total
-    for cost_attr in ("total_cost", "calculated_total_cost"):
-        raw_cost = getattr(obs, cost_attr, None)
-        if raw_cost is None:
-            continue
-        try:
-            cost_val = float(raw_cost)
-        except (TypeError, ValueError):
-            continue
-        if cost_val > 0:
-            attrs["gen_ai.usage.cost"] = cost_val
-            break
+
+    # Preserve harness_agent_run billing attributes (Langfuse often leaves
+    # calculated_total_cost at 0 while SDK cost lives in metadata.attributes).
+    obs_meta = getattr(obs, "metadata", None)
+    meta_attrs = obs_meta.get("attributes") if isinstance(obs_meta, dict) else None
+    if isinstance(meta_attrs, dict):
+        for key in (
+            "agent.total_cost_usd",
+            "agent.cost.usd",
+            "gen_ai.usage.cost",
+            "langfuse.observation.cost_details",
+            "langfuse.observation.name",
+        ):
+            if key in meta_attrs and meta_attrs[key] is not None:
+                attrs.setdefault(key, meta_attrs[key])
+
+    cost_val = _observation_cost_usd(obs)
+    if cost_val is not None:
+        attrs["gen_ai.usage.cost"] = cost_val
 
     return span
+
+
+def _coerce_positive_cost(value: object) -> float | None:
+    try:
+        cost = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return cost if cost > 0 else None
+
+
+def _cost_from_details(details: object) -> float | None:
+    """Read USD from a cost_details mapping or JSON string."""
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+    if not isinstance(details, dict):
+        return None
+    for key in ("total", "total_cost", "total_cost_usd"):
+        cost = _coerce_positive_cost(details.get(key))
+        if cost is not None:
+            return cost
+    return None
+
+
+def _observation_cost_usd(obs: object) -> float | None:
+    """Resolve observation cost, preferring harness_agent_run metadata over Langfuse pricing.
+
+    Unified-chat ``harness_agent_run`` spans store SDK cost on metadata attributes
+    (``agent.total_cost_usd`` / ``gen_ai.usage.cost``) while Langfuse
+    ``calculated_total_cost`` / ``total_cost`` stay 0. Trace-level ``total_cost``
+    often includes nested litellm generations and must not be used here.
+    """
+    for cost_attr in ("total_cost", "calculated_total_cost"):
+        cost = _coerce_positive_cost(getattr(obs, cost_attr, None))
+        if cost is not None:
+            return cost
+
+    cost = _cost_from_details(getattr(obs, "cost_details", None))
+    if cost is not None:
+        return cost
+
+    obs_meta = getattr(obs, "metadata", None)
+    if not isinstance(obs_meta, dict):
+        return None
+    meta_attrs = obs_meta.get("attributes")
+    if not isinstance(meta_attrs, dict):
+        return None
+
+    for key in ("agent.total_cost_usd", "agent.cost.usd", "gen_ai.usage.cost"):
+        cost = _coerce_positive_cost(meta_attrs.get(key))
+        if cost is not None:
+            return cost
+
+    return _cost_from_details(meta_attrs.get("langfuse.observation.cost_details"))

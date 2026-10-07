@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from harness_evals.core.score import Score
@@ -250,6 +251,162 @@ def format_turn_latency(summary: TurnLatencySummary) -> str:
     return f"  Avg turn latency: {avg_s:.3f} s ({summary.avg_latency_ms:.1f} ms, n={summary.latency_n} turns)"
 
 
+@dataclass
+class SessionCostSummary:
+    """Mean per-case SUT session cost (target agent, not judge LLM spend)."""
+
+    avg_cost_usd: float
+    cost_n: int
+    cost_scope: str = "session"
+
+
+def _coerce_nonneg_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _parse_usage_payload(payload: object) -> dict[str, object] | None:
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            parsed = json.loads(payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _model_usage_payloads(metadata: object) -> list[dict[str, object]]:
+    """Collect ``model_usage`` payloads from aggregated SSE metadata."""
+    if not isinstance(metadata, dict):
+        return []
+    out: list[dict[str, object]] = []
+    events = metadata.get("sse_events")
+    if isinstance(events, dict):
+        for payload in events.get("model_usage") or []:
+            parsed = _parse_usage_payload(payload)
+            if parsed is not None:
+                out.append(parsed)
+    if out:
+        return out
+    timeline = metadata.get("sse_timeline")
+    if isinstance(timeline, list):
+        for entry in timeline:
+            if not isinstance(entry, dict) or entry.get("event") != "model_usage":
+                continue
+            parsed = _parse_usage_payload(entry.get("payload"))
+            if parsed is not None:
+                out.append(parsed)
+    return out
+
+
+def _sum_model_usage_costs(metadata: object) -> float | None:
+    """Sum per-turn ``model_usage.total_cost_usd`` across a conversation session."""
+    total = 0.0
+    saw = False
+    for usage in _model_usage_payloads(metadata):
+        cost = _coerce_nonneg_float(usage.get("total_cost_usd"))
+        if cost is None:
+            continue
+        total += cost
+        saw = True
+    return total if saw else None
+
+
+def resolve_session_cost(
+    *,
+    cost_usd: float | None = None,
+    messages: object = None,
+    metadata: object = None,
+) -> float | None:
+    """Resolve SUT cost for one eval session (one golden / conversation case).
+
+    Precedence:
+    1. Explicit ``cost_usd`` already stamped on the case (e.g. Langfuse session)
+    2. Sum of ``model_usage.total_cost_usd`` SSE payloads across all turns
+    3. ``metadata["total_cost_usd"]``
+    4. Sum of assistant ``Message.cost_usd`` (per-turn stamps)
+    """
+    direct = _coerce_nonneg_float(cost_usd)
+    if direct is not None:
+        return direct
+
+    usage_cost = _sum_model_usage_costs(metadata)
+    if usage_cost is not None:
+        return usage_cost
+
+    if isinstance(metadata, dict):
+        meta_cost = _coerce_nonneg_float(metadata.get("total_cost_usd"))
+        if meta_cost is not None:
+            return meta_cost
+
+    total = 0.0
+    saw = False
+    for msg in messages or []:
+        if getattr(msg, "role", None) != "assistant":
+            continue
+        raw = getattr(msg, "cost_usd", None)
+        if raw is None:
+            meta = getattr(msg, "metadata", None) or {}
+            if isinstance(meta, dict):
+                raw = meta.get("cost_usd")
+                if raw is None:
+                    usage = meta.get("model_usage")
+                    if isinstance(usage, dict):
+                        raw = usage.get("total_cost_usd")
+        cost = _coerce_nonneg_float(raw)
+        if cost is None:
+            continue
+        total += cost
+        saw = True
+    return total if saw else None
+
+
+def session_cost_from_case(eval_case: object) -> float | None:
+    """Session cost for one EvalCase."""
+    return resolve_session_cost(
+        cost_usd=getattr(eval_case, "cost_usd", None),
+        messages=getattr(eval_case, "messages", None),
+        metadata=getattr(eval_case, "metadata", None),
+    )
+
+
+def summarize_session_cost(eval_cases: list[object]) -> SessionCostSummary | None:
+    """Mean session cost across cases. ``None`` when no case has cost data."""
+    costs: list[float] = []
+    for case in eval_cases:
+        cost = session_cost_from_case(case)
+        if cost is not None:
+            costs.append(cost)
+    if not costs:
+        return None
+    return SessionCostSummary(
+        avg_cost_usd=sum(costs) / len(costs),
+        cost_n=len(costs),
+        cost_scope="session",
+    )
+
+
+def session_cost_to_dict(summary: SessionCostSummary) -> dict[str, object]:
+    return {
+        "avg_cost_usd": round(summary.avg_cost_usd, 6),
+        "cost_n": summary.cost_n,
+        "cost_scope": summary.cost_scope,
+    }
+
+
+def format_session_cost(summary: SessionCostSummary) -> str:
+    return f"  Avg session cost: ${summary.avg_cost_usd:.6f} (n={summary.cost_n} sessions)"
+
+
 def summarize_judge_spend(all_scores: list[list[Score]]) -> JudgeSpendSummary | None:
     """Aggregate judge token/cost metadata attached to metric scores.
 
@@ -380,6 +537,7 @@ def summary_to_dict(
     *,
     judge_spend: JudgeSpendSummary | None = None,
     turn_latency: TurnLatencySummary | None = None,
+    session_cost: SessionCostSummary | None = None,
 ) -> dict[str, object]:
     """Serialize a :class:`ScoreSummary` for JSON output (e.g. JSONL footer record)."""
     metrics: dict[str, object] = {}
@@ -417,4 +575,6 @@ def summary_to_dict(
         payload["judge_spend"] = judge_spend_to_dict(judge_spend)
     if turn_latency is not None:
         payload.update(turn_latency_to_dict(turn_latency))
+    if session_cost is not None:
+        payload.update(session_cost_to_dict(session_cost))
     return payload

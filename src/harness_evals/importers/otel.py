@@ -321,20 +321,30 @@ class OTELEvalCaseSource(BaseEvalCaseSource):
         catalog = self._catalog
         assert catalog is not None
         stubs = [complete_trace(t) for t in listed]
+        log = logging.getLogger(__name__)
         if expand_sessions:
             expander = getattr(catalog, "list_session_trace_ids", None)
             if callable(expander):
                 seen: dict[str, SpanTrace] = {t.trace_id: t for t in stubs if t.trace_id}
                 session_ids = {t.session_id for t in stubs if t.session_id}
                 for session_id in session_ids:
-                    extra_ids = expander(session_id) or []
+                    try:
+                        extra_ids = expander(session_id) or []
+                    except Exception as exc:
+                        # Match span-hydrate: a transient Langfuse 502 on
+                        # sessions.get must not abort the whole online batch.
+                        log.warning(
+                            "Skipping session expand that failed (%s): %s",
+                            session_id,
+                            exc,
+                        )
+                        continue
                     for tid in extra_ids:
                         if tid not in seen:
                             seen[tid] = SpanTrace(spans=[], trace_id=tid, session_id=session_id)
                 stubs = list(seen.values())
 
         sem = asyncio.Semaphore(self._concurrency)
-        log = logging.getLogger(__name__)
 
         async def _load(stub: SpanTrace) -> SpanTrace | None:
             if stub.spans:

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 
 try:
@@ -141,7 +142,16 @@ class LangfuseTraceCatalog:
         getter = getattr(sessions_api, "get", None) if sessions_api is not None else None
         if getter is None:
             return None
-        session = getter(session_id)
+        try:
+            session = getter(session_id)
+        except Exception as exc:
+            # Transient Langfuse/proxy 502s should not abort online batches.
+            logging.getLogger(__name__).warning(
+                "Skipping Langfuse session expand (%s): %s",
+                session_id,
+                exc,
+            )
+            return None
         traces = getattr(session, "traces", None) or []
         ids: list[str] = []
         for item in traces:

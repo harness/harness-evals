@@ -5,6 +5,15 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.2]
+
+### Fixed
+
+- **Langfuse session expand on online hydrate**: transient `sessions.get`
+  failures (e.g. HTML 502) no longer abort `_hydrate_catalog_traces`.
+  Session expansion now skips the failing session and continues, matching
+  the existing fail-soft behavior for oversized / failed span hydrates.
+
 ## [0.25.1]
 
 ### Fixed

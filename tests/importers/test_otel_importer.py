@@ -852,6 +852,46 @@ class TestOTELTimeWindowFetch:
         assert cases[0].input == "ok prompt"
 
     @pytest.mark.asyncio
+    async def test_hydrate_skips_sessions_that_fail_expand(self):
+        from datetime import datetime, timezone
+
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        class _Catalog:
+            def list_traces(self, **kwargs):
+                return [
+                    SpanTrace(spans=[], trace_id="ok", session_id="s-ok"),
+                    SpanTrace(spans=[], trace_id="partial", session_id="s-fail"),
+                ]
+
+            def list_session_trace_ids(self, session_id: str):
+                if session_id == "s-fail":
+                    raise RuntimeError("status_code: 502, body: Server Error")
+                return ["ok"]
+
+            def load_spans(self, trace_id: str):
+                session = "s-ok" if trace_id == "ok" else "s-fail"
+                return _chat_spans(
+                    f"{trace_id} prompt",
+                    f"{trace_id}-out",
+                    session=session,
+                    trace_id=trace_id,
+                    start_nano=1_000_000_000,
+                )
+
+        source = OTELEvalCaseSource(
+            catalog=_Catalog(),
+            now=lambda: datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        listed = [
+            SpanTrace(spans=[], trace_id="ok", session_id="s-ok"),
+            SpanTrace(spans=[], trace_id="partial", session_id="s-fail"),
+        ]
+        traces = await source._hydrate_catalog_traces(listed, expand_sessions=True)
+        cases = source.from_span_traces(traces, group_by="session_id")
+        assert {c.input for c in cases} == {"ok prompt", "partial prompt"}
+
+    @pytest.mark.asyncio
     async def test_time_filters_without_catalog_or_path_raise(self):
         source = OTELEvalCaseSource()
         with pytest.raises(ValueError, match="TraceCatalog"):

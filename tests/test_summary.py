@@ -355,3 +355,43 @@ class TestSummaryToDict:
             for _ in range(3)
         ]
         assert summarize_judge_spend(scores) is None
+
+    def test_summarize_session_cost_sums_model_usage_across_turns(self):
+        from harness_evals.core.eval_case import EvalCase
+        from harness_evals.summary import resolve_session_cost, summarize_session_cost
+
+        case = EvalCase(
+            input="scenario",
+            output="done",
+            metadata={
+                "sse_events": {
+                    "model_usage": [
+                        {"total_cost_usd": 0.10, "total_tokens": 100},
+                        {"total_cost_usd": 0.25, "total_tokens": 200},
+                    ]
+                }
+            },
+        )
+        assert resolve_session_cost(messages=case.messages, metadata=case.metadata) == pytest.approx(0.35)
+        summary = summarize_session_cost([case, EvalCase(input="x", output="y", cost_usd=0.05)])
+        assert summary is not None
+        assert summary.cost_scope == "session"
+        assert summary.cost_n == 2
+        assert summary.avg_cost_usd == pytest.approx(0.20)
+
+    def test_summary_to_dict_includes_session_cost(self):
+        from harness_evals.core.eval_case import EvalCase
+        from harness_evals.summary import summarize_session_cost
+
+        cases = [
+            EvalCase(input="a", output="b", cost_usd=0.10),
+            EvalCase(input="c", output="d", cost_usd=0.30),
+        ]
+        session_cost = summarize_session_cost(cases)
+        payload = summary_to_dict(
+            summarize([[_score("exact_match", 1.0, 0.5, "correctness")]]),
+            session_cost=session_cost,
+        )
+        assert payload["cost_scope"] == "session"
+        assert payload["cost_n"] == 2
+        assert payload["avg_cost_usd"] == pytest.approx(0.20)

@@ -9,7 +9,13 @@ from typing import Any
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.score import Score
 from harness_evals.core.sink import BaseSink
-from harness_evals.summary import summarize, summarize_judge_spend, summarize_turn_latency, summary_to_dict
+from harness_evals.summary import (
+    summarize,
+    summarize_judge_spend,
+    summarize_session_cost,
+    summarize_turn_latency,
+    summary_to_dict,
+)
 
 _MAX_TOOL_RESULT_CHARS = 500
 _DEBUG_METADATA_KEYS = (
@@ -248,6 +254,7 @@ class JsonSink(BaseSink):
                 summarize(self._all_scores),
                 judge_spend=summarize_judge_spend(self._all_scores),
                 turn_latency=summarize_turn_latency(self._eval_cases),
+                session_cost=summarize_session_cost(self._eval_cases),
             )
             with open(self.path, "a") as f:
                 f.write(json.dumps(summary_record, default=str) + "\n")

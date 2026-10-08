@@ -36,6 +36,9 @@ class _FakeObservation:
     output: Any = None
     usage_details: dict | None = None
     total_cost: float | None = None
+    calculated_total_cost: float | None = None
+    cost_details: dict | None = None
+    metadata: dict | None = None
     id: str | None = "obs-1"
     start_time: datetime | None = None
     end_time: datetime | None = None
@@ -580,3 +583,60 @@ class TestLangfuseTraceCatalog:
         assert len(spans) == 1
         assert spans[0]["name"] == "embedded"
         client.api.observations.get_many.assert_not_called()
+
+    def test_harness_agent_run_cost_from_metadata_not_trace_total(self):
+        """Prefer SDK cost on harness_agent_run metadata over Langfuse trace total."""
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+        from harness_evals.importers.otel import OTELEvalCaseSource
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        client = MagicMock()
+        # Trace-level total includes nested litellm generations — must not win.
+        trace = _FakeTrace(
+            session_id="sess-cost",
+            input={"prompt": "Analyze Pipeline Errors"},
+            output={"text": "done"},
+            metadata={"env": "prod"},
+        )
+        trace.total_cost = 0.1568  # type: ignore[attr-defined]
+        client.api.trace.get.return_value = trace
+        client.api.observations.get_many.return_value = _FakeObservationList(
+            data=[
+                _FakeObservation(
+                    type="AGENT",
+                    name="harness_agent_run",
+                    calculated_total_cost=0.0,
+                    total_cost=None,
+                    cost_details={"total_cost_usd": 0.1456975},
+                    metadata={
+                        "attributes": {
+                            "agent.total_cost_usd": "0.1456975",
+                            "agent.cost.usd": "0.1456975",
+                            "gen_ai.usage.cost": "0.1456975",
+                            "langfuse.observation.cost_details": '{"total_cost_usd": 0.1456975}',
+                            "langfuse.observation.name": "harness_agent_run",
+                        }
+                    },
+                    start_time=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 10, 6, 12, 0, 5, tzinfo=timezone.utc),
+                ),
+                _FakeObservation(
+                    type="GENERATION",
+                    name="litellm_request",
+                    total_cost=0.04,
+                    parent_observation_id="obs-1",
+                    start_time=datetime(2026, 10, 6, 12, 0, 1, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 10, 6, 12, 0, 2, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+
+        catalog = LangfuseTraceCatalog(client)
+        spans = catalog.load_spans("t-cost")
+        agent = next(s for s in spans if s["name"] == "harness_agent_run")
+        assert float(agent["attributes"]["gen_ai.usage.cost"]) == pytest.approx(0.1456975)
+        assert agent["attributes"]["agent.total_cost_usd"] == "0.1456975"
+
+        cases = OTELEvalCaseSource.from_span_traces([SpanTrace(spans=spans, trace_id="t-cost", session_id="sess-cost")])
+        assert len(cases) == 1
+        assert cases[0].cost_usd == pytest.approx(0.1456975)

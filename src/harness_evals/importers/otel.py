@@ -525,11 +525,13 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
 
     latency_ms = _compute_trace_latency(sorted_spans)
 
-    # Prefer per-span usage cost. When both agent-root and child spans carry
-    # cost, keep children only (roots may stamp a rolled-up total). Otherwise
-    # fall back to per-trace totals stamped once per source trace — session
-    # merges concatenate traces, so summing those stamps is required.
+    # Cost precedence for unified-agent traces:
+    # 1. harness_agent_run span metadata (SDK billing authority)
+    # 2. per-span gen_ai.usage.cost — prefer children over rolled-up roots
+    # 3. langfuse.trace.total_cost stamps (one per source trace on session merge)
     cost_usd: float | None = None
+    agent_run_cost_total = 0.0
+    saw_agent_run_cost = False
     child_cost_total = 0.0
     root_cost_total = 0.0
     saw_child_cost = False
@@ -538,6 +540,11 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
     saw_trace_cost = False
     for span in sorted_spans:
         attrs = span.get("attributes") or {}
+        if _is_harness_agent_run_span(span):
+            agent_cost = _harness_agent_run_cost(attrs)
+            if agent_cost is not None:
+                agent_run_cost_total += agent_cost
+                saw_agent_run_cost = True
         raw_obs = attrs.get("gen_ai.usage.cost")
         if raw_obs is not None:
             with contextlib.suppress(TypeError, ValueError):
@@ -553,7 +560,9 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
             with contextlib.suppress(TypeError, ValueError):
                 trace_cost_total += float(raw_trace)
                 saw_trace_cost = True
-    if saw_child_cost and child_cost_total > 0:
+    if saw_agent_run_cost and agent_run_cost_total > 0:
+        cost_usd = agent_run_cost_total
+    elif saw_child_cost and child_cost_total > 0:
         cost_usd = child_cost_total
     elif saw_root_cost and root_cost_total > 0:
         cost_usd = root_cost_total
@@ -1037,6 +1046,43 @@ def _convert_sdk_spans(spans: list[Any]) -> list[dict[str, Any]]:
 # ------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------
+
+_HARNESS_AGENT_RUN_NAME = "harness_agent_run"
+
+
+def _is_harness_agent_run_span(span: dict[str, Any]) -> bool:
+    """True when this span is the harness-ai-agent billing observation."""
+    name = span.get("name") or span.get("span_name") or ""
+    if isinstance(name, str) and name == _HARNESS_AGENT_RUN_NAME:
+        return True
+    attrs = span.get("attributes") or {}
+    obs_name = attrs.get("langfuse.observation.name")
+    return isinstance(obs_name, str) and obs_name == _HARNESS_AGENT_RUN_NAME
+
+
+def _span_usage_cost(attrs: dict[str, Any]) -> float | None:
+    """Return positive USD cost from span attributes, if present."""
+    raw = attrs.get("gen_ai.usage.cost")
+    if raw is None:
+        return None
+    with contextlib.suppress(TypeError, ValueError):
+        value = float(raw)
+        if value > 0:
+            return value
+    return None
+
+
+def _harness_agent_run_cost(attrs: dict[str, Any]) -> float | None:
+    """SDK billing cost from harness_agent_run attributes / metadata."""
+    for key in ("gen_ai.usage.cost", "agent.total_cost_usd", "agent.cost.usd"):
+        raw = attrs.get(key)
+        if raw is None:
+            continue
+        with contextlib.suppress(TypeError, ValueError):
+            value = float(raw)
+            if value > 0:
+                return value
+    return None
 
 
 def _span_sort_key(span: dict[str, Any]) -> tuple:

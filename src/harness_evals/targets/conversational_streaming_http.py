@@ -115,7 +115,7 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
                 latency_ms=latency_ms,
             )
 
-        output, _kwargs, metadata_extra, _extract_source = self._process_response(
+        output, kwargs, metadata_extra, _extract_source = self._process_response(
             raw_body,
             content_type,
             self._last_user_content(messages),
@@ -149,6 +149,13 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
                 compact_json(entity_mutations),
             )
 
+        cost_usd = kwargs.get("cost_usd")
+        if cost_usd is None:
+            cost_usd = _cost_usd_from_sse(metadata_extra)
+        token_count = kwargs.get("token_count")
+        if token_count is None:
+            token_count = _token_count_from_sse(metadata_extra)
+
         metadata = {
             **(metadata_extra or {}),
             **session.context,
@@ -164,6 +171,8 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
             role="assistant",
             content=self._message_content(output),
             latency_ms=latency_ms,
+            token_count=token_count,
+            cost_usd=cost_usd,
             metadata=metadata,
         )
 
@@ -286,6 +295,74 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
         if isinstance(output, str):
             return output
         return json.dumps(output, ensure_ascii=False)
+
+
+def _latest_model_usage(metadata_extra: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not metadata_extra:
+        return None
+    events = metadata_extra.get("sse_events")
+    if isinstance(events, dict):
+        payloads = events.get("model_usage") or []
+        if payloads:
+            last = payloads[-1]
+            if isinstance(last, dict):
+                return last
+            if isinstance(last, str):
+                try:
+                    parsed = json.loads(last)
+                except json.JSONDecodeError:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    timeline = metadata_extra.get("sse_timeline")
+    if isinstance(timeline, list):
+        for entry in reversed(timeline):
+            if not isinstance(entry, dict) or entry.get("event") != "model_usage":
+                continue
+            payload = entry.get("payload")
+            if isinstance(payload, dict):
+                return payload
+            if isinstance(payload, str):
+                try:
+                    parsed = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    return parsed
+    return None
+
+
+def _cost_usd_from_sse(metadata_extra: dict[str, Any] | None) -> float | None:
+    usage = _latest_model_usage(metadata_extra)
+    if not usage:
+        return None
+    raw = usage.get("total_cost_usd")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _token_count_from_sse(metadata_extra: dict[str, Any] | None) -> int | None:
+    usage = _latest_model_usage(metadata_extra)
+    if not usage:
+        return None
+    raw = usage.get("total_tokens")
+    if raw is None:
+        input_t = usage.get("input_tokens")
+        output_t = usage.get("output_tokens")
+        if input_t is None and output_t is None:
+            return None
+        try:
+            return int(input_t or 0) + int(output_t or 0)
+        except (TypeError, ValueError):
+            return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _render_template(node: Any, context: dict[str, Any]) -> Any:

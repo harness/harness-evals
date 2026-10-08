@@ -6,10 +6,12 @@ from harness_evals.core.sink import BaseSink
 from harness_evals.summary import (
     UNKNOWN_DIMENSION,
     format_judge_spend,
+    format_session_cost,
     format_turn_latency,
     order_dimensions,
     summarize,
     summarize_judge_spend,
+    summarize_session_cost,
     summarize_turn_latency,
 )
 
@@ -82,6 +84,9 @@ class StdoutSink(BaseSink):
         turn_latency = summarize_turn_latency(self._eval_cases)
         if turn_latency is not None:
             print(format_turn_latency(turn_latency))
+        session_cost = summarize_session_cost(self._eval_cases)
+        if session_cost is not None:
+            print(format_session_cost(session_cost))
         judge_spend = summarize_judge_spend(self._all_scores)
         if judge_spend is not None:
             print(format_judge_spend(judge_spend))

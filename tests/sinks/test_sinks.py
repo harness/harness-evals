@@ -407,6 +407,23 @@ class TestJsonSink:
         assert summary["latency_n"] == 2
         assert summary["avg_latency_ms"] == 2000.0
 
+    def test_finalize_summary_includes_avg_session_cost(self, tmp_path, scores):
+        path = tmp_path / "results.jsonl"
+        sink = JsonSink(str(path))
+        case = EvalCase(
+            input="scenario",
+            output="done",
+            cost_usd=0.42,
+            messages=[Message(role="assistant", content="a", cost_usd=0.42)],
+        )
+        sink.write(scores, case)
+        sink.finalize()
+
+        summary = json.loads(path.read_text().strip().splitlines()[-1])
+        assert summary["cost_scope"] == "session"
+        assert summary["cost_n"] == 1
+        assert summary["avg_cost_usd"] == pytest.approx(0.42)
+
     def test_finalize_skips_summary_when_disabled(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"
         sink = JsonSink(str(path), include_summary=False)

@@ -281,6 +281,38 @@ async def test_conversational_streaming_target_isolates_sessions_between_batch_t
 
 
 @pytest.mark.unit
+async def test_conversational_streaming_target_stamps_cost_from_model_usage(monkeypatch):
+    target = _harness_target(capture_events=["model_usage", "assistant_message"])
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        return (
+            _sse(
+                [
+                    ("assistant_message", {"v": "hello"}),
+                    (
+                        "model_usage",
+                        {
+                            "total_cost_usd": 0.123,
+                            "total_tokens": 42,
+                            "input_tokens": 10,
+                            "output_tokens": 32,
+                        },
+                    ),
+                    ("done", {}),
+                ]
+            ),
+            "text/event-stream",
+            25.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+    msg = await target.agenerate([Message(role="user", content="hi")])
+    assert msg.cost_usd == pytest.approx(0.123)
+    assert msg.token_count == 42
+
+
+@pytest.mark.unit
 async def test_conversational_streaming_target_raises_on_error_only_stream(monkeypatch):
     # A 200 SSE response whose only meaningful frame is a structured `error`
     # event (no assistant_message) must fail loudly via agenerate too.

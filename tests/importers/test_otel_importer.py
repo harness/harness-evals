@@ -722,6 +722,95 @@ class TestOTELSessionGrouping:
         ec = _build_conversation_eval_case(spans)
         assert ec.cost_usd == pytest.approx(0.05)
 
+    def test_prefers_harness_agent_run_cost_over_child_and_trace(self):
+        """SDK cost on harness_agent_run beats litellm children + trace total."""
+        from harness_evals.importers.otel import _build_conversation_eval_case
+
+        spans = [
+            {
+                "name": "unified_v2_chat",
+                "span_id": "root",
+                "trace_id": "t1",
+                "parent_span_id": None,
+                "attributes": {
+                    "langfuse.observation.type": "span",
+                    "langfuse.trace.total_cost": 0.99,
+                    "langfuse.trace.input": {"prompt": "hi"},
+                    "langfuse.trace.output": {"text": "ok"},
+                },
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 10,
+            },
+            {
+                "name": "harness_agent_run",
+                "span_id": "agent",
+                "trace_id": "t1",
+                "parent_span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "agent",
+                    "gen_ai.operation.name": "invoke_agent",
+                    "agent.total_cost_usd": "0.1456975",
+                    "gen_ai.usage.cost": "0.1456975",
+                },
+                "start_time_unix_nano": 2,
+                "end_time_unix_nano": 9,
+            },
+            {
+                "name": "litellm_request",
+                "span_id": "llm",
+                "trace_id": "t1",
+                "parent_span_id": "agent",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.usage.cost": 0.04,
+                },
+                "start_time_unix_nano": 3,
+                "end_time_unix_nano": 4,
+            },
+        ]
+        ec = _build_conversation_eval_case(spans)
+        assert ec.cost_usd == pytest.approx(0.1456975)
+
+    def test_session_merge_sums_harness_agent_run_costs(self):
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        def _turn(prompt: str, answer: str, *, tid: str, cost: float, start: int) -> list[dict]:
+            return [
+                {
+                    "name": "harness_agent_run",
+                    "span_id": f"{tid}-agent",
+                    "trace_id": tid,
+                    "parent_span_id": None,
+                    "attributes": {
+                        "gen_ai.conversation.id": "sess-1",
+                        "langfuse.observation.type": "agent",
+                        "gen_ai.operation.name": "invoke_agent",
+                        "agent.total_cost_usd": str(cost),
+                        "langfuse.trace.input": {"prompt": prompt},
+                        "langfuse.trace.output": {"text": answer},
+                        "langfuse.trace.total_cost": 9.99,
+                    },
+                    "start_time_unix_nano": start,
+                    "end_time_unix_nano": start + 1,
+                }
+            ]
+
+        traces = [
+            SpanTrace(
+                spans=_turn("first", "ack", tid="t1", cost=0.01, start=1_000_000_000),
+                trace_id="t1",
+                session_id="sess-1",
+            ),
+            SpanTrace(
+                spans=_turn("second", "done", tid="t2", cost=0.02, start=3_000_000_000),
+                trace_id="t2",
+                session_id="sess-1",
+            ),
+        ]
+        cases = OTELEvalCaseSource.from_span_traces(traces, group_by="session_id")
+        assert len(cases) == 1
+        assert cases[0].cost_usd == pytest.approx(0.03)
+
     def test_missing_session_id_stays_one_case_per_trace(self):
         from harness_evals.importers.trace_batch import SpanTrace
 

@@ -7,11 +7,15 @@ from harness_evals.summary import (
     UNKNOWN_DIMENSION,
     format_judge_spend,
     format_session_cost,
+    format_session_latency,
     format_turn_latency,
     order_dimensions,
+    session_cost_from_case,
+    session_latency_from_case,
     summarize,
     summarize_judge_spend,
     summarize_session_cost,
+    summarize_session_latency,
     summarize_turn_latency,
 )
 
@@ -37,6 +41,12 @@ class StdoutSink(BaseSink):
 
     def write(self, scores: list[Score], eval_case: EvalCase) -> None:
         print(f"--- Eval: input={str(eval_case.input)[:60]!r} ---")
+        session_latency = session_latency_from_case(eval_case)
+        if session_latency is not None:
+            print(f"  Session time: {session_latency / 1000.0:.3f} s")
+        session_cost = session_cost_from_case(eval_case)
+        if session_cost is not None:
+            print(f"  Session cost: ${session_cost:.6f}")
         for score in scores:
             status = "PASS" if score.passed else "FAIL"
             line = f"  [{status}] {score.name}: {score.value:.2f} (threshold={score.threshold})"
@@ -84,6 +94,9 @@ class StdoutSink(BaseSink):
         turn_latency = summarize_turn_latency(self._eval_cases)
         if turn_latency is not None:
             print(format_turn_latency(turn_latency))
+        session_latency = summarize_session_latency(self._eval_cases)
+        if session_latency is not None:
+            print(format_session_latency(session_latency))
         session_cost = summarize_session_cost(self._eval_cases)
         if session_cost is not None:
             print(format_session_cost(session_cost))

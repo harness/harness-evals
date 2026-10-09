@@ -196,15 +196,14 @@ class TurnLatencySummary:
     latency_scope: str = "turn"
 
 
-def turn_latencies_from_case(eval_case: object) -> list[float]:
-    """Per-assistant-turn latencies (ms) from an EvalCase.
+def turn_latencies_from_messages(messages: object) -> list[float]:
+    """Per-assistant-turn latencies (ms) from a message list.
 
     Prefers ``Message.latency_ms``; falls back to ``Message.metadata["latency_ms"]``
     for older conversational targets that only stamped metadata.
     """
     out: list[float] = []
-    messages = getattr(eval_case, "messages", None) or []
-    for msg in messages:
+    for msg in messages or []:
         if getattr(msg, "role", None) != "assistant":
             continue
         raw = getattr(msg, "latency_ms", None)
@@ -221,6 +220,11 @@ def turn_latencies_from_case(eval_case: object) -> list[float]:
         if value >= 0:
             out.append(value)
     return out
+
+
+def turn_latencies_from_case(eval_case: object) -> list[float]:
+    """Per-assistant-turn latencies (ms) from an EvalCase."""
+    return turn_latencies_from_messages(getattr(eval_case, "messages", None))
 
 
 def summarize_turn_latency(eval_cases: list[object]) -> TurnLatencySummary | None:
@@ -252,11 +256,137 @@ def format_turn_latency(summary: TurnLatencySummary) -> str:
 
 
 @dataclass
+class SessionLatencyEntry:
+    """One eval case's SUT session duration (sum of assistant-turn latencies)."""
+
+    latency_ms: float
+    label: str
+
+
+@dataclass
+class SessionLatencySummary:
+    """Aggregate SUT session duration across eval cases (target agent, not judges)."""
+
+    avg_latency_ms: float
+    total_latency_ms: float
+    latency_n: int
+    sessions: list[SessionLatencyEntry] = field(default_factory=list)
+    latency_scope: str = "session"
+
+
+def resolve_session_latency(
+    *,
+    latency_ms: float | None = None,
+    messages: object = None,
+) -> float | None:
+    """Resolve SUT duration for one eval session (one golden / conversation case).
+
+    Precedence:
+    1. Explicit ``latency_ms`` already stamped on the case (sum of turns)
+    2. Sum of assistant ``Message.latency_ms`` (per-turn stamps)
+    """
+    direct = _coerce_nonneg_float(latency_ms)
+    if direct is not None:
+        return direct
+    turns = turn_latencies_from_messages(messages)
+    if not turns:
+        return None
+    return sum(turns)
+
+
+def session_latency_from_case(eval_case: object) -> float | None:
+    """Session duration (ms) for one EvalCase."""
+    return resolve_session_latency(
+        latency_ms=getattr(eval_case, "latency_ms", None),
+        messages=getattr(eval_case, "messages", None),
+    )
+
+
+def _session_label(eval_case: object, index: int) -> str:
+    """Human label for one session row (golden_id when present, else 1-based index)."""
+    metadata = getattr(eval_case, "metadata", None) or {}
+    if isinstance(metadata, dict):
+        for key in ("golden_id", "id", "conversation_id", "session_id"):
+            value = metadata.get(key)
+            if value is not None and str(value).strip():
+                return str(value)
+    tags = getattr(eval_case, "tags", None) or {}
+    if isinstance(tags, dict):
+        for key in ("golden_id", "id", "name"):
+            value = tags.get(key)
+            if value is not None and str(value).strip():
+                return str(value)
+    return str(index)
+
+
+def summarize_session_latency(eval_cases: list[object]) -> SessionLatencySummary | None:
+    """Aggregate session duration across cases. ``None`` when no case has latency data."""
+    sessions: list[SessionLatencyEntry] = []
+    for index, case in enumerate(eval_cases, start=1):
+        latency = session_latency_from_case(case)
+        if latency is not None:
+            sessions.append(SessionLatencyEntry(latency_ms=latency, label=_session_label(case, index)))
+    if not sessions:
+        return None
+    total = sum(entry.latency_ms for entry in sessions)
+    return SessionLatencySummary(
+        avg_latency_ms=total / len(sessions),
+        total_latency_ms=total,
+        latency_n=len(sessions),
+        sessions=sessions,
+        latency_scope="session",
+    )
+
+
+def session_latency_to_dict(summary: SessionLatencySummary) -> dict[str, object]:
+    return {
+        "avg_session_latency_ms": round(summary.avg_latency_ms, 1),
+        "avg_session_latency_s": round(summary.avg_latency_ms / 1000.0, 3),
+        "total_session_latency_ms": round(summary.total_latency_ms, 1),
+        "total_session_latency_s": round(summary.total_latency_ms / 1000.0, 3),
+        "session_latency_n": summary.latency_n,
+        "session_latency_scope": summary.latency_scope,
+        "session_latencies": [
+            {
+                "label": entry.label,
+                "latency_ms": round(entry.latency_ms, 1),
+                "latency_s": round(entry.latency_ms / 1000.0, 3),
+            }
+            for entry in summary.sessions
+        ],
+    }
+
+
+def format_session_latency(summary: SessionLatencySummary) -> str:
+    avg_s = summary.avg_latency_ms / 1000.0
+    total_s = summary.total_latency_ms / 1000.0
+    lines = [
+        f"  Session time: avg={avg_s:.3f} s total={total_s:.3f} s "
+        f"(n={summary.latency_n} sessions)",
+    ]
+    if summary.sessions:
+        lines.append("    per session:")
+        for entry in summary.sessions:
+            lines.append(f"      {entry.label}: {entry.latency_ms / 1000.0:.3f} s")
+    return "\n".join(lines)
+
+
+@dataclass
+class SessionCostEntry:
+    """One eval case's SUT session cost (target agent, not judge LLM spend)."""
+
+    cost_usd: float
+    label: str
+
+
+@dataclass
 class SessionCostSummary:
-    """Mean per-case SUT session cost (target agent, not judge LLM spend)."""
+    """Aggregate SUT session cost across eval cases (target agent, not judge)."""
 
     avg_cost_usd: float
+    total_cost_usd: float
     cost_n: int
+    sessions: list[SessionCostEntry] = field(default_factory=list)
     cost_scope: str = "session"
 
 
@@ -380,17 +510,20 @@ def session_cost_from_case(eval_case: object) -> float | None:
 
 
 def summarize_session_cost(eval_cases: list[object]) -> SessionCostSummary | None:
-    """Mean session cost across cases. ``None`` when no case has cost data."""
-    costs: list[float] = []
-    for case in eval_cases:
+    """Aggregate session cost across cases. ``None`` when no case has cost data."""
+    sessions: list[SessionCostEntry] = []
+    for index, case in enumerate(eval_cases, start=1):
         cost = session_cost_from_case(case)
         if cost is not None:
-            costs.append(cost)
-    if not costs:
+            sessions.append(SessionCostEntry(cost_usd=cost, label=_session_label(case, index)))
+    if not sessions:
         return None
+    total = sum(entry.cost_usd for entry in sessions)
     return SessionCostSummary(
-        avg_cost_usd=sum(costs) / len(costs),
-        cost_n=len(costs),
+        avg_cost_usd=total / len(sessions),
+        total_cost_usd=total,
+        cost_n=len(sessions),
+        sessions=sessions,
         cost_scope="session",
     )
 
@@ -398,13 +531,25 @@ def summarize_session_cost(eval_cases: list[object]) -> SessionCostSummary | Non
 def session_cost_to_dict(summary: SessionCostSummary) -> dict[str, object]:
     return {
         "avg_cost_usd": round(summary.avg_cost_usd, 6),
+        "total_cost_usd": round(summary.total_cost_usd, 6),
         "cost_n": summary.cost_n,
         "cost_scope": summary.cost_scope,
+        "session_costs": [
+            {"label": entry.label, "cost_usd": round(entry.cost_usd, 6)} for entry in summary.sessions
+        ],
     }
 
 
 def format_session_cost(summary: SessionCostSummary) -> str:
-    return f"  Avg session cost: ${summary.avg_cost_usd:.6f} (n={summary.cost_n} sessions)"
+    lines = [
+        f"  Session cost: avg=${summary.avg_cost_usd:.6f} "
+        f"total=${summary.total_cost_usd:.6f} (n={summary.cost_n} sessions)",
+    ]
+    if summary.sessions:
+        lines.append("    per session:")
+        for entry in summary.sessions:
+            lines.append(f"      {entry.label}: ${entry.cost_usd:.6f}")
+    return "\n".join(lines)
 
 
 def summarize_judge_spend(all_scores: list[list[Score]]) -> JudgeSpendSummary | None:
@@ -537,6 +682,7 @@ def summary_to_dict(
     *,
     judge_spend: JudgeSpendSummary | None = None,
     turn_latency: TurnLatencySummary | None = None,
+    session_latency: SessionLatencySummary | None = None,
     session_cost: SessionCostSummary | None = None,
 ) -> dict[str, object]:
     """Serialize a :class:`ScoreSummary` for JSON output (e.g. JSONL footer record)."""
@@ -575,6 +721,8 @@ def summary_to_dict(
         payload["judge_spend"] = judge_spend_to_dict(judge_spend)
     if turn_latency is not None:
         payload.update(turn_latency_to_dict(turn_latency))
+    if session_latency is not None:
+        payload.update(session_latency_to_dict(session_latency))
     if session_cost is not None:
         payload.update(session_cost_to_dict(session_cost))
     return payload

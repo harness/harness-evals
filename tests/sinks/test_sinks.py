@@ -406,6 +406,13 @@ class TestJsonSink:
         assert summary["latency_scope"] == "turn"
         assert summary["latency_n"] == 2
         assert summary["avg_latency_ms"] == 2000.0
+        assert summary["session_latency_scope"] == "session"
+        assert summary["session_latency_n"] == 1
+        assert summary["avg_session_latency_ms"] == 4000.0
+        assert summary["total_session_latency_ms"] == 4000.0
+        assert summary["session_latencies"] == [
+            {"label": "1", "latency_ms": 4000.0, "latency_s": 4.0},
+        ]
 
     def test_finalize_summary_includes_avg_session_cost(self, tmp_path, scores):
         path = tmp_path / "results.jsonl"
@@ -423,6 +430,8 @@ class TestJsonSink:
         assert summary["cost_scope"] == "session"
         assert summary["cost_n"] == 1
         assert summary["avg_cost_usd"] == pytest.approx(0.42)
+        assert summary["total_cost_usd"] == pytest.approx(0.42)
+        assert summary["session_costs"] == [{"label": "1", "cost_usd": 0.42}]
 
     def test_finalize_skips_summary_when_disabled(self, tmp_path, eval_case, scores):
         path = tmp_path / "results.jsonl"

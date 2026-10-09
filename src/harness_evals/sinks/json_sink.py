@@ -13,6 +13,7 @@ from harness_evals.summary import (
     summarize,
     summarize_judge_spend,
     summarize_session_cost,
+    summarize_session_latency,
     summarize_turn_latency,
     summary_to_dict,
 )
@@ -254,6 +255,7 @@ class JsonSink(BaseSink):
                 summarize(self._all_scores),
                 judge_spend=summarize_judge_spend(self._all_scores),
                 turn_latency=summarize_turn_latency(self._eval_cases),
+                session_latency=summarize_session_latency(self._eval_cases),
                 session_cost=summarize_session_cost(self._eval_cases),
             )
             with open(self.path, "a") as f:

@@ -342,6 +342,59 @@ class TestSummaryToDict:
         assert payload["latency_n"] == 3
         assert payload["avg_latency_ms"] == 2000.0
 
+    def test_summary_to_dict_includes_session_latency(self):
+        from harness_evals.core.eval_case import EvalCase
+        from harness_evals.core.types import Message
+        from harness_evals.summary import format_session_latency, summarize_session_latency
+
+        cases = [
+            EvalCase(
+                input="a",
+                output="b",
+                latency_ms=4000.0,
+                metadata={"golden_id": "g-a"},
+                messages=[
+                    Message(role="assistant", content="ok", latency_ms=1000.0),
+                    Message(role="assistant", content="done", latency_ms=3000.0),
+                ],
+            ),
+            EvalCase(
+                input="c",
+                output="d",
+                metadata={"golden_id": "g-c"},
+                messages=[
+                    Message(
+                        role="assistant",
+                        content="meta-only",
+                        metadata={"latency_ms": 2000.0},
+                    )
+                ],
+            ),
+        ]
+        session_latency = summarize_session_latency(cases)
+        assert session_latency is not None
+        assert session_latency.latency_n == 2
+        assert session_latency.avg_latency_ms == pytest.approx(3000.0)
+        assert session_latency.total_latency_ms == pytest.approx(6000.0)
+        payload = summary_to_dict(
+            summarize([[_score("exact_match", 1.0, 0.5, "correctness")]]),
+            session_latency=session_latency,
+        )
+        assert payload["session_latency_scope"] == "session"
+        assert payload["session_latency_n"] == 2
+        assert payload["avg_session_latency_ms"] == 3000.0
+        assert payload["total_session_latency_ms"] == 6000.0
+        assert payload["total_session_latency_s"] == 6.0
+        assert payload["session_latencies"] == [
+            {"label": "g-a", "latency_ms": 4000.0, "latency_s": 4.0},
+            {"label": "g-c", "latency_ms": 2000.0, "latency_s": 2.0},
+        ]
+        formatted = format_session_latency(session_latency)
+        assert "avg=3.000 s" in formatted
+        assert "total=6.000 s" in formatted
+        assert "g-a: 4.000 s" in formatted
+        assert "g-c: 2.000 s" in formatted
+
     def test_summarize_judge_spend_ignores_non_judge_cost_usd(self):
         scores = [
             [
@@ -378,14 +431,16 @@ class TestSummaryToDict:
         assert summary.cost_scope == "session"
         assert summary.cost_n == 2
         assert summary.avg_cost_usd == pytest.approx(0.20)
+        assert summary.total_cost_usd == pytest.approx(0.40)
+        assert [entry.cost_usd for entry in summary.sessions] == pytest.approx([0.35, 0.05])
 
     def test_summary_to_dict_includes_session_cost(self):
         from harness_evals.core.eval_case import EvalCase
-        from harness_evals.summary import summarize_session_cost
+        from harness_evals.summary import format_session_cost, summarize_session_cost
 
         cases = [
-            EvalCase(input="a", output="b", cost_usd=0.10),
-            EvalCase(input="c", output="d", cost_usd=0.30),
+            EvalCase(input="a", output="b", cost_usd=0.10, metadata={"golden_id": "g-a"}),
+            EvalCase(input="c", output="d", cost_usd=0.30, metadata={"golden_id": "g-c"}),
         ]
         session_cost = summarize_session_cost(cases)
         payload = summary_to_dict(
@@ -395,3 +450,13 @@ class TestSummaryToDict:
         assert payload["cost_scope"] == "session"
         assert payload["cost_n"] == 2
         assert payload["avg_cost_usd"] == pytest.approx(0.20)
+        assert payload["total_cost_usd"] == pytest.approx(0.40)
+        assert payload["session_costs"] == [
+            {"label": "g-a", "cost_usd": 0.10},
+            {"label": "g-c", "cost_usd": 0.30},
+        ]
+        formatted = format_session_cost(session_cost)
+        assert "avg=$0.200000" in formatted
+        assert "total=$0.400000" in formatted
+        assert "g-a: $0.100000" in formatted
+        assert "g-c: $0.300000" in formatted

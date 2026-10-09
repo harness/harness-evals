@@ -5,6 +5,19 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.4]
+
+### Added
+
+- **Session cost total + per-session breakdown**: stdout and JSONL summaries now
+  report `total_cost_usd` and `session_costs` (label + cost per case) alongside
+  `avg_cost_usd`. Stdout also prints each case's session cost as scores are
+  written.
+- **Session time total + per-session breakdown**: summaries report
+  `total_session_latency_ms` / `_s` and `session_latencies` (label + duration
+  per case) alongside avg session time. Stdout prints each case's session time
+  as scores are written. Turn-level avg latency is unchanged.
+
 ## [0.25.3]
 
 ### Fixed

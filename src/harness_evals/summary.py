@@ -361,8 +361,7 @@ def format_session_latency(summary: SessionLatencySummary) -> str:
     avg_s = summary.avg_latency_ms / 1000.0
     total_s = summary.total_latency_ms / 1000.0
     lines = [
-        f"  Session time: avg={avg_s:.3f} s total={total_s:.3f} s "
-        f"(n={summary.latency_n} sessions)",
+        f"  Session time: avg={avg_s:.3f} s total={total_s:.3f} s (n={summary.latency_n} sessions)",
     ]
     if summary.sessions:
         lines.append("    per session:")
@@ -534,9 +533,7 @@ def session_cost_to_dict(summary: SessionCostSummary) -> dict[str, object]:
         "total_cost_usd": round(summary.total_cost_usd, 6),
         "cost_n": summary.cost_n,
         "cost_scope": summary.cost_scope,
-        "session_costs": [
-            {"label": entry.label, "cost_usd": round(entry.cost_usd, 6)} for entry in summary.sessions
-        ],
+        "session_costs": [{"label": entry.label, "cost_usd": round(entry.cost_usd, 6)} for entry in summary.sessions],
     }
 
 

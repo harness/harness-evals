@@ -51,6 +51,11 @@ class ConversationGolden:
     # Optional expected tool trajectory for tool_argument_match (short names, e.g.
     # validate_pipeline_yaml / harness_create — not mcp__* prefixes).
     expected_tool_calls: list[ToolCall] | None = field(default=None)
+    # Per-row request-body ``context`` payload (arbitrary JSON-serializable
+    # fields). Distinct from ``context`` (simulator steering strings).
+    # Deep-merged into the request body's ``context`` by
+    # ConversationalStreamingHttpTarget.
+    request_context: dict[str, Any] | None = field(default=None)
     mode: ConversationMode | None = None
     graph_config: dict | None = field(default=None)
     metadata: dict[str, Any] | None = field(default=None)
@@ -86,6 +91,9 @@ class ConversationGolden:
 
         if self.elicitation_hints is not None and not isinstance(self.elicitation_hints, dict):
             raise TypeError("elicitation_hints must be a dict when provided")
+
+        if self.request_context is not None and not isinstance(self.request_context, dict):
+            raise TypeError("request_context must be a dict when provided")
 
         sse_checks = (self.metadata or {}).get("sse_checks")
         if sse_checks is not None and (

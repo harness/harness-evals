@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import contextvars
+from typing import Any
 
 _conversation_key: contextvars.ContextVar[str | None] = contextvars.ContextVar("conversation_key", default=None)
+_request_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "request_context", default=None
+)
 
 
 def conversation_key_for_golden(golden: object) -> str:
@@ -28,3 +32,18 @@ def get_conversation_key() -> str | None:
 def reset_conversation_key(token: contextvars.Token[str | None]) -> None:
     """Restore the previous conversation key after a simulation completes."""
     _conversation_key.reset(token)
+
+
+def set_request_context(context: dict[str, Any] | None) -> contextvars.Token[dict[str, Any] | None]:
+    """Bind per-golden request-body ``context`` fields for the current async task."""
+    return _request_context.set(context)
+
+
+def get_request_context() -> dict[str, Any] | None:
+    """Read per-golden request-body ``context`` fields for the current async task."""
+    return _request_context.get()
+
+
+def reset_request_context(token: contextvars.Token[dict[str, Any] | None]) -> None:
+    """Restore the previous request context after a simulation completes."""
+    _request_context.reset(token)

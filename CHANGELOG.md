@@ -5,6 +5,18 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.5]
+
+### Added
+
+- **Per-golden chat `request_context`**: `ConversationGolden` accepts optional
+  top-level `request_context` (dict). During simulation,
+  `ConversationalStreamingHttpTarget` deep-merges it into the chat request
+  body's `context` on user, continue, and human-input turns (YAML template
+  defaults retained; golden keys override). Use this for per-row request
+  payload fields that should not be embedded in the prompt. Distinct from
+  golden `context` (`list[str]` simulator steering).
+
 ## [0.25.4]
 
 ### Added

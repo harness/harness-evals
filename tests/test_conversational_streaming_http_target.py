@@ -218,6 +218,194 @@ async def test_conversational_streaming_target_supports_custom_human_input_event
 
 
 @pytest.mark.unit
+async def test_conversational_streaming_target_merges_request_context_on_user_and_continue(
+    monkeypatch,
+):
+    target = _harness_target(
+        user_body_template={
+            "prompt": "{{last_user_content}}",
+            "stream": True,
+            "context": {"is_v2": True, "nested": {"keep": True}},
+        },
+        continue_body_template={
+            "prompt": "{{last_user_content}}",
+            "conversation_id": "{{conversation_id}}",
+            "session_id": "{{session_id}}",
+            "stream": True,
+            "context": {"is_v2": True, "nested": {"keep": True}},
+        },
+    )
+    bodies: list[dict] = []
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        payload = json.loads(body.decode("utf-8"))
+        bodies.append(payload)
+        conversation_id = payload.get("conversation_id") or "conv-1"
+        return (
+            _sse(
+                [
+                    (
+                        "stream_metadata",
+                        {"conversation_id": conversation_id, "session_id": "sess-1"},
+                    ),
+                    ("assistant_message", {"v": "ok"}),
+                ]
+            ),
+            "text/event-stream",
+            1.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+    simulator = ConversationSimulator(max_concurrent=1)
+    golden = ConversationGolden(
+        id="resource-row",
+        scenario="Add column",
+        expected_outcome="Change drafted",
+        mode=ConversationMode.SCRIPTED,
+        turns=[
+            Message(role="user", content="Add email column"),
+            Message(role="user", content="Also add phone"),
+        ],
+        request_context={
+            "resource_id": "users-table",
+            "environment_id": "prod",
+            "nested": {"extra": True},
+        },
+    )
+
+    await simulator.simulate(golden, target.agenerate)
+
+    expected_context = {
+        "is_v2": True,
+        "resource_id": "users-table",
+        "environment_id": "prod",
+        "nested": {"keep": True, "extra": True},
+    }
+    assert len(bodies) == 2
+    assert bodies[0]["prompt"] == "Add email column"
+    assert bodies[1]["prompt"] == "Also add phone"
+    assert bodies[1]["conversation_id"] == "conv-1"
+    for body in bodies:
+        assert body["context"] == expected_context
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_merges_request_context_on_human_input(
+    monkeypatch,
+):
+    target = _harness_target(
+        human_input_body_template={
+            "system_event": "{{human_input}}",
+            "conversation_id": "{{conversation_id}}",
+            "session_id": "{{session_id}}",
+            "stream": True,
+            "context": {"is_v2": True},
+        },
+    )
+    captured: dict[str, dict] = {}
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        captured["body"] = json.loads(body.decode("utf-8"))
+        return (
+            _sse([("assistant_message", {"v": "done"})]),
+            "text/event-stream",
+            1.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+
+    from harness_evals.conversation.context import reset_request_context, set_request_context
+
+    target.conversation_id = "conv-1"
+    target.session_id = "sess-1"
+    token = set_request_context({"resource_id": "users-table"})
+    try:
+        await target.agenerate(
+            [Message(role="user", content="continue")],
+            human_input={"type": "elicitation_form", "choice": "yes"},
+        )
+    finally:
+        reset_request_context(token)
+
+    assert captured["body"]["context"] == {
+        "is_v2": True,
+        "resource_id": "users-table",
+    }
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_without_request_context_keeps_template(monkeypatch):
+    target = _harness_target(
+        user_body_template={
+            "prompt": "{{last_user_content}}",
+            "stream": True,
+            "context": {"is_v2": True},
+        },
+    )
+    captured: dict[str, dict] = {}
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        captured["body"] = json.loads(body.decode("utf-8"))
+        return (
+            _sse(
+                [
+                    (
+                        "stream_metadata",
+                        {"conversation_id": "conv-1", "session_id": "sess-1"},
+                    ),
+                    ("assistant_message", {"v": "ok"}),
+                ]
+            ),
+            "text/event-stream",
+            1.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+    await target.agenerate([Message(role="user", content="hello")])
+    assert captured["body"]["context"] == {"is_v2": True}
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_request_context_overrides_template_keys(monkeypatch):
+    target = _harness_target(
+        user_body_template={
+            "prompt": "{{last_user_content}}",
+            "stream": True,
+            "context": {"is_v2": True, "mode": "standard"},
+        },
+    )
+    captured: dict[str, dict] = {}
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        captured["body"] = json.loads(body.decode("utf-8"))
+        return (
+            _sse([("assistant_message", {"v": "ok"})]),
+            "text/event-stream",
+            1.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+
+    from harness_evals.conversation.context import reset_request_context, set_request_context
+
+    token = set_request_context({"mode": "custom", "resource_id": "r1"})
+    try:
+        await target.agenerate([Message(role="user", content="hello")])
+    finally:
+        reset_request_context(token)
+
+    assert captured["body"]["context"] == {
+        "is_v2": True,
+        "mode": "custom",
+        "resource_id": "r1",
+    }
+
+
+@pytest.mark.unit
 async def test_conversational_streaming_target_isolates_sessions_between_batch_tasks(monkeypatch):
     target = _harness_target()
     requests: list[dict] = []

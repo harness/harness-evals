@@ -131,13 +131,17 @@ class ConversationSimulator:
         from harness_evals.conversation.context import (
             conversation_key_for_golden,
             reset_conversation_key,
+            reset_request_context,
             set_conversation_key,
+            set_request_context,
         )
 
         key_token = set_conversation_key(conversation_key_for_golden(golden))
+        ctx_token = set_request_context(golden.request_context)
         try:
             return await self._simulate(golden, agent_fn)
         finally:
+            reset_request_context(ctx_token)
             reset_conversation_key(key_token)
 
     async def _simulate(

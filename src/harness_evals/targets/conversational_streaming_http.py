@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from harness_evals.conversation.context import get_conversation_key
+from harness_evals.conversation.context import get_conversation_key, get_request_context
 from harness_evals.core.golden import Golden
 from harness_evals.core.types import Message
 from harness_evals.errors import TargetInvocationError
@@ -39,6 +39,10 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
     across calls within one conversation and supports configurable human-input
     continuation requests. Session state is keyed by the active conversation
     context so batch evaluation can run goldens concurrently on one target.
+
+    When a golden sets top-level ``request_context``, those fields are
+    deep-merged into the rendered body's ``context`` for every turn (user,
+    continue, and human-input) while that golden is being simulated.
     """
 
     user_body_template: dict | None = None
@@ -201,6 +205,7 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
             template,
             self._template_context(human_input, messages=messages, session=session),
         )
+        payload = _merge_request_context(payload, get_request_context())
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     def _template_context(
@@ -363,6 +368,36 @@ def _token_count_from_sse(metadata_extra: dict[str, Any] | None) -> int | None:
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _merge_request_context(payload: dict[str, Any], request_context: dict[str, Any] | None) -> dict[str, Any]:
+    """Deep-merge golden ``request_context`` into the chat body's ``context`` field.
+
+    Eval YAML template defaults are preserved; golden keys override on conflict.
+    When the template has no ``context`` (or it is not a dict), the golden dict
+    becomes the body ``context`` as-is.
+    """
+    if not request_context:
+        return payload
+    merged = dict(payload)
+    base = merged.get("context")
+    if isinstance(base, dict):
+        merged["context"] = _deep_merge_dicts(base, request_context)
+    else:
+        merged["context"] = dict(request_context)
+    return merged
+
+
+def _deep_merge_dicts(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge ``overlay`` onto ``base``; overlay wins on leaf conflicts."""
+    result = dict(base)
+    for key, value in overlay.items():
+        existing = result.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            result[key] = _deep_merge_dicts(existing, value)
+        else:
+            result[key] = value
+    return result
 
 
 def _render_template(node: Any, context: dict[str, Any]) -> Any:

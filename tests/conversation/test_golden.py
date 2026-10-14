@@ -71,6 +71,31 @@ class TestConversationGolden:
         assert g.max_turns == 8
         assert g.context == ["Background info"]
 
+    def test_request_context_roundtrip(self):
+        original = ConversationGolden(
+            scenario="Edit selected resource",
+            expected_outcome="Change drafted",
+            context=["Org: demo"],
+            request_context={
+                "resource_id": "users-table",
+                "environment_id": "prod",
+            },
+        )
+        restored = ConversationGolden.from_dict(original.to_dict())
+        assert restored.request_context == {
+            "resource_id": "users-table",
+            "environment_id": "prod",
+        }
+        assert restored.context == ["Org: demo"]
+
+    def test_rejects_non_dict_request_context(self):
+        with pytest.raises(TypeError, match="request_context"):
+            ConversationGolden(
+                scenario="S",
+                expected_outcome="O",
+                request_context=["not", "a", "dict"],  # type: ignore[arg-type]
+            )
+
     def test_from_dict_with_turns(self):
         data = {
             "scenario": "Test",
@@ -218,6 +243,30 @@ class TestConversationDatasetIO:
 
         assert loaded[0].scenario == "Create resource in demo"
         assert loaded[0].context == ["Project: demo"]
+
+    def test_load_request_context_resolves_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RESOURCE_ID", "users-table")
+        path = tmp_path / "test.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "scenario": "Edit resource",
+                    "expected_outcome": "Change drafted",
+                    "request_context": {
+                        "resource_id": "${RESOURCE_ID}",
+                        "environment_id": "prod",
+                    },
+                }
+            )
+            + "\n"
+        )
+
+        loaded = load_conversation_dataset(path)
+
+        assert loaded[0].request_context == {
+            "resource_id": "users-table",
+            "environment_id": "prod",
+        }
 
     def test_load_missing_env_value_raises(self, tmp_path):
         path = tmp_path / "test.jsonl"

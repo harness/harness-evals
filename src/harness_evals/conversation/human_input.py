@@ -148,8 +148,7 @@ Input hints:
 {json.dumps(golden.elicitation_hints or {}, ensure_ascii=False, indent=2)}
 Conversation so far:
 {history_text}
-
-Answer only what this input asks. Do not volunteer details from the context that it does not request.
+{_ANSWER_ONLY_ASKED if is_specific(golden) else ""}
 Return only JSON with a single "response" object suitable for continuing the conversation."""
 
 
@@ -163,6 +162,23 @@ class IntentMatchMiss:
     intent: str | None = None
     golden_id: str | None = None
     fallback: str | None = None
+
+
+_ANSWER_ONLY_ASKED = (
+    "\nAnswer only what this input asks. Do not volunteer details from the context that it does not request."
+)
+
+
+def is_specific(golden: ConversationGolden) -> bool:
+    """Return True when the golden opts into ``elicitation_hints.match_strategy: specific``.
+
+    Specific mode ranks matchers by phrase specificity, resolves form fields by
+    key as well as label, matches options on whole words, falls back to exact
+    or keyword-overlap options, answers several asked facts in one reply, and
+    tells the simulated user to answer only what was asked. Goldens without it
+    keep the first-match behaviour.
+    """
+    return (golden.elicitation_hints or {}).get("match_strategy") == "specific"
 
 
 def record_intent_miss(misses: list[IntentMatchMiss], miss: IntentMatchMiss) -> None:
@@ -189,7 +205,7 @@ def resolve_intent(
     """
     lowered = question.lower()
     hints = golden.elicitation_hints or {}
-    specific = hints.get("match_strategy") == "specific"
+    specific = is_specific(golden)
     best: tuple[tuple[int, int], str] | None = None
     for matcher in hints.get("matchers", []):
         if not isinstance(matcher, dict):

@@ -24,6 +24,7 @@ from harness_evals.conversation.human_input import (
     HumanInputSimulator,
     PendingHumanInput,
     intents,
+    is_specific,
     resolve_intent,
     resolve_intents,
 )
@@ -46,8 +47,11 @@ _USER_PROMPT = """You are simulating a user in a conversation. Your goal is to a
 {history}
 
 Generate the next user message. Be natural and concise. Stay focused on achieving the scenario goal.
-Answer only what the agent asked. Do not volunteer details from the context before the agent asks for them.
-Respond with ONLY the user message text, nothing else."""
+{focus_rule}Respond with ONLY the user message text, nothing else."""
+
+_FOCUS_RULE = (
+    "Answer only what the agent asked. Do not volunteer details from the context before the agent asks for them.\n"
+)
 
 _STOP_PROMPT = """You are evaluating whether a conversation has achieved its expected outcome.
 
@@ -208,6 +212,7 @@ class ConversationSimulator:
             persona_section=persona_section,
             context_section=context_section,
             history=history_text,
+            focus_rule=_FOCUS_RULE if is_specific(golden) else "",
         )
         return await self._require_llm().generate(prompt)
 
@@ -332,6 +337,7 @@ class ConversationSimulator:
             persona_section=persona_section,
             context_section=context_section,
             history=history_text,
+            focus_rule=_FOCUS_RULE if is_specific(golden) else "",
         )
         return await self._require_llm().generate(prompt)
 
@@ -803,8 +809,9 @@ def _plain_text_followup(
     if not golden.elicitation_hints or not content.strip():
         return None
 
-    question_scope = _plain_text_question_scope(content)
-    if not question_scope or not _looks_like_user_question(question_scope):
+    specific = is_specific(golden)
+    question_scope = _plain_text_question_scope(content, specific=specific)
+    if not question_scope or not _looks_like_user_question(question_scope, specific=specific):
         return None
 
     match_scope = question_scope
@@ -819,7 +826,7 @@ def _plain_text_followup(
         for key in resolve_intents(match_scope, golden, plain_text=True)
         if key not in used_intents and answers.get(key)
     ]
-    if len(asked) > 1:
+    if specific and len(asked) > 1:
         lines = [f"{key.replace('_', ' ').capitalize()}: {answers[key]}" for key in asked]
         return {"intent": asked[0], "answer": "\n".join(lines), "intents": asked}
 
@@ -832,7 +839,7 @@ def _plain_text_followup(
     return None
 
 
-def _plain_text_question_scope(content: str) -> str:
+def _plain_text_question_scope(content: str, *, specific: bool = False) -> str:
     """Return the assistant text slice to scan for follow-up intent matchers.
 
     Long reports often mention scope keywords in prose (e.g. "Account level"
@@ -858,33 +865,30 @@ def _plain_text_question_scope(content: str) -> str:
             return text[idx:].strip()
 
     paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
-    if paragraphs and _looks_like_user_question(paragraphs[-1]):
+    if paragraphs and _looks_like_user_question(paragraphs[-1], specific=specific):
         return paragraphs[-1]
 
-    return text if _looks_like_user_question(text) else ""
+    return text if _looks_like_user_question(text, specific=specific) else ""
 
 
-def _looks_like_user_question(content: str) -> bool:
+def _looks_like_user_question(content: str, *, specific: bool = False) -> bool:
     text = content.strip()
     if not text:
         return False
     if "?" in text:
         return True
     lowered = text.lower()
-    return (
-        lowered.startswith(
-            (
-                "what ",
-                "how ",
-                "which ",
-                "please ",
-                "would you ",
-                "can you ",
-                "could you ",
-            )
+    return lowered.startswith(
+        (
+            "what ",
+            "how ",
+            "which ",
+            "please ",
+            "would you ",
+            "can you ",
+            "could you ",
         )
-        or _USER_REQUEST_RE.search(lowered) is not None
-    )
+    ) or (specific and _USER_REQUEST_RE.search(lowered) is not None)
 
 
 _USER_REQUEST_RE = re.compile(

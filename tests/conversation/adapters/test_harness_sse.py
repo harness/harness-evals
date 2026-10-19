@@ -820,6 +820,7 @@ async def test_select_falls_back_to_unique_intent_option_when_wording_misleads()
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"command_mode": "Enter an exact fixed command", "test_command": "make test"},
             "matchers": [{"intent": "test_command", "question_contains": ["test command"]}],
         },
@@ -851,6 +852,7 @@ async def test_select_uses_first_offered_choice_from_intent_list():
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"review_action": ["Modify before creating", "Review and edit the YAML"]},
             "matchers": [{"intent": "review_action", "question_contains": ["what would you like to do"]}],
         },
@@ -963,6 +965,7 @@ async def test_unmatched_select_falls_back_to_exact_intent_value_not_partial_tex
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {
                 "repository": "harness/harness",
                 "decline_harness_code": "Use a different Git provider",
@@ -1052,7 +1055,11 @@ async def test_form_select_types_exact_answer_instead_of_ambiguous_partial_optio
     golden = ConversationGolden(
         scenario="Create CI",
         expected_outcome="Reviewed",
-        elicitation_hints={"intents": {"test_command": "pytest"}, "field_keys": {"test_command": "test_command"}},
+        elicitation_hints={
+            "match_strategy": "specific",
+            "intents": {"test_command": "pytest"},
+            "field_keys": {"test_command": "test_command"},
+        },
     )
     pending = PendingHumanInput.from_metadata(
         {
@@ -1088,6 +1095,7 @@ async def test_form_field_key_resolves_before_label_text():
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"pipeline_name": "github_ci", "test_command": "make test"},
             "field_keys": {"identifier": "pipeline_name"},
         },
@@ -1346,6 +1354,7 @@ async def test_reworded_option_resolves_by_keyword_overlap_with_the_intent_answe
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"command_mode": "Enter an exact fixed command"},
             "matchers": [{"intent": "command_mode", "question_contains": ["configured"]}],
         },
@@ -1369,7 +1378,10 @@ async def test_unasked_question_resolves_from_another_known_answer_by_keywords()
     golden = ConversationGolden(
         scenario="Create CI",
         expected_outcome="Reviewed",
-        elicitation_hints={"intents": {"test_command": "pip install -r requirements.txt && pytest"}},
+        elicitation_hints={
+            "match_strategy": "specific",
+            "intents": {"test_command": "pip install -r requirements.txt && pytest"},
+        },
     )
     pending = _select_pending(
         "How are your Python dependencies managed?",
@@ -1391,6 +1403,7 @@ async def test_longer_answer_uses_the_custom_entry_instead_of_a_preset_fragment(
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"test_command": "pip install -r requirements.txt && pytest"},
             "matchers": [{"intent": "test_command", "question_contains": ["test command"]}],
         },
@@ -1429,6 +1442,7 @@ async def test_keyword_overlap_matches_word_forms_and_ignores_negated_words():
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"review_action": ["Create the pipeline", "Review and edit the YAML"]},
             "matchers": [{"intent": "review_action", "question_contains": ["what would you like to do"]}],
         },
@@ -1472,6 +1486,7 @@ async def test_select_does_not_pick_an_identifier_that_is_only_a_prefix_of_the_a
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"git_connector": "github_testgo_account"},
             "matchers": [{"intent": "git_connector", "question_contains": ["github connector"]}],
         },
@@ -1514,3 +1529,54 @@ async def test_form_label_naming_a_specialised_intent_beats_the_generic_key_alia
 
     assert "acme/payments" in json.dumps(result)
     assert "harness/harness" not in json.dumps(result)
+
+
+def _select_pending(question: str, options: list[dict]) -> PendingHumanInput:
+    return PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {"review_id": "ask", "content": {"question": question, "options": options}},
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_default_mode_skips_exact_and_keyword_fallbacks_for_unmatched_select():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"command_mode": "Enter an exact fixed command", "test_command": "make test"},
+            "matchers": [{"intent": "test_command", "question_contains": ["test command"]}],
+        },
+    )
+    pending = _select_pending(
+        "How should the command be provided?",
+        [
+            {"label": "Enter an exact fixed command", "value": "fixed"},
+            {"label": "Use a required runtime input", "value": "runtime"},
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+
+@pytest.mark.unit
+async def test_default_mode_picks_the_first_partial_option_match():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"environment": "prod"},
+            "matchers": [{"intent": "environment", "question_contains": ["environment"]}],
+        },
+    )
+    pending = _select_pending(
+        "Which environment?",
+        [{"label": "production-east", "value": "east"}, {"label": "production-west", "value": "west"}],
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["selection"] == "production-east"

@@ -39,12 +39,18 @@ from harness_evals.conversation.human_input import (
     PendingHumanInput,
     intent_choices,
     intents,
+    is_specific,
     record_intent_miss,
     resolve_intent,
 )
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
 from harness_evals.plugins import register_elicitation_adapter
+
+_ANSWER_ONLY_ASKED = (
+    "\nAnswer only the fields and question in this payload. Do not volunteer details from the\n"
+    "context that the payload does not request, and leave unrequested fields out."
+)
 
 _LLM_RESULT_BASE = {
     "success": {"type": "boolean"},
@@ -242,9 +248,7 @@ Result field guide by type:
 - elicitation_free_text: include free_text with a concise answer
 - elicitation_select: include selection set to an offered option LABEL (never the numeric id)
 - elicitation_multi_select: include selections as an array of offered option LABELS
-
-Answer only the fields and question in this payload. Do not volunteer details from the
-context that the payload does not request, and leave unrequested fields out.
+{_ANSWER_ONLY_ASKED if is_specific(golden) else ""}
 Always set success=true."""
 
         raw = await self.llm.generate_json(prompt, _llm_schema_for_pending(pending))
@@ -531,6 +535,8 @@ Always set success=true."""
             return True
         if desired and _select_choice(options, golden, intent, desired) is not None:
             return False
+        if not is_specific(golden):
+            return True
         return (
             _unique_intent_option(options, golden) is None and _keyword_intent_option(options, golden, intent) is None
         )
@@ -585,9 +591,10 @@ Always set success=true."""
         intent: str | None,
     ) -> str | None:
         """Answer an unmatched choice by exact intent value, then by keyword overlap, else by the accept default."""
-        if (selected := _unique_intent_option(options, golden)) is not None:
+        specific = is_specific(golden)
+        if specific and (selected := _unique_intent_option(options, golden)) is not None:
             return selected
-        if (selected := _keyword_intent_option(options, golden, intent)) is not None:
+        if specific and (selected := _keyword_intent_option(options, golden, intent)) is not None:
             self._record_field_miss(
                 golden=golden,
                 pending_type=pending_type,
@@ -775,8 +782,10 @@ def _field_intent(field: dict, golden: ConversationGolden, label: str) -> str | 
 
     The label is what a real user reads; keys are model-chosen shorthand
     (``repo`` on an "Image repository" field), so they only break ties or
-    fill in when the label matches nothing.
+    fill in when the label matches nothing. Key resolution is specific-mode only.
     """
+    if not is_specific(golden):
+        return resolve_intent(label, golden)
     return (
         resolve_intent(label, golden)
         or _intent_for_field_key(field, golden)
@@ -964,12 +973,13 @@ def _contains_whole(text: str, part: str) -> bool:
     return re.search(rf"(?<![a-z0-9_]){re.escape(part)}(?![a-z0-9_])", text) is not None
 
 
-def _select_option(options: list, desired: str, allow_custom: bool = True) -> str | None:
+def _select_option(options: list, desired: str, allow_custom: bool = True, specific: bool = True) -> str | None:
     """Match desired text to an option and return the option LABEL (never bare id).
 
     Matching order: exact label → exact value → case-insensitive label contains
     desired → case-insensitive desired contains label. Returns None when no
-    confident match exists.
+    confident match exists. Without ``specific`` the first substring match wins
+    and no custom entry is typed.
     """
     desired_norm = desired.strip()
     if not desired_norm or not options:
@@ -988,6 +998,13 @@ def _select_option(options: list, desired: str, allow_custom: bool = True) -> st
         label = _option_label(option)
         if value and value.lower() == desired_lower:
             return label or value
+
+    if not specific:
+        for option in options:
+            label = _option_label(option)
+            if label and (desired_lower in label.lower() or label.lower() in desired_lower):
+                return label
+        return None
 
     # 3. Desired is a substring of exactly one label (or vice versa). A label that is
     # only a fragment of a longer answer loses to an offered custom entry.
@@ -1019,6 +1036,8 @@ def _is_custom_option(option: object) -> bool:
 
 def _select_choice(options: list, golden: ConversationGolden, intent: str | None, desired: str) -> str | None:
     """Pick the first offered option among an intent's acceptable answers; type the primary as a last resort."""
+    if not is_specific(golden):
+        return _select_option(options, desired, specific=False)
     choices = intent_choices(golden, intent) or ([desired] if desired else [])
     for choice in choices:
         if (selected := _select_option(options, choice, allow_custom=False)) is not None:
@@ -1028,6 +1047,8 @@ def _select_choice(options: list, golden: ConversationGolden, intent: str | None
 
 def _select_choice_multi(options: list, golden: ConversationGolden, intent: str | None, desired: str) -> list[str]:
     """Multi-select variant of ``_select_choice``."""
+    if not is_specific(golden):
+        return _select_options_multi(options, desired, specific=False)
     choices = intent_choices(golden, intent) or ([desired] if desired else [])
     for choice in choices:
         if selected := _select_options_multi(options, choice, allow_custom=False):
@@ -1035,7 +1056,7 @@ def _select_choice_multi(options: list, golden: ConversationGolden, intent: str 
     return _select_options_multi(options, choices[0]) if choices else []
 
 
-def _select_options_multi(options: list, desired: str, allow_custom: bool = True) -> list[str]:
+def _select_options_multi(options: list, desired: str, allow_custom: bool = True, specific: bool = True) -> list[str]:
     """Resolve one or more option labels from a comma/semicolon-separated desired string."""
     if not desired.strip():
         return []
@@ -1045,13 +1066,13 @@ def _select_options_multi(options: list, desired: str, allow_custom: bool = True
 
     selected: list[str] = []
     for part in parts:
-        matched = _select_option(options, part, allow_custom)
+        matched = _select_option(options, part, allow_custom, specific)
         if matched and matched not in selected:
             selected.append(matched)
 
     # If the whole string matches one option (e.g. "All Providers"), prefer that.
     if not selected:
-        whole = _select_option(options, desired, allow_custom)
+        whole = _select_option(options, desired, allow_custom, specific)
         if whole:
             return [whole]
     return selected

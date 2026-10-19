@@ -582,6 +582,7 @@ def test_plain_text_followup_answers_a_request_phrased_without_a_question_mark()
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"repository": "harness/harness"},
             "matchers": [{"intent": "repository", "question_contains": ["repository name"]}],
         },
@@ -639,6 +640,7 @@ def test_plain_text_followup_answers_every_item_of_a_listed_request():
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"repository": "nginx", "bucket": "acme-artifacts", "region": "us-east-1"},
             "matchers": [
                 {"intent": "repository", "question_contains": ["repository name"]},
@@ -670,6 +672,7 @@ def test_plain_text_followup_answers_every_value_asked_in_one_sentence():
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"bucket": "acme-artifacts", "region": "us-east-1", "repository": "nginx"},
             "matchers": [
                 {"intent": "repository", "question_contains": ["repository name"]},
@@ -734,6 +737,7 @@ def test_plain_text_followup_answers_a_please_reply_with_request():
         scenario="Create CI",
         expected_outcome="Reviewed",
         elicitation_hints={
+            "match_strategy": "specific",
             "intents": {"repository": "nginx"},
             "matchers": [{"intent": "repository", "question_contains": ["repository name"]}],
         },
@@ -746,3 +750,41 @@ def test_plain_text_followup_answers_a_please_reply_with_request():
     followup = _plain_text_followup(golden, message, used_intents=set())
 
     assert followup is not None and followup["answer"] == "nginx"
+
+
+@pytest.mark.unit
+def test_plain_text_followup_default_mode_answers_only_the_first_matched_value():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"bucket": "acme-artifacts", "region": "us-east-1"},
+            "matchers": [
+                {"intent": "bucket", "question_contains": ["bucket"]},
+                {"intent": "region", "question_contains": ["region"]},
+            ],
+        },
+    )
+    message = Message(role="assistant", content="Which S3 bucket should the binary go to, and in which region?")
+
+    followup = _plain_text_followup(golden, message, used_intents=set())
+
+    assert followup == {"intent": "bucket", "answer": "acme-artifacts", "intents": ["bucket"]}
+
+
+@pytest.mark.unit
+def test_plain_text_followup_default_mode_ignores_a_request_without_a_question_mark():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "nginx"},
+            "matchers": [{"intent": "repository", "question_contains": ["repository name"]}],
+        },
+    )
+    message = Message(
+        role="assistant",
+        content="The connector covers several repositories, so I need the repository name to continue.",
+    )
+
+    assert _plain_text_followup(golden, message, used_intents=set()) is None

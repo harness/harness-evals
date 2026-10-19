@@ -109,3 +109,36 @@ def test_resolve_intent_question_contains_all():
 
     assert resolve_intent("What type of component should I search for?", golden) == "component_type"
     assert resolve_intent("Here are the component names found", golden) is None
+
+
+def _overlapping_golden(**extra) -> ConversationGolden:
+    return ConversationGolden(
+        scenario="Create connector",
+        expected_outcome="Created",
+        elicitation_hints={
+            **extra,
+            "intents": {"delegate_selector": "hello", "connector_name": "testconnector"},
+            "matchers": [
+                {"intent": "delegate_selector", "question_contains": ["selector"]},
+                {"intent": "connector_name", "question_contains": ["connector"]},
+            ],
+        },
+    )
+
+
+@pytest.mark.unit
+def test_resolve_intent_defaults_to_first_listed_matcher():
+    from harness_evals.conversation.human_input import resolve_intent
+
+    question = "Please provide the delegate selector for this connector."
+
+    assert resolve_intent(question, _overlapping_golden()) == "delegate_selector"
+
+
+@pytest.mark.unit
+def test_resolve_intent_specific_strategy_prefers_the_longest_phrase():
+    from harness_evals.conversation.human_input import resolve_intent
+
+    question = "Please provide the delegate selector for this connector."
+
+    assert resolve_intent(question, _overlapping_golden(match_strategy="specific")) == "connector_name"

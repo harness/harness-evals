@@ -7,7 +7,7 @@ from examples.harness_sse_elicitation_adapter import ElicitationSimulator
 
 from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
 from harness_evals.conversation.human_input import PendingHumanInput
-from harness_evals.conversation.simulator import _human_input_preview
+from harness_evals.conversation.simulator import _due_scripted_followup, _human_input_preview, _plain_text_followup
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM
 
@@ -574,3 +574,175 @@ async def test_simulator_inserts_tool_calls_and_results_in_message_order():
     assert serialized_messages[1]["tool_calls"][0]["input"] == {"resource_type": "project"}
     assert serialized_messages[2]["tool_calls"][0]["name"] == "harness_list"
     assert serialized_messages[2]["tool_calls"][0]["output"] == {"items": [{"id": "p1"}]}
+
+
+@pytest.mark.unit
+def test_plain_text_followup_answers_a_request_phrased_without_a_question_mark():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "harness/harness"},
+            "matchers": [{"intent": "repository", "question_contains": ["repository name"]}],
+        },
+    )
+    message = Message(
+        role="assistant",
+        content="I still need the GitHub repository name to complete the pipeline. "
+        "Please share the full repository path (e.g. `acme/app`).",
+    )
+
+    followup = _plain_text_followup(golden, message, used_intents=set())
+
+    assert followup is not None and followup["answer"] == "harness/harness"
+
+
+def _followup_golden() -> ConversationGolden:
+    return ConversationGolden(
+        scenario="Create CI then revise",
+        expected_outcome="Revised",
+        initial_prompt="Set up CI for my Go service.",
+        turns=[
+            Message(role="user", content="Set up CI for my Go service."),
+            Message(role="user", content="Please add `go build ./...` after the test step."),
+        ],
+        mode=ConversationMode.SIMULATE,
+    )
+
+
+def test_scripted_followup_waits_for_a_yaml_review():
+    history = [
+        Message(role="user", content="Set up CI for my Go service."),
+        Message(role="assistant", content="Which repo?"),
+    ]
+
+    assert _due_scripted_followup(_followup_golden(), history) is None
+
+
+def test_scripted_followup_is_sent_once_after_a_yaml_review():
+    golden = _followup_golden()
+    history = [
+        Message(role="user", content="Set up CI for my Go service."),
+        Message(role="user", content="[Simulated YAML review: reject pipeline_v1]"),
+        Message(role="assistant", content="Draft cancelled."),
+    ]
+
+    followup = _due_scripted_followup(golden, history)
+    history.append(Message(role="user", content=followup))
+
+    assert followup == "Please add `go build ./...` after the test step."
+    assert _due_scripted_followup(golden, history) is None
+
+
+def test_plain_text_followup_answers_every_item_of_a_listed_request():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "nginx", "bucket": "acme-artifacts", "region": "us-east-1"},
+            "matchers": [
+                {"intent": "repository", "question_contains": ["repository name"]},
+                {"intent": "bucket", "question_contains": ["bucket"]},
+                {"intent": "region", "question_contains": ["region"]},
+            ],
+        },
+    )
+    message = Message(
+        role="assistant",
+        content=(
+            "I need several values. Please provide the following:\n\n"
+            "1. **GitHub repository name** — the repo that holds your service\n"
+            "2. **S3 bucket name** — where the binary is uploaded\n"
+            "3. **S3 region** — the AWS region for that bucket\n"
+            "4. **Retention days** — how long to keep it"
+        ),
+    )
+
+    followup = _plain_text_followup(golden, message, used_intents={"region"})
+
+    assert followup is not None
+    assert followup["intents"] == ["repository", "bucket"]
+    assert followup["answer"] == "Repository: nginx\nBucket: acme-artifacts"
+
+
+def test_plain_text_followup_answers_every_value_asked_in_one_sentence():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"bucket": "acme-artifacts", "region": "us-east-1", "repository": "nginx"},
+            "matchers": [
+                {"intent": "repository", "question_contains": ["repository name"]},
+                {"intent": "bucket", "question_contains": ["bucket"]},
+                {"intent": "region", "question_contains": ["region"]},
+            ],
+        },
+    )
+    message = Message(role="assistant", content="Got it. Which S3 bucket should the binary go to, and in which region?")
+
+    followup = _plain_text_followup(golden, message, used_intents=set())
+
+    assert followup is not None
+    assert followup["answer"] == "Bucket: acme-artifacts\nRegion: us-east-1"
+
+
+@pytest.mark.unit
+async def test_unanswerable_question_after_a_yaml_review_ends_the_conversation():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        mode=ConversationMode.SCRIPTED,
+        turns=[Message(role="user", content="Create CI")],
+        max_elicitation_rounds=4,
+        elicitation_hints={"intents": {"repository": "nginx"}, "yaml": {"default_action": "reject"}},
+    )
+    review = {"review_id": "rev-1", "content": {"yaml": "pipeline: {}"}, "entity_info": {"entity_type": "pipeline_v1"}}
+
+    async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+        if human_input is None:
+            return Message(
+                role="assistant",
+                metadata={
+                    "pending_elicitation": {"type": "elicitation_yaml", "payload": review},
+                    "sse_events": {"elicitation_yaml": [review]},
+                },
+            )
+        return Message(
+            role="assistant",
+            metadata={
+                "pending_elicitation": {
+                    "type": "elicitation_select",
+                    "payload": {
+                        "review_id": "ask-change",
+                        "content": {
+                            "question": "What would you like to change in the pipeline?",
+                            "options": [{"id": "0", "label": "Build command"}, {"id": "1", "label": "Pipeline name"}],
+                        },
+                    },
+                }
+            },
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=ElicitationSimulator())
+    eval_case = await simulator.simulate(golden, agent_fn)
+
+    assert eval_case.metadata["sse_events"]["elicitation_yaml"][-1]["content"]["yaml"] == "pipeline: {}"
+
+
+def test_plain_text_followup_answers_a_please_reply_with_request():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "nginx"},
+            "matchers": [{"intent": "repository", "question_contains": ["repository name"]}],
+        },
+    )
+    message = Message(
+        role="assistant",
+        content="The connector covers multiple repositories. Please reply with the repository name (e.g. `payments`).",
+    )
+
+    followup = _plain_text_followup(golden, message, used_intents=set())
+
+    assert followup is not None and followup["answer"] == "nginx"

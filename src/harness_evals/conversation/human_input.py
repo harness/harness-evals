@@ -149,6 +149,7 @@ Input hints:
 Conversation so far:
 {history_text}
 
+Answer only what this input asks. Do not volunteer details from the context that it does not request.
 Return only JSON with a single "response" object suitable for continuing the conversation."""
 
 
@@ -181,9 +182,16 @@ def resolve_intent(
     When ``plain_text`` is True, matchers with ``structured_only: true`` are
     skipped so keyword follow-ups only fire on real assistant questions, not
     on structured elicitation forms handled by the adapter.
+
+    The first listed matcher that hits wins, unless the golden sets
+    ``elicitation_hints.match_strategy: specific``; then the matcher with the
+    most specific phrase in the question wins (see ``_phrase_match``).
     """
     lowered = question.lower()
-    for matcher in (golden.elicitation_hints or {}).get("matchers", []):
+    hints = golden.elicitation_hints or {}
+    specific = hints.get("match_strategy") == "specific"
+    best: tuple[tuple[int, int], str] | None = None
+    for matcher in hints.get("matchers", []):
         if not isinstance(matcher, dict):
             continue
         if plain_text and matcher.get("structured_only"):
@@ -199,14 +207,69 @@ def resolve_intent(
             continue
         if contains_all is None and not contains:
             continue
-        return str(intent)
-    return None
+        if not specific:
+            return str(intent)
+        specificity = max(_phrase_match(lowered, contains_all), _phrase_match(lowered, contains))
+        if best is None or specificity > best[0]:
+            best = (specificity, str(intent))
+    return best[1] if best else None
+
+
+def resolve_intents(question: str, golden: ConversationGolden, *, plain_text: bool = False) -> list[str]:
+    """Return every intent whose matchers hit ``question``, ordered by where it is asked."""
+    lowered = question.lower()
+    positions: dict[str, int] = {}
+    for matcher in (golden.elicitation_hints or {}).get("matchers", []):
+        if not isinstance(matcher, dict) or not matcher.get("intent"):
+            continue
+        if plain_text and matcher.get("structured_only"):
+            continue
+        contains_all = matcher.get("question_contains_all")
+        contains = matcher.get("question_contains") or []
+        if contains_all is None and not contains:
+            continue
+        if contains_all is not None and not _matches_all(lowered, contains_all):
+            continue
+        if contains and not _matches(lowered, contains):
+            continue
+        raw = contains or contains_all or []
+        phrases = [str(p).lower() for p in ([raw] if isinstance(raw, str) else raw)]
+        position = min((lowered.find(p) for p in phrases if p and p in lowered), default=len(lowered))
+        intent = str(matcher["intent"])
+        positions[intent] = min(position, positions.get(intent, position))
+    return sorted(positions, key=positions.__getitem__)
+
+
+def _phrase_match(question: str, matcher: Any) -> tuple[int, int]:
+    """Rank the best phrase of ``matcher`` found in ``question`` as (length, end position).
+
+    The longest phrase wins regardless of listing order ("image repository"
+    beats "repository"); on equal length the later phrase wins, since the
+    last noun names what is asked ("S3 bucket region" asks for a region).
+    """
+    phrases = [matcher] if isinstance(matcher, str) else matcher if isinstance(matcher, list) else []
+    found = [
+        (len(phrase), question.rfind(phrase) + len(phrase))
+        for phrase in (str(p).lower() for p in phrases)
+        if phrase and phrase in question
+    ]
+    return max(found, default=(0, 0))
 
 
 def intents(golden: ConversationGolden) -> dict[str, str]:
+    """Return each intent's primary answer; a list value contributes its first entry."""
+    return {key: choices[0] if choices else "" for key, choices in _intent_choice_map(golden).items()}
+
+
+def intent_choices(golden: ConversationGolden, intent: str | None) -> list[str]:
+    """Return every acceptable answer for an intent, in preference order."""
+    return _intent_choice_map(golden).get(intent or "", [])
+
+
+def _intent_choice_map(golden: ConversationGolden) -> dict[str, list[str]]:
     hints = golden.elicitation_hints or {}
     raw = hints.get("intents") or {}
-    return {str(k): str(v) for k, v in raw.items()}
+    return {str(k): [str(item) for item in v] if isinstance(v, list) else [str(v)] for k, v in raw.items()}
 
 
 def _matches(question: str, matcher: Any) -> bool:

@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, replace
 from typing import Any, Protocol
@@ -24,6 +25,7 @@ from harness_evals.conversation.human_input import (
     PendingHumanInput,
     intents,
     resolve_intent,
+    resolve_intents,
 )
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.types import Message, ToolCall
@@ -44,6 +46,7 @@ _USER_PROMPT = """You are simulating a user in a conversation. Your goal is to a
 {history}
 
 Generate the next user message. Be natural and concise. Stay focused on achieving the scenario goal.
+Answer only what the agent asked. Do not volunteer details from the context before the agent asks for them.
 Respond with ONLY the user message text, nothing else."""
 
 _STOP_PROMPT = """You are evaluating whether a conversation has achieved its expected outcome.
@@ -189,6 +192,8 @@ class ConversationSimulator:
     async def _generate_user_message(self, golden: ConversationGolden, history: list[Message]) -> str:
         if not history and golden.initial_prompt:
             return golden.initial_prompt
+        if (followup := _due_scripted_followup(golden, history)) is not None:
+            return followup
 
         persona_section = f"**Your persona**: {golden.user_persona}" if golden.user_persona else ""
         context_section = f"**Background context**: {'; '.join(golden.context)}" if golden.context else ""
@@ -509,7 +514,21 @@ class ConversationSimulator:
                 pending.type,
                 pending.correlation_id,
             )
-            human_input = await self.human_input_simulator.respond(pending, golden, history)
+            try:
+                human_input = await self.human_input_simulator.respond(pending, golden, history)
+            except ValueError as exc:
+                if not accumulated_sse.get("elicitation_yaml"):
+                    raise
+                _logger.info("Stopping after the YAML review: no scripted answer for %s (%s)", pending.type, exc)
+                trace.append(
+                    {
+                        "round": rounds + 1,
+                        "kind": "stopped_after_yaml_review",
+                        "pending_type": pending.type,
+                        "reason": str(exc)[:240],
+                    }
+                )
+                return _finalize_elicitation(assistant_msg, trace, rounds)
             simulated_user = _simulated_user_message(pending, human_input)
             history.append(simulated_user)
             trace.append(
@@ -653,6 +672,31 @@ def _assistant_turn_latencies(messages: list[Message] | None) -> list[float]:
     return out
 
 
+_YAML_REVIEW_PREFIX = "[Simulated YAML review:"
+
+
+def _due_scripted_followup(golden: ConversationGolden, history: list[Message]) -> str | None:
+    """Next scripted follow-up turn once the agent has shown another YAML review.
+
+    A simulate golden's ``turns`` after the first are revisions the user makes
+    after seeing a draft; sending them verbatim keeps the LLM user from
+    spending its turns on something else.
+    """
+    followups = [
+        turn.content
+        for turn in (golden.turns or [])[1:]
+        if turn.role == "user" and turn.content and turn.content != golden.initial_prompt
+    ]
+    if not followups:
+        return None
+    user_texts = [message.content or "" for message in history if message.role == "user"]
+    delivered = sum(1 for text in followups if text in user_texts)
+    reviews = sum(1 for text in user_texts if text.startswith(_YAML_REVIEW_PREFIX))
+    if delivered < len(followups) and reviews > delivered:
+        return followups[delivered]
+    return None
+
+
 def _simulated_user_message(pending: PendingHumanInput, human_input: dict) -> Message:
     return Message(
         role="user",
@@ -769,6 +813,16 @@ def _plain_text_followup(
         if resolved is not None:
             return resolved
 
+    answers = intents(golden)
+    asked = [
+        key
+        for key in resolve_intents(match_scope, golden, plain_text=True)
+        if key not in used_intents and answers.get(key)
+    ]
+    if len(asked) > 1:
+        lines = [f"{key.replace('_', ' ').capitalize()}: {answers[key]}" for key in asked]
+        return {"intent": asked[0], "answer": "\n".join(lines), "intents": asked}
+
     intent = resolve_intent(match_scope, golden, plain_text=True)
     if intent and intent not in used_intents:
         answer = intents(golden).get(intent, "")
@@ -817,17 +871,26 @@ def _looks_like_user_question(content: str) -> bool:
     if "?" in text:
         return True
     lowered = text.lower()
-    return lowered.startswith(
-        (
-            "what ",
-            "how ",
-            "which ",
-            "please ",
-            "would you ",
-            "can you ",
-            "could you ",
+    return (
+        lowered.startswith(
+            (
+                "what ",
+                "how ",
+                "which ",
+                "please ",
+                "would you ",
+                "can you ",
+                "could you ",
+            )
         )
+        or _USER_REQUEST_RE.search(lowered) is not None
     )
+
+
+_USER_REQUEST_RE = re.compile(
+    r"\bplease (?:share|provide|enter|specify|tell me|confirm|let me know|reply|respond|send|give|type|choose|select|pick)\b"
+    r"|\bi (?:still )?need (?:the|your|to know)\b|\b(?:reply|respond) with\b"
+)
 
 
 def _merge_sse_events(accumulator: dict[str, list], metadata: dict | None) -> dict[str, list]:

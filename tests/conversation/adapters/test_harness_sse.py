@@ -1,5 +1,6 @@
 """Tests for HarnessSseElicitationAdapter."""
 
+import json
 import logging
 
 import pytest
@@ -814,6 +815,304 @@ async def test_free_text_intent_miss_records_no_intent_match(caplog):
 
 
 @pytest.mark.unit
+async def test_select_falls_back_to_unique_intent_option_when_wording_misleads():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"command_mode": "Enter an exact fixed command", "test_command": "make test"},
+            "matchers": [{"intent": "test_command", "question_contains": ["test command"]}],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {
+                "review_id": "ask-mode",
+                "content": {
+                    "question": "What is the exact test command to run?",
+                    "options": [
+                        {"label": "Enter an exact fixed command", "value": "fixed"},
+                        {"label": "Use a required runtime input", "value": "runtime"},
+                    ],
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["selection"] == "Enter an exact fixed command"
+
+
+@pytest.mark.unit
+async def test_select_uses_first_offered_choice_from_intent_list():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"review_action": ["Modify before creating", "Review and edit the YAML"]},
+            "matchers": [{"intent": "review_action", "question_contains": ["what would you like to do"]}],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {
+                "review_id": "review",
+                "content": {
+                    "question": "What would you like to do?",
+                    "options": [
+                        {"label": "Review and edit the YAML"},
+                        {"label": "Change the configuration"},
+                        {"label": "Other", "value": "other"},
+                    ],
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["selection"] == "Review and edit the YAML"
+
+
+@pytest.mark.unit
+async def test_form_field_key_suffix_resolves_before_misleading_label():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "match_strategy": "specific",
+            "intents": {"bucket": "acme-artifacts", "region": "us-east-1"},
+            "matchers": [
+                {"intent": "bucket", "question_contains": ["bucket"]},
+                {"intent": "region", "question_contains": ["region"]},
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "s3",
+                "content": {"fields": [{"key": "s3_region", "label": "S3 bucket region", "type": "text"}]},
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {"S3 bucket region": "us-east-1"}
+
+
+@pytest.mark.unit
+async def test_form_field_key_suffix_defers_to_label_when_a_qualified_intent_exists():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "harness/harness", "image_repository": "acme/payments"},
+            "matchers": [
+                {"intent": "image_repository", "question_contains": ["image repository"]},
+                {"intent": "repository", "question_contains": ["repository"]},
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "image",
+                "content": {
+                    "fields": [{"key": "docker_repository", "label": "Docker image repository", "type": "text"}]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {"Docker image repository": "acme/payments"}
+
+
+def _repo_picker(options: list[str]) -> PendingHumanInput:
+    return PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "repo",
+                "content": {
+                    "fields": [
+                        {
+                            "key": "q0",
+                            "label": "Which repository contains your Go code?",
+                            "type": "select",
+                            "options": [{"label": o, "value": o} for o in options],
+                        }
+                    ]
+                },
+            },
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_unmatched_select_falls_back_to_exact_intent_value_not_partial_text():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {
+                "repository": "harness/harness",
+                "decline_harness_code": "Use a different Git provider",
+                "alias_scope": "Pipeline",
+            },
+            "matchers": [{"intent": "repository", "question_contains": ["repository"]}],
+        },
+    )
+    pending = _repo_picker(["eval_testrepo", "harness_pipelines", "Use a different Git provider"])
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {
+        "Which repository contains your Go code?": "Use a different Git provider"
+    }
+
+
+@pytest.mark.unit
+async def test_unmatched_menu_accepts_recommended_option_only_when_opted_in():
+    hints = {"intents": {"repository": "harness/harness"}, "matchers": []}
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {
+                "review_id": "cache",
+                "content": {
+                    "question": "What cache paths should be used?",
+                    "options": [
+                        {"id": "0", "label": "~/go/pkg/mod only (Recommended)"},
+                        {"id": "1", "label": "~/go/pkg/mod and ~/.cache/go-build"},
+                    ],
+                },
+            },
+        }
+    )
+    adapter = HarnessSseElicitationAdapter()
+
+    with pytest.raises(ValueError, match="Unresolved elicitation_select"):
+        await adapter.respond(
+            pending, ConversationGolden(scenario="s", expected_outcome="o", elicitation_hints=hints), []
+        )
+
+    opted_in = ConversationGolden(
+        scenario="s", expected_outcome="o", elicitation_hints={**hints, "on_unmatched": "accept"}
+    )
+    result = await adapter.respond(pending, opted_in, [])
+
+    assert result["result"]["selection"] == "~/go/pkg/mod only (Recommended)"
+    assert adapter.intent_misses[-1].fallback == "accept_default"
+
+
+@pytest.mark.unit
+async def test_unmatched_menu_accepts_single_proceed_option_and_refuses_ambiguity():
+    golden = ConversationGolden(
+        scenario="s",
+        expected_outcome="o",
+        elicitation_hints={"intents": {"repository": "harness/harness"}, "on_unmatched": "accept"},
+    )
+
+    def menu(labels: list[str]) -> PendingHumanInput:
+        return PendingHumanInput.from_metadata(
+            {
+                "type": "elicitation_select",
+                "payload": {
+                    "review_id": "next",
+                    "content": {
+                        "question": "Anything to adjust?",
+                        "options": [{"id": str(i), "label": label} for i, label in enumerate(labels)],
+                    },
+                },
+            }
+        )
+
+    result = await HarnessSseElicitationAdapter().respond(
+        menu(["Change the Go version", "Looks good, continue", "Something else"]), golden, []
+    )
+    assert result["result"]["selection"] == "Looks good, continue"
+
+    with pytest.raises(ValueError, match="Unresolved elicitation_select"):
+        await HarnessSseElicitationAdapter().respond(
+            menu(["Change the Go version", "Change the S3 destination", "Something else"]), golden, []
+        )
+
+
+@pytest.mark.unit
+async def test_form_select_types_exact_answer_instead_of_ambiguous_partial_option():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={"intents": {"test_command": "pytest"}, "field_keys": {"test_command": "test_command"}},
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "cmd",
+                "content": {
+                    "fields": [
+                        {
+                            "key": "test_command",
+                            "label": "Test command",
+                            "type": "select",
+                            "options": [
+                                {"label": "pip install -r requirements.txt && pytest"},
+                                {"label": "pip install . && pytest"},
+                                {"label": "Custom command", "value": "__custom__"},
+                            ],
+                        }
+                    ]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {"Test command": "pytest"}
+
+
+@pytest.mark.unit
+async def test_form_field_key_resolves_before_label_text():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"pipeline_name": "github_ci", "test_command": "make test"},
+            "field_keys": {"identifier": "pipeline_name"},
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "ask-form",
+                "content": {
+                    "fields": [
+                        {"key": "identifier", "label": "Identifier", "type": "text"},
+                        {"key": "test_command", "label": "Command to run", "type": "text"},
+                    ]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {"Identifier": "github_ci", "Command to run": "make test"}
+
+
+@pytest.mark.unit
 async def test_select_intent_miss_raises_unresolved(caplog):
     caplog.set_level(logging.WARNING, logger=_INTENT_MISS_LOGGER)
     adapter = HarnessSseElicitationAdapter()
@@ -1002,3 +1301,216 @@ def test_adapter_reset_intent_misses_clears_recorder():
     adapter.reset_intent_misses()
 
     assert adapter.intent_misses == []
+
+
+@pytest.mark.unit
+async def test_form_field_key_suffix_yields_to_label_that_does_not_mention_it():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "harness/harness", "image_repository": "acme/payments"},
+            "matchers": [{"intent": "image_repository", "question_contains": ["image name"]}],
+            "field_keys": {"repo": "repository"},
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "docker",
+                "content": {
+                    "fields": [{"key": "docker_repo", "label": "Docker image name (e.g. myorg/myapp)", "type": "text"}]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert result["result"]["form_values"] == {"Docker image name (e.g. myorg/myapp)": "acme/payments"}
+
+
+def _select_pending(question: str, options: list[dict]) -> PendingHumanInput:
+    return PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_select",
+            "payload": {"review_id": "s", "content": {"question": question, "options": options}},
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_reworded_option_resolves_by_keyword_overlap_with_the_intent_answer():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"command_mode": "Enter an exact fixed command"},
+            "matchers": [{"intent": "command_mode", "question_contains": ["configured"]}],
+        },
+    )
+    pending = _select_pending(
+        "How should the test step be configured?",
+        [
+            {"id": "0", "label": "Enter a fixed command", "description": "You'll type the exact test command"},
+            {"id": "1", "label": "Runtime input", "description": "The test command is supplied at run time"},
+            {"id": "2", "label": "Omit tests", "description": "Skip the test step"},
+        ],
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert "Enter a fixed command" in json.dumps(result)
+
+
+@pytest.mark.unit
+async def test_unasked_question_resolves_from_another_known_answer_by_keywords():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={"intents": {"test_command": "pip install -r requirements.txt && pytest"}},
+    )
+    pending = _select_pending(
+        "How are your Python dependencies managed?",
+        [
+            {"label": "requirements.txt", "description": "Will install with: pip install -r requirements.txt"},
+            {"label": "pyproject.toml / setup.py", "description": "Will install with: pip install ."},
+            {"label": "No install needed", "description": "Skip dependency installation"},
+        ],
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert "requirements.txt" in json.dumps(result)
+
+
+@pytest.mark.unit
+async def test_longer_answer_uses_the_custom_entry_instead_of_a_preset_fragment():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"test_command": "pip install -r requirements.txt && pytest"},
+            "matchers": [{"intent": "test_command", "question_contains": ["test command"]}],
+        },
+    )
+    options = [
+        {"label": "pytest", "value": "pytest"},
+        {"label": "python -m unittest discover", "value": "python -m unittest discover"},
+        {"label": "Custom command", "value": "custom"},
+    ]
+
+    result = await HarnessSseElicitationAdapter().respond(_select_pending("Python test command", options), golden, [])
+
+    assert result["result"]["selection"] == "pip install -r requirements.txt && pytest"
+
+
+@pytest.mark.unit
+async def test_answer_containing_a_preset_still_picks_it_when_no_custom_entry_exists():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"test_command": "run pytest"},
+            "matchers": [{"intent": "test_command", "question_contains": ["test command"]}],
+        },
+    )
+    options = [{"label": "pytest", "value": "pytest"}, {"label": "unittest", "value": "unittest"}]
+
+    result = await HarnessSseElicitationAdapter().respond(_select_pending("Python test command", options), golden, [])
+
+    assert result["result"]["selection"] == "pytest"
+
+
+@pytest.mark.unit
+async def test_keyword_overlap_matches_word_forms_and_ignores_negated_words():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"review_action": ["Create the pipeline", "Review and edit the YAML"]},
+            "matchers": [{"intent": "review_action", "question_contains": ["what would you like to do"]}],
+        },
+    )
+    pending = _select_pending(
+        "The review was cancelled twice now. What would you like to do?",
+        [
+            {"label": "Try creating again", "description": "Submit the same pipeline YAML for review and creation"},
+            {"label": "Change something first", "description": "Modify the pipeline details before trying again"},
+            {"label": "Discard", "description": "Abandon this pipeline — don't create it"},
+        ],
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert "Try creating again" in json.dumps(result)
+
+
+@pytest.mark.unit
+async def test_keyword_overlap_refuses_a_weak_or_tied_match():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={"intents": {"repository": "harness/harness"}},
+    )
+    pending = _select_pending(
+        "Pick one",
+        [
+            {"label": "linux", "description": "Harness Code repo: linux"},
+            {"label": "harness_pipelines", "description": "Harness Code repo: harness_pipelines"},
+        ],
+    )
+
+    with pytest.raises(ValueError):
+        await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+
+@pytest.mark.unit
+async def test_select_does_not_pick_an_identifier_that_is_only_a_prefix_of_the_answer():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"git_connector": "github_testgo_account"},
+            "matchers": [{"intent": "git_connector", "question_contains": ["github connector"]}],
+        },
+    )
+    pending = _select_pending(
+        "Which GitHub connector should the pipeline use?",
+        [{"label": "github_testgo"}, {"label": "yogesh_github"}],
+    )
+
+    with pytest.raises(ValueError):
+        await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+
+@pytest.mark.unit
+async def test_form_label_naming_a_specialised_intent_beats_the_generic_key_alias():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        elicitation_hints={
+            "intents": {"repository": "harness/harness", "image_repository": "acme/payments"},
+            "matchers": [
+                {"intent": "image_repository", "question_contains": ["image repository"]},
+                {"intent": "repository", "question_contains": ["repository"]},
+            ],
+        },
+    )
+    pending = PendingHumanInput.from_metadata(
+        {
+            "type": "elicitation_form",
+            "payload": {
+                "review_id": "f",
+                "content": {
+                    "fields": [{"key": "repo", "label": "Image repository (e.g. myorg/myapp)", "type": "text"}]
+                },
+            },
+        }
+    )
+
+    result = await HarnessSseElicitationAdapter().respond(pending, golden, [])
+
+    assert "acme/payments" in json.dumps(result)
+    assert "harness/harness" not in json.dumps(result)

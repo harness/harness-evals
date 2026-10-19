@@ -10,6 +10,11 @@ to fall back to ``conversation.simulator_llm`` when no matcher resolves (QA wiza
 often ask different questions than prod skill flows). When hints are omitted entirely,
 the adapter always uses the simulator LLM.
 
+For a choice whose question resolves to no usable intent, the adapter picks the
+single option exactly equal to any acceptable intent answer. With
+``elicitation_hints.on_unmatched: accept`` it then answers like a satisfied user:
+the single recommended option, else the single proceed/accept option.
+
 Config::
 
     plugins:
@@ -23,6 +28,7 @@ Config::
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 
 from harness_evals.conversation.golden import ConversationGolden
@@ -31,6 +37,7 @@ from harness_evals.conversation.human_input import (
     HumanInputSimulator,
     IntentMatchMiss,
     PendingHumanInput,
+    intent_choices,
     intents,
     record_intent_miss,
     resolve_intent,
@@ -236,6 +243,8 @@ Result field guide by type:
 - elicitation_select: include selection set to an offered option LABEL (never the numeric id)
 - elicitation_multi_select: include selections as an array of offered option LABELS
 
+Answer only the fields and question in this payload. Do not volunteer details from the
+context that the payload does not request, and leave unrequested fields out.
 Always set success=true."""
 
         raw = await self.llm.generate_json(prompt, _llm_schema_for_pending(pending))
@@ -255,7 +264,7 @@ Always set success=true."""
             if not isinstance(field, dict):
                 continue
             label = str(field.get("label") or field.get("key") or "")
-            intent = resolve_intent(label, golden)
+            intent = _field_intent(field, golden, label)
             desired = intent_values.get(intent or "", "")
             field_type = _field_type(field)
             options = field.get("options") or []
@@ -265,7 +274,7 @@ Always set success=true."""
                     # Honor emitted text fields: pass curated value through as-is.
                     form_values[label] = desired
                 elif field_type == "multi_select":
-                    selected = _select_options_multi(options, desired)
+                    selected = _select_choice_multi(options, golden, intent, desired)
                     if not selected:
                         self._raise_unresolved(
                             golden=golden,
@@ -273,10 +282,13 @@ Always set success=true."""
                             question=label,
                             intent=intent,
                             desired=desired,
+                            options=options,
                         )
                     form_values[label] = ", ".join(selected)
                 else:
-                    selected = _select_option(options, desired)
+                    selected = _select_choice(options, golden, intent, desired) or self._fallback_option(
+                        options, golden, pending_type="elicitation_form", question=label, intent=intent
+                    )
                     if selected is None:
                         self._raise_unresolved(
                             golden=golden,
@@ -284,8 +296,19 @@ Always set success=true."""
                             question=label,
                             intent=intent,
                             desired=desired,
+                            options=options,
                         )
                     form_values[label] = selected
+            elif (
+                options
+                and field_type == "select"
+                and (
+                    selected := self._fallback_option(
+                        options, golden, pending_type="elicitation_form", question=label, intent=intent
+                    )
+                )
+            ):
+                form_values[label] = selected
             elif options and field_type in {"select", "multi_select"}:
                 self._raise_unresolved(
                     golden=golden,
@@ -293,6 +316,7 @@ Always set success=true."""
                     question=label,
                     intent=intent,
                     desired=desired,
+                    options=options,
                 )
             else:
                 self._record_field_miss(
@@ -345,7 +369,11 @@ Always set success=true."""
         intent = resolve_intent(question, golden) or resolve_intent(str(payload.get("title") or ""), golden)
         desired = intents(golden).get(intent or "", "")
         options = _select_options(content)
-        selected = _select_option(options, desired) if desired else None
+        selected = _select_choice(options, golden, intent, desired) if desired else None
+        if not selected:
+            selected = self._fallback_option(
+                options, golden, pending_type="elicitation_select", question=question, intent=intent
+            )
         if not selected:
             self._raise_unresolved(
                 golden=golden,
@@ -353,6 +381,7 @@ Always set success=true."""
                 question=question,
                 intent=intent,
                 desired=desired,
+                options=options,
             )
 
         result: dict[str, object] = {
@@ -377,7 +406,7 @@ Always set success=true."""
         intent = resolve_intent(question, golden) or resolve_intent(str(payload.get("title") or ""), golden)
         desired = intents(golden).get(intent or "", "")
         options = _select_options(content)
-        selected = _select_options_multi(options, desired) if desired else []
+        selected = _select_choice_multi(options, golden, intent, desired) if desired else []
         if not selected:
             self._raise_unresolved(
                 golden=golden,
@@ -385,6 +414,7 @@ Always set success=true."""
                 question=question,
                 intent=intent,
                 desired=desired,
+                options=options,
             )
 
         result: dict[str, object] = {
@@ -465,7 +495,7 @@ Always set success=true."""
             if not isinstance(field, dict):
                 continue
             label = str(field.get("label") or field.get("key") or "")
-            intent = resolve_intent(label, golden)
+            intent = _field_intent(field, golden, label)
             desired = intent_values.get(intent or "", "")
             if not desired:
                 return True
@@ -473,9 +503,9 @@ Always set success=true."""
             options = field.get("options") or []
             if field_type in {"select", "multi_select"} and options:
                 if field_type == "multi_select":
-                    if not _select_options_multi(options, desired):
+                    if not _select_choice_multi(options, golden, intent, desired):
                         return True
-                elif _select_option(options, desired) is None:
+                elif _select_choice(options, golden, intent, desired) is None:
                     return True
         return False
 
@@ -494,14 +524,16 @@ Always set success=true."""
         )
         intent = resolve_intent(question, golden) or resolve_intent(str(payload.get("title") or ""), golden)
         desired = intents(golden).get(intent or "", "")
-        if not desired:
-            return True
         options = _select_options(content)
         # Empty options cannot be matched deterministically — treat as miss so
         # llm_on_miss can fall back instead of raising ValueError downstream.
         if not options:
             return True
-        return _select_option(options, desired) is None
+        if desired and _select_choice(options, golden, intent, desired) is not None:
+            return False
+        return (
+            _unique_intent_option(options, golden) is None and _keyword_intent_option(options, golden, intent) is None
+        )
 
     def _multi_select_would_miss(self, payload: dict, golden: ConversationGolden) -> bool:
         content = payload.get("content") or {}
@@ -517,7 +549,7 @@ Always set success=true."""
         # llm_on_miss can fall back instead of raising ValueError downstream.
         if not options:
             return True
-        return not _select_options_multi(options, desired)
+        return not _select_choice_multi(options, golden, intent, desired)
 
     def _raise_unresolved(
         self,
@@ -527,6 +559,7 @@ Always set success=true."""
         question: str,
         intent: str | None,
         desired: str,
+        options: list | None = None,
     ) -> None:
         self._record_field_miss(
             golden=golden,
@@ -538,9 +571,43 @@ Always set success=true."""
         )
         raise ValueError(
             f"Unresolved {pending_type} answer for question={question!r} "
-            f"intent={intent!r} desired={desired!r}. "
+            f"intent={intent!r} desired={desired!r} options={options or []!r}. "
             "Add a matcher/intent or enable elicitation_hints.llm_on_miss with simulator_llm."
         )
+
+    def _fallback_option(
+        self,
+        options: list,
+        golden: ConversationGolden,
+        *,
+        pending_type: str,
+        question: str,
+        intent: str | None,
+    ) -> str | None:
+        """Answer an unmatched choice by exact intent value, then by keyword overlap, else by the accept default."""
+        if (selected := _unique_intent_option(options, golden)) is not None:
+            return selected
+        if (selected := _keyword_intent_option(options, golden, intent)) is not None:
+            self._record_field_miss(
+                golden=golden,
+                pending_type=pending_type,
+                question=question,
+                intent=intent,
+                desired=selected,
+                fallback="keyword_overlap",
+            )
+            return selected
+        selected = _accept_default_option(options, golden)
+        if selected is not None:
+            self._record_field_miss(
+                golden=golden,
+                pending_type=pending_type,
+                question=question,
+                intent=intent,
+                desired=selected,
+                fallback="accept_default",
+            )
+        return selected
 
     def _record_field_miss(
         self,
@@ -664,6 +731,181 @@ def _select_options(content: dict) -> list:
     return []
 
 
+def _intent_for_field_key(
+    field: dict, golden: ConversationGolden, *, suffix: bool = False, label: str | None = None
+) -> str | None:
+    """Resolve a form field by its stable key before falling back to label text.
+
+    A key resolves when it names an intent directly, is mapped via
+    ``elicitation_hints.field_keys``, or its last ``_`` segment is exactly one
+    alias or intent name (``s3_region`` resolves like ``region``). Suffix
+    resolution runs only with ``suffix=True``, after label matching, because a
+    descriptive label outranks a key fragment (``docker_repo`` labelled "Docker
+    image name" is the image, not the source repository). A suffix is
+    ambiguous, and left to label matching, when another intent is a qualified
+    form of it (``docker_repository`` with both ``repository`` and
+    ``image_repository`` defined).
+    """
+    key = str(field.get("key") or "").strip()
+    if not key:
+        return None
+    hints = golden.elicitation_hints or {}
+    aliases = hints.get("field_keys") or {}
+    if not isinstance(aliases, dict):
+        aliases = {}
+    known_intents = hints.get("intents") or {}
+    if not suffix:
+        if key in aliases:
+            return str(aliases[key])
+        return key if key in known_intents else None
+    tail = key.rsplit("_", 1)[-1]
+    if label is not None and not re.search(rf"\b{re.escape(tail)}\b", label, re.IGNORECASE):
+        return None
+    qualified = [name for name in known_intents if name != tail and str(name).endswith(f"_{tail}")]
+    if tail != key and not qualified:
+        if tail in aliases:
+            return str(aliases[tail])
+        if tail in known_intents:
+            return tail
+    return None
+
+
+def _field_intent(field: dict, golden: ConversationGolden, label: str) -> str | None:
+    """Resolve a form field to an intent by its visible label first, then its key.
+
+    The label is what a real user reads; keys are model-chosen shorthand
+    (``repo`` on an "Image repository" field), so they only break ties or
+    fill in when the label matches nothing.
+    """
+    return (
+        resolve_intent(label, golden)
+        or _intent_for_field_key(field, golden)
+        or _intent_for_field_key(field, golden, suffix=True, label=label)
+        or _intent_for_field_key(field, golden, suffix=True)
+    )
+
+
+def _unique_intent_option(options: list, golden: ConversationGolden) -> str | None:
+    """Pick the single offered option whose label or value exactly equals an acceptable intent answer.
+
+    Partial text is not enough here: the question did not resolve to an intent,
+    so a loose match (``Pipeline`` inside ``harness_pipelines``) would answer
+    with an unrelated fact.
+    """
+    hints = golden.elicitation_hints or {}
+    matches = {
+        selected
+        for intent in (hints.get("intents") or {})
+        for choice in intent_choices(golden, str(intent))
+        if (selected := _exact_option(options, choice)) is not None
+    }
+    return matches.pop() if len(matches) == 1 else None
+
+
+_KEYWORD_STOPWORDS = frozenset(
+    {"a", "an", "the", "to", "of", "for", "in", "on", "at", "by", "with", "and", "or", "is", "are", "be", "will"}
+    | {"it", "its", "this", "that", "your", "my", "our", "you", "we", "i", "use", "using", "enter", "type", "set"}
+)
+
+
+_NEGATED_WORD_RE = re.compile(r"\b(?:don't|do not|doesn't|not|never|no|without)\s+[a-z0-9_]+")
+_STEM_SUFFIXES = ("ing", "ion", "ed", "es", "e", "s")
+
+
+def _stem(word: str) -> str:
+    """Fold inflections ("create", "creating", "creation") to one stem; identifiers stay atomic."""
+    if "_" in word or any(char.isdigit() for char in word):
+        return word
+    for suffix in _STEM_SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _keywords(text: str) -> set[str]:
+    """Meaningful word stems in ``text``, skipping stopwords and words a negation rules out ("don't create")."""
+    text = _NEGATED_WORD_RE.sub(" ", text.lower())
+    return {_stem(word) for word in re.findall(r"[a-z0-9_]+", text) if word not in _KEYWORD_STOPWORDS}
+
+
+def _keyword_option(options: list, desired_values: list[str]) -> str | None:
+    """Pick the option sharing the most meaningful words with any desired value.
+
+    Matches whole words over the option label, value, and description, so a
+    reworded option ("Enter a fixed command" for "Enter an exact fixed
+    command") still resolves. The winner needs at least two shared words and
+    twice the runner-up's score; otherwise the choice is ambiguous.
+    """
+    wanted = [words for value in desired_values if (words := _keywords(value))]
+    if not wanted:
+        return None
+    scored = []
+    for option in options:
+        label = _option_label(option) or _option_value(option)
+        if not label:
+            continue
+        description = option.get("description", "") if isinstance(option, dict) else ""
+        offered = _keywords(f"{label} {_option_value(option) or ''} {description}")
+        scored.append((max(len(words & offered) for words in wanted), label))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best, label = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else 0
+    return label if best >= 2 and best >= 2 * runner_up else None
+
+
+def _keyword_intent_option(options: list, golden: ConversationGolden, intent: str | None) -> str | None:
+    """Keyword-match the question's own intent first, then every string answer the case defines."""
+    if intent and (selected := _keyword_option(options, intent_choices(golden, intent))) is not None:
+        return selected
+    hints = golden.elicitation_hints or {}
+    every = [choice for name in (hints.get("intents") or {}) for choice in intent_choices(golden, str(name))]
+    return _keyword_option(options, every)
+
+
+def _accept_default_option(options: list, golden: ConversationGolden) -> str | None:
+    """With ``elicitation_hints.on_unmatched: accept``, answer like a satisfied user.
+
+    Picks the single option marked recommended, else the single option that
+    proceeds or accepts as-is. Returns None when neither is unambiguous.
+    """
+    hints = golden.elicitation_hints or {}
+    if hints.get("on_unmatched") != "accept":
+        return None
+    recommended = [
+        label
+        for option in options
+        if (label := _option_label(option))
+        and "recommended" in f"{label} {option.get('description', '') if isinstance(option, dict) else ''}".lower()
+    ]
+    if len(recommended) == 1:
+        return recommended[0]
+    accepting = [
+        label for option in options if (label := _option_label(option)) and _ACCEPT_OPTION_RE.match(label.strip())
+    ]
+    return accepting[0] if len(accepting) == 1 else None
+
+
+_ACCEPT_OPTION_RE = re.compile(
+    r"(?i)^(?:looks good|lgtm|proceed|continue|confirm|approve|accept|yes\b|no changes?\b|keep (?:it|as is|as-is)"
+    r"|create (?:it|the pipeline|pipeline)\b)"
+)
+
+
+def _exact_option(options: list, desired: str) -> str | None:
+    """Return the label of the option whose label or value equals ``desired`` (case-insensitive)."""
+    desired_lower = desired.strip().lower()
+    if not desired_lower:
+        return None
+    for option in options:
+        label = _option_label(option)
+        value = _option_value(option)
+        if (label and label.lower() == desired_lower) or (value and value.lower() == desired_lower):
+            return label or value
+    return None
+
+
 def _field_type(field: dict) -> str:
     """Return the emitted field type; fall back from options when type is absent."""
     raw = str(field.get("type") or "").strip().lower()
@@ -713,7 +955,16 @@ def _option_matches(options: list, selected: str) -> bool:
     return False
 
 
-def _select_option(options: list, desired: str) -> str | None:
+def _contains_whole(text: str, part: str) -> bool:
+    """True when ``part`` occurs in ``text`` not glued to identifier characters.
+
+    ``github_testgo`` is not inside ``github_testgo_account``: picking it would
+    answer with a different connector.
+    """
+    return re.search(rf"(?<![a-z0-9_]){re.escape(part)}(?![a-z0-9_])", text) is not None
+
+
+def _select_option(options: list, desired: str, allow_custom: bool = True) -> str | None:
     """Match desired text to an option and return the option LABEL (never bare id).
 
     Matching order: exact label → exact value → case-insensitive label contains
@@ -738,19 +989,53 @@ def _select_option(options: list, desired: str) -> str | None:
         if value and value.lower() == desired_lower:
             return label or value
 
-    # 3. Desired is a confident substring of the label (or vice versa)
-    for option in options:
-        label = _option_label(option)
-        if not label:
-            continue
-        label_lower = label.lower()
-        if desired_lower in label_lower or label_lower in desired_lower:
-            return label
+    # 3. Desired is a substring of exactly one label (or vice versa). A label that is
+    # only a fragment of a longer answer loses to an offered custom entry.
+    has_custom = any(_is_custom_option(option) for option in options)
+    partial = [
+        label
+        for option in options
+        if (label := _option_label(option))
+        and (
+            _contains_whole(label.lower(), desired_lower)
+            or (not has_custom and _contains_whole(desired_lower, label.lower()))
+        )
+    ]
+    if len(partial) == 1:
+        return partial[0]
+
+    # 4. Type the exact answer when the field offers a custom/other entry
+    if allow_custom and any(_is_custom_option(option) for option in options):
+        return desired_norm
 
     return None
 
 
-def _select_options_multi(options: list, desired: str) -> list[str]:
+def _is_custom_option(option: object) -> bool:
+    label = (_option_label(option) or "").lower()
+    value = (_option_value(option) or "").lower()
+    return value in {"__custom__", "custom", "other"} or label.startswith(("custom", "other"))
+
+
+def _select_choice(options: list, golden: ConversationGolden, intent: str | None, desired: str) -> str | None:
+    """Pick the first offered option among an intent's acceptable answers; type the primary as a last resort."""
+    choices = intent_choices(golden, intent) or ([desired] if desired else [])
+    for choice in choices:
+        if (selected := _select_option(options, choice, allow_custom=False)) is not None:
+            return selected
+    return _select_option(options, choices[0]) if choices else None
+
+
+def _select_choice_multi(options: list, golden: ConversationGolden, intent: str | None, desired: str) -> list[str]:
+    """Multi-select variant of ``_select_choice``."""
+    choices = intent_choices(golden, intent) or ([desired] if desired else [])
+    for choice in choices:
+        if selected := _select_options_multi(options, choice, allow_custom=False):
+            return selected
+    return _select_options_multi(options, choices[0]) if choices else []
+
+
+def _select_options_multi(options: list, desired: str, allow_custom: bool = True) -> list[str]:
     """Resolve one or more option labels from a comma/semicolon-separated desired string."""
     if not desired.strip():
         return []
@@ -760,13 +1045,13 @@ def _select_options_multi(options: list, desired: str) -> list[str]:
 
     selected: list[str] = []
     for part in parts:
-        matched = _select_option(options, part)
+        matched = _select_option(options, part, allow_custom)
         if matched and matched not in selected:
             selected.append(matched)
 
     # If the whole string matches one option (e.g. "All Providers"), prefer that.
     if not selected:
-        whole = _select_option(options, desired)
+        whole = _select_option(options, desired, allow_custom)
         if whole:
             return [whole]
     return selected

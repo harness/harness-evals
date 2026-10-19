@@ -152,6 +152,10 @@ Conversation so far:
 Return only JSON with a single "response" object suitable for continuing the conversation."""
 
 
+class UnresolvedHumanInputError(ValueError):
+    """Raised when the golden provides no answer for a human-input request."""
+
+
 @dataclass
 class IntentMatchMiss:
     """Recorded when elicitation intent matching fails or falls back to LLM."""

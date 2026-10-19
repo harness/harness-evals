@@ -37,6 +37,7 @@ from harness_evals.conversation.human_input import (
     HumanInputSimulator,
     IntentMatchMiss,
     PendingHumanInput,
+    UnresolvedHumanInputError,
     intent_choices,
     intents,
     is_specific,
@@ -575,7 +576,7 @@ Always set success=true."""
             desired=desired,
             fallback="unresolved",
         )
-        raise ValueError(
+        raise UnresolvedHumanInputError(
             f"Unresolved {pending_type} answer for question={question!r} "
             f"intent={intent!r} desired={desired!r} options={options or []!r}. "
             "Add a matcher/intent or enable elicitation_hints.llm_on_miss with simulator_llm."

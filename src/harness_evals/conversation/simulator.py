@@ -23,6 +23,7 @@ from harness_evals.conversation.graph import (
 from harness_evals.conversation.human_input import (
     HumanInputSimulator,
     PendingHumanInput,
+    UnresolvedHumanInputError,
     intents,
     is_specific,
     resolve_intent,
@@ -522,7 +523,7 @@ class ConversationSimulator:
             )
             try:
                 human_input = await self.human_input_simulator.respond(pending, golden, history)
-            except ValueError as exc:
+            except UnresolvedHumanInputError as exc:
                 if not accumulated_sse.get("elicitation_yaml"):
                     raise
                 _logger.info("Stopping after the YAML review: no scripted answer for %s (%s)", pending.type, exc)
@@ -696,7 +697,10 @@ def _due_scripted_followup(golden: ConversationGolden, history: list[Message]) -
     if not followups:
         return None
     user_texts = [message.content or "" for message in history if message.role == "user"]
-    delivered = sum(1 for text in followups if text in user_texts)
+    delivered = 0
+    for text in user_texts:
+        if delivered < len(followups) and text == followups[delivered]:
+            delivered += 1
     reviews = sum(1 for text in user_texts if text.startswith(_YAML_REVIEW_PREFIX))
     if delivered < len(followups) and reviews > delivered:
         return followups[delivered]

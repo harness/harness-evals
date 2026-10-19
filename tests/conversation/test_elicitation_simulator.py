@@ -732,6 +732,49 @@ async def test_unanswerable_question_after_a_yaml_review_ends_the_conversation()
     assert eval_case.metadata["sse_events"]["elicitation_yaml"][-1]["content"]["yaml"] == "pipeline: {}"
 
 
+@pytest.mark.unit
+async def test_unrelated_error_after_a_yaml_review_still_propagates():
+    golden = ConversationGolden(
+        scenario="Create CI",
+        expected_outcome="Reviewed",
+        mode=ConversationMode.SCRIPTED,
+        turns=[Message(role="user", content="Create CI")],
+        max_elicitation_rounds=4,
+        elicitation_hints={"yaml": {"default_action": "reject"}},
+    )
+    review = {"review_id": "rev-1", "content": {"yaml": "pipeline: {}"}, "entity_info": {"entity_type": "pipeline_v1"}}
+
+    class BrokenSelectSimulator(ElicitationSimulator):
+        async def respond(self, pending, golden, history):
+            if pending.type == "elicitation_select":
+                raise ValueError("malformed LLM response")
+            return await super().respond(pending, golden, history)
+
+    async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+        if human_input is None:
+            return Message(
+                role="assistant",
+                metadata={
+                    "pending_elicitation": {"type": "elicitation_yaml", "payload": review},
+                    "sse_events": {"elicitation_yaml": [review]},
+                },
+            )
+        return Message(
+            role="assistant",
+            metadata={
+                "pending_elicitation": {
+                    "type": "elicitation_select",
+                    "payload": {"review_id": "ask", "content": {"question": "Next?", "options": [{"label": "A"}]}},
+                }
+            },
+        )
+
+    simulator = ConversationSimulator(simulator_llm=StopLLM(), elicitation_simulator=BrokenSelectSimulator())
+
+    with pytest.raises(ValueError, match="malformed LLM response"):
+        await simulator.simulate(golden, agent_fn)
+
+
 def test_plain_text_followup_answers_a_please_reply_with_request():
     golden = ConversationGolden(
         scenario="Create CI",
@@ -788,3 +831,28 @@ def test_plain_text_followup_default_mode_ignores_a_request_without_a_question_m
     )
 
     assert _plain_text_followup(golden, message, used_intents=set()) is None
+
+
+def test_identical_scripted_followups_are_each_sent_after_their_own_review():
+    repeat = "Run the tests again."
+    golden = ConversationGolden(
+        scenario="Create CI then revise twice",
+        expected_outcome="Revised",
+        initial_prompt="Set up CI for my Go service.",
+        turns=[
+            Message(role="user", content="Set up CI for my Go service."),
+            Message(role="user", content=repeat),
+            Message(role="user", content=repeat),
+        ],
+        mode=ConversationMode.SIMULATE,
+    )
+    history = [
+        Message(role="user", content="Set up CI for my Go service."),
+        Message(role="user", content="[Simulated YAML review: reject pipeline_v1]"),
+        Message(role="user", content=repeat),
+        Message(role="user", content="[Simulated YAML review: reject pipeline_v1]"),
+    ]
+
+    assert _due_scripted_followup(golden, history) == repeat
+    history.append(Message(role="user", content=repeat))
+    assert _due_scripted_followup(golden, history) is None

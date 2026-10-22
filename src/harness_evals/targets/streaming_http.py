@@ -21,7 +21,6 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 try:
@@ -36,7 +35,30 @@ from harness_evals.errors import TargetInvocationError
 from harness_evals.plugins import register_target
 from harness_evals.targets.auth import AuthConfig, NoAuth
 from harness_evals.targets.base import BaseTarget
-from harness_evals.targets.templating import render_headers, render_request_body
+from harness_evals.targets.http_diagnostics import (
+    CAPTURE_LIMIT,
+    HttpCall,
+    HttpDiagnostic,
+    HttpExchange,
+    apply_missing_selector,
+    apply_parse_failure,
+    apply_status_failure,
+    apply_transport_failure,
+    attach_case_diagnostic,
+    build_exchange,
+    current_request_trace,
+    header_items,
+    output_match,
+    publish_diagnostic,
+    read_urllib_error_body,
+    request_trace,
+    status_code_of,
+)
+from harness_evals.targets.templating import (
+    render_headers_with_provenance,
+    render_request_body,
+    render_request_body_with_provenance,
+)
 from harness_evals.targets.trajectory import (
     normalize_trajectory_fields,
     reconstruct_stream_messages,
@@ -130,7 +152,13 @@ class StreamingHttpTarget(BaseTarget):
     capture_events: list[str] | None = None
     output_event: str | None = None
 
+    # Same opt-in knobs as HttpTarget. strict_onboarding applies to the primary
+    # output selector only; optional telemetry paths stay best-effort.
+    strict_onboarding: bool = False
+    record_diagnostics: bool = False
+
     _async_client: object | None = field(default=None, init=False, repr=False)
+    last_diagnostic: HttpDiagnostic | None = field(default=None, init=False, repr=False)
 
     async def __aenter__(self) -> StreamingHttpTarget:
         if httpx is None:
@@ -157,30 +185,41 @@ class StreamingHttpTarget(BaseTarget):
             self._async_client = None
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
-        body = self._build_request_body(golden)
-        headers = render_headers(self.headers, golden)
-        if self._async_client is not None:
-            raw_body, content_type, latency_ms, error = await self._execute_async(body, headers)
-        else:
-            logger.debug("StreamingHttpTarget used without context manager — falling back to sync thread pool")
-            raw_body, content_type, latency_ms, error = await asyncio.to_thread(
-                self._execute_with_retries, body, headers
-            )
+        if not self.record_diagnostics:
+            self.last_diagnostic = None
+        body_payload, body_secrets = render_request_body_with_provenance(self.body_template, golden)
+        body = json.dumps(body_payload, ensure_ascii=False).encode("utf-8")
+        headers, header_uses, header_secrets = render_headers_with_provenance(self.headers, golden)
+        secrets = [*body_secrets, *header_secrets]
+        with request_trace(header_uses, secrets):
+            if self._async_client is not None:
+                call = await self._execute_async(body, headers)
+            else:
+                logger.debug("StreamingHttpTarget used without context manager — falling back to sync thread pool")
+                call = await asyncio.to_thread(self._execute_with_retries, body, headers)
 
-        if error is not None:
-            raise TargetInvocationError(
-                f"StreamingHttpTarget invocation failed: {error}",
-                latency_ms=latency_ms,
-            )
+        if call.error is not None:
+            raise self._failure(call)
 
-        output, kwargs, metadata_extra, extract_source = self._process_response(raw_body, content_type, golden.input)
+        try:
+            output, kwargs, metadata_extra, extract_source, matched = self._process_response(
+                call.body, call.content_type, golden.input
+            )
+        except json.JSONDecodeError as exc:
+            call.error = apply_parse_failure(call.exchange, exc, str(call.body or ""))
+            raise self._failure(call) from exc
         if not output:
             stream_error = _detect_stream_error(metadata_extra.get("sse_events") if metadata_extra else None)
             if stream_error is not None:
+                diagnostic = publish_diagnostic(self, call.exchange, None)
                 raise TargetInvocationError(
                     f"streaming target returned an error event: {stream_error}",
-                    latency_ms=latency_ms,
+                    latency_ms=call.latency_ms,
+                    diagnostic=diagnostic,
                 )
+        if self.strict_onboarding and not matched:
+            call.error = apply_missing_selector(call.exchange, self._output_selector())
+            raise self._failure(call)
         extracted_context = kwargs.pop("context", None)
         # A reported trajectory (messages_path) is authoritative; otherwise
         # assemble a best-effort trace from the input, any captured tool calls,
@@ -188,32 +227,58 @@ class StreamingHttpTarget(BaseTarget):
         if kwargs.get("messages") is None:
             kwargs["messages"] = synthesize_messages(golden.input, output, kwargs.get("tool_calls"))
         if self.latency_ms_path is None:
-            kwargs["latency_ms"] = latency_ms
+            kwargs["latency_ms"] = call.latency_ms
         else:
             extracted_latency = (
                 extract_path(extract_source, self.latency_ms_path) if extract_source is not None else None
             )
-            kwargs["latency_ms"] = float(extracted_latency) if extracted_latency is not None else latency_ms
+            kwargs["latency_ms"] = float(extracted_latency) if extracted_latency is not None else call.latency_ms
 
         eval_case = EvalCase.from_golden(golden, output=output, metadata_extra=metadata_extra, **kwargs)
         if extracted_context is not None:
             eval_case.context = extracted_context
+        attach_case_diagnostic(eval_case, publish_diagnostic(self, call.exchange, output))
         return eval_case
 
-    async def _execute_async(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
-        """Async streaming HTTP call using httpx with retries. Returns (raw_text, content_type, latency_ms, error)."""
+    def _output_selector(self) -> str:
+        if self.output_event:
+            return f"event:{self.output_event} path:{self.output_path}"
+        return self.output_path
+
+    def _failure(self, call: HttpCall) -> TargetInvocationError:
+        diagnostic = publish_diagnostic(self, call.exchange, None)
+        return TargetInvocationError(
+            f"StreamingHttpTarget invocation failed: {call.error}",
+            latency_ms=call.latency_ms,
+            diagnostic=diagnostic,
+        )
+
+    def _open_exchange(
+        self,
+        body: bytes,
+        user_headers: dict[str, str],
+        header_uses: dict | None,
+        env_secrets: list[str] | None,
+    ) -> tuple[HttpExchange, dict[str, str]]:
+        exchange = build_exchange(
+            method=self.method,
+            url=self.url,
+            accept="text/event-stream",
+            user_headers=user_headers,
+            header_uses=header_uses,
+            body_text=body.decode("utf-8"),
+            auth=self.auth,
+            env_secrets=env_secrets,
+        )
+        return exchange, {header.name: header.value for header in exchange.headers}
+
+    async def _execute_async(self, body: bytes, user_headers: dict[str, str]) -> HttpCall:
+        """Async streaming HTTP call using httpx with retries."""
         client = self._async_client
         assert client is not None
 
-        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **user_headers}
-        params: dict[str, str] = {}
-        self.auth.apply(headers, params)
-
-        url = self.url
-        if params:
-            sep = "&" if "?" in url else "?"
-            url = url + sep + urlencode(params)
-
+        header_uses, env_secrets = current_request_trace()
+        exchange, headers = self._open_exchange(body, user_headers, header_uses, env_secrets)
         last_error: str | None = None
         last_latency_ms = 0.0
         attempts = 1 + self.retries
@@ -225,11 +290,22 @@ class StreamingHttpTarget(BaseTarget):
             t0 = time.perf_counter()
             try:
                 async with client.stream(  # type: ignore[union-attr]
-                    self.method,
-                    url,
+                    exchange.method,
+                    exchange.url,
                     content=body,
                     headers=headers,
                 ) as response:
+                    status = status_code_of(response)
+                    if status is not None and status >= 400:
+                        # Streaming keeps the historical retry of 4xx and 5xx.
+                        # The body is still retained on the last attempt.
+                        text = await _read_bounded_text(response)
+                        message = apply_status_failure(exchange, status, text, header_items(response.headers))
+                        elapsed_ms = (time.perf_counter() - t0) * 1000
+                        last_latency_ms = elapsed_ms
+                        last_error = message
+                        logger.warning("StreamingHttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
+                        continue
                     response.raise_for_status()
                     content_type = response.headers.get("content-type", "").lower()
                     if self.stream and "text/event-stream" in content_type:
@@ -243,25 +319,21 @@ class StreamingHttpTarget(BaseTarget):
                             chunks.append(chunk)
                         raw = "".join(chunks)
                     elapsed_ms = (time.perf_counter() - t0) * 1000
-                    return raw, content_type, elapsed_ms, None
+                    _remember_success(exchange, response, raw)
+                    return HttpCall(raw, content_type, elapsed_ms, None, exchange)
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                message = _streaming_exception_message(exchange, exc)
                 last_latency_ms = elapsed_ms
-                last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("StreamingHttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+                last_error = message
+                logger.warning("StreamingHttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
 
-        return None, "", last_latency_ms, last_error
+        return HttpCall(None, "", last_latency_ms, last_error, exchange)
 
-    def _execute_with_retries(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
-        """Synchronous HTTP call with retry logic. Returns (raw_text, content_type, latency_ms, error)."""
-        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **user_headers}
-        params: dict[str, str] = {}
-        self.auth.apply(headers, params)
-
-        url = self.url
-        if params:
-            sep = "&" if "?" in url else "?"
-            url = url + sep + urlencode(params)
+    def _execute_with_retries(self, body: bytes, user_headers: dict[str, str]) -> HttpCall:
+        """Synchronous HTTP call with retry logic. 4xx and 5xx are both retried."""
+        header_uses, env_secrets = current_request_trace()
+        exchange, headers = self._open_exchange(body, user_headers, header_uses, env_secrets)
 
         ssl_ctx: ssl.SSLContext | None = None
         if not self.verify_tls:
@@ -278,21 +350,35 @@ class StreamingHttpTarget(BaseTarget):
             if attempt > 0:
                 time.sleep(self.backoff_s * (2 ** (attempt - 1)))
 
-            request = Request(url, data=body, headers=headers, method=self.method)
+            request = Request(exchange.url, data=body, headers=headers, method=exchange.method)
             t0 = time.perf_counter()
             try:
                 with urlopen(request, timeout=self.timeout_s, context=ssl_ctx) as response:
                     elapsed_ms = (time.perf_counter() - t0) * 1000
                     raw = response.read().decode("utf-8")
                     content_type = _get_content_type(response)
-                    return raw, content_type, elapsed_ms, None
-            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                    _remember_success(exchange, response, raw)
+                    return HttpCall(raw, content_type, elapsed_ms, None, exchange)
+            except HTTPError as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                message = apply_status_failure(
+                    exchange,
+                    exc.code,
+                    read_urllib_error_body(exc),
+                    header_items(getattr(exc, "headers", None)),
+                    exc,
+                )
                 last_attempt_latency_ms = elapsed_ms
-                last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("StreamingHttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+                last_error = message
+                logger.warning("StreamingHttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
+            except (URLError, TimeoutError, OSError) as exc:
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                message = apply_transport_failure(exchange, exc)
+                last_attempt_latency_ms = elapsed_ms
+                last_error = message
+                logger.warning("StreamingHttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
 
-        return None, "", last_attempt_latency_ms, last_error
+        return HttpCall(None, "", last_attempt_latency_ms, last_error, exchange)
 
     def _build_request_body(self, golden: Golden) -> bytes:
         payload = render_request_body(self.body_template, golden)
@@ -300,28 +386,31 @@ class StreamingHttpTarget(BaseTarget):
 
     def _process_response(
         self, raw: object, content_type: str, input_value: object
-    ) -> tuple[object, dict, dict | None, object]:
-        """Turn a raw response body into (output, optional_field_kwargs, metadata_extra, extract_source).
+    ) -> tuple[object, dict, dict | None, object, bool]:
+        """Turn a raw response body into (output, optional kwargs, metadata, extract source, matched).
 
-        ``extract_source`` is the object that ``latency_ms_path`` (and, for SSE,
-        the optional-field paths) are evaluated against. ``input_value`` seeds
-        the leading user turn when a trajectory is reconstructed from the stream.
+        ``matched`` is false when the primary output selector resolved to nothing.
+        Callers only raise for that in ``strict_onboarding`` mode; otherwise the
+        legacy empty output is returned. ``extract_source`` is the object that
+        ``latency_ms_path`` (and, for SSE, the optional-field paths) are evaluated
+        against. ``input_value`` seeds the leading user turn when a trajectory is
+        reconstructed from the stream.
         """
         if raw is None:
-            return "", {}, None, None
+            return "", {}, None, None, False
 
         is_sse = self.stream and "text/event-stream" in content_type
         if not is_sse:
             parsed = _parse_response(str(raw), content_type)
-            output = self._extract_output(parsed, content_type)
+            output, matched = output_match(parsed, self.output_path, content_type)
             kwargs = self._extract_optional_fields(parsed)
-            return output, kwargs, None, parsed
+            return output, kwargs, None, parsed, matched
 
         events = _parse_sse(str(raw))
         decoded = [(name, _decode(data)) for name, data in events]
         metadata_extra = self._capture(decoded)
         final_payload = self._final_payload(decoded)
-        output = self._final_output(decoded, final_payload)
+        output, matched = self._final_output(decoded, final_payload)
         kwargs = self._extract_optional_fields(final_payload) if final_payload is not None else {}
         stream_tool_calls = self._extract_stream_tool_calls(decoded)
         if stream_tool_calls:
@@ -347,7 +436,7 @@ class StreamingHttpTarget(BaseTarget):
             )
             if reconstructed is not None:
                 kwargs["messages"] = reconstructed
-        return output, kwargs, metadata_extra, final_payload
+        return output, kwargs, metadata_extra, final_payload, matched
 
     def _capture(self, decoded: list[tuple[str, object]]) -> dict | None:
         """Capture SSE events grouped and as a chronological timeline.
@@ -397,21 +486,25 @@ class StreamingHttpTarget(BaseTarget):
                 return payload
         return json_payloads[-1]
 
-    def _final_output(self, decoded: list[tuple[str, object]], final_payload: object | None) -> str | dict | list:
+    def _final_output(
+        self, decoded: list[tuple[str, object]], final_payload: object | None
+    ) -> tuple[str | dict | list, bool]:
         if self.output_event is not None:
             payloads = [p for name, p in decoded if name == self.output_event]
             if not payloads:
-                return ""
+                return "", False
             last = payloads[-1]
             if isinstance(last, (dict, list)):
                 result = extract_path(last, self.output_path)
-                return result if result is not None else ""
-            return last
+                if result is None:
+                    return "", False
+                return result, True
+            return last, True
 
         if isinstance(final_payload, (dict, list)):
             result = extract_path(final_payload, self.output_path)
             if result is not None:
-                return result
+                return result, True
             # There were structured payloads but none carried output_path — the
             # answer isn't auto-locatable. Fail visibly (empty) rather than
             # grading against a trailing envelope/telemetry blob.
@@ -421,11 +514,14 @@ class StreamingHttpTarget(BaseTarget):
                 "output_event to select the event that carries the answer.",
                 self.output_path,
             )
-            return ""
+            return "", False
 
         # No structured payloads at all → token/text stream: accumulate text.
+        # Non-empty text is a match. An empty accumulation did not satisfy the
+        # selector, which strict onboarding reports instead of scoring blanks.
         texts = [p for _name, p in decoded if isinstance(p, str)]
-        return "".join(texts)
+        text = "".join(texts)
+        return text, bool(text)
 
     def _extract_output(self, response_body: object, content_type: str) -> str | dict | list:
         if self.output_path == "$" and "text/" in content_type:
@@ -591,6 +687,43 @@ def _is_tool_result(entry: dict) -> bool:
     has_input = entry.get("arguments") is not None or entry.get("input") is not None
     has_output = entry.get("output") is not None or entry.get("result") is not None
     return has_output and not has_input
+
+
+def _remember_success(exchange: HttpExchange, response: object, raw: str) -> None:
+    status = status_code_of(response)
+    if status is not None:
+        exchange.status = status
+    exchange.response_headers = header_items(getattr(response, "headers", None))
+    exchange.response_body_text = raw[:CAPTURE_LIMIT]
+    exchange.category = None
+    exchange.transport_cause = None
+
+
+def _streaming_exception_message(exchange: HttpExchange, exc: BaseException) -> str:
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None) if response is not None else None
+    if isinstance(status, int):
+        text = getattr(response, "text", "")
+        if not isinstance(text, str):
+            text = ""
+        return apply_status_failure(exchange, status, text, header_items(getattr(response, "headers", None)), exc)
+    return apply_transport_failure(exchange, exc)
+
+
+async def _read_bounded_text(response: object) -> str:
+    """Read an error body up to the capture limit. Success streams are read in full."""
+    aiter_text = getattr(response, "aiter_text", None)
+    if callable(aiter_text):
+        chunks: list[str] = []
+        size = 0
+        async for chunk in aiter_text():
+            chunks.append(chunk)
+            size += len(chunk)
+            if size >= CAPTURE_LIMIT:
+                break
+        return "".join(chunks)
+    text = getattr(response, "text", "")
+    return text if isinstance(text, str) else ""
 
 
 def _get_content_type(response: object) -> str:

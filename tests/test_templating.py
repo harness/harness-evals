@@ -214,3 +214,42 @@ def test_env_placeholder_bare_env_raises() -> None:
     g = Golden(input="q")
     with pytest.raises(ValueError, match="requires a variable name"):
         render_request_body({"v": "{{env}}"}, g)
+
+
+@pytest.mark.unit
+def test_header_provenance_marks_env_and_golden(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets.templating import render_headers_with_provenance
+
+    monkeypatch.setenv("API_TOKEN", "super-secret-value")
+    rendered, uses, secrets = render_headers_with_provenance(
+        {
+            "Authorization": "Bearer {{env.API_TOKEN}}",
+            "X-User": "{{input.user}}",
+            "X-Trace": "plain",
+        },
+        Golden(input={"user": "alice"}),
+    )
+
+    assert rendered["Authorization"] == "Bearer super-secret-value"
+    assert rendered["X-User"] == "alice"
+    assert uses["Authorization"][0].kind == "env"
+    assert uses["Authorization"][0].env_var == "API_TOKEN"
+    assert uses["X-User"][0].kind == "golden"
+    assert "X-Trace" not in uses
+    assert secrets == ["super-secret-value"]
+
+
+@pytest.mark.unit
+def test_body_provenance_collects_env_secret_used_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets.templating import render_request_body_with_provenance
+
+    monkeypatch.setenv("API_TOKEN", "super-secret-value")
+    body, secrets = render_request_body_with_provenance(
+        {"token": "{{env.API_TOKEN}}", "copy": "id {{env.API_TOKEN}}", "q": "{{input}}"},
+        Golden(input="hello"),
+    )
+
+    assert body["token"] == "super-secret-value"
+    assert body["copy"] == "id super-secret-value"
+    assert body["q"] == "hello"
+    assert secrets == ["super-secret-value", "super-secret-value"]

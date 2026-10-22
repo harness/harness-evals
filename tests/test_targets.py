@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import ssl
 import time
-from urllib.error import URLError
+from email.message import EmailMessage
+from io import BytesIO
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -17,13 +21,18 @@ from harness_evals.errors import TargetInvocationError
 from harness_evals.llm.base import BaseLLM
 from harness_evals.prompts.template import PromptTemplate
 from harness_evals.targets import (
+    HTTP_DIAGNOSTIC_METADATA_KEY,
     ApiKeyAuth,
     BaseTarget,
     BasicAuth,
     BearerAuth,
+    HttpFailureCategory,
     HttpTarget,
     NoAuth,
     PromptTarget,
+    TransportCause,
+    classify_status,
+    classify_transport,
 )
 
 # ---------------------------------------------------------------------------
@@ -789,3 +798,300 @@ async def test_http_target_applies_bearer_auth(monkeypatch: pytest.MonkeyPatch) 
 def test_targets_are_registered() -> None:
     assert plugins.target("prompt") is PromptTarget
     assert plugins.target("http") is HttpTarget
+
+
+def _http_error(code: int, body: str, headers: dict[str, str] | None = None) -> HTTPError:
+    message = EmailMessage()
+    for key, value in (headers or {"Content-Type": "application/json"}).items():
+        message[key] = value
+    return HTTPError("http://localhost:8080/run", code, "error", message, BytesIO(body.encode()))
+
+
+def _patch_http_error(monkeypatch: pytest.MonkeyPatch, error: HTTPError) -> list[Request]:
+    from harness_evals.targets import http as target_http
+
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured.append(request)
+        raise error
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    return captured
+
+
+# ---------------------------------------------------------------------------
+# Failure classification
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_classify_status_uses_closed_sets() -> None:
+    assert classify_status(401) is HttpFailureCategory.AUTHENTICATION
+    assert classify_status(403) is HttpFailureCategory.AUTHENTICATION
+    assert classify_status(407) is HttpFailureCategory.AUTHENTICATION
+    assert classify_status(400) is HttpFailureCategory.REQUEST
+    assert classify_status(405) is HttpFailureCategory.REQUEST
+    assert classify_status(409) is HttpFailureCategory.REQUEST
+    assert classify_status(415) is HttpFailureCategory.REQUEST
+    assert classify_status(422) is HttpFailureCategory.REQUEST
+    assert classify_status(500) is HttpFailureCategory.SERVER
+    assert classify_status(503) is HttpFailureCategory.SERVER
+    assert classify_status(404) is None
+    assert classify_status(408) is None
+    assert classify_status(429) is None
+    assert classify_status(200) is None
+
+
+@pytest.mark.unit
+def test_classify_transport_does_not_guess() -> None:
+    assert classify_transport(socket.gaierror(8, "nodename nor servname provided, or not known")) is TransportCause.DNS
+    assert classify_transport(URLError("Name or service not known")) is TransportCause.DNS
+    assert classify_transport(ConnectionRefusedError()) is TransportCause.CONNECTION_REFUSED
+    assert classify_transport(URLError("Connection refused")) is TransportCause.CONNECTION_REFUSED
+    assert classify_transport(TimeoutError("timed out")) is TransportCause.TIMEOUT
+    assert classify_transport(ssl.SSLError("CERTIFICATE_VERIFY_FAILED")) is TransportCause.TLS
+    assert classify_transport(OSError("boom-unclassified")) is None
+
+
+@pytest.mark.unit
+async def test_http_400_is_request_not_authentication(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _patch_http_error(monkeypatch, _http_error(400, '{"error":"missing field name"}'))
+    # The same HTTPError cannot be re-read, so retries must not happen.
+    target = HttpTarget(url="http://localhost:8080/run", retries=2, backoff_s=0.01)
+
+    with pytest.raises(TargetInvocationError, match="missing field name") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    message = str(exc_info.value).lower()
+    assert "http 400" in message
+    assert "category=request" in message
+    assert "advisory likely cause" in message
+    assert "authentication" not in message
+    assert exc_info.value.diagnostic is None
+    assert len(calls) == 1
+
+
+@pytest.mark.unit
+async def test_http_401_is_authentication_and_keeps_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_http_error(monkeypatch, _http_error(401, "denied"))
+    target = HttpTarget(url="http://localhost:8080/run", retries=0)
+
+    with pytest.raises(TargetInvocationError, match="denied") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    message = str(exc_info.value)
+    assert "HTTP 401" in message
+    assert "category=authentication" in message
+    assert "response body: denied" in message
+
+
+@pytest.mark.unit
+async def test_http_404_is_not_given_a_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _patch_http_error(monkeypatch, _http_error(404, "no such route"))
+    target = HttpTarget(url="http://localhost:8080/run", retries=2, backoff_s=0.01)
+
+    with pytest.raises(TargetInvocationError, match="no such route") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    message = str(exc_info.value)
+    assert "HTTP 404" in message
+    assert "category=" not in message
+    assert "advisory likely cause" not in message
+    assert len(calls) == 1
+
+
+@pytest.mark.unit
+async def test_http_500_keeps_last_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    errors = iter([_http_error(500, "first-body"), _http_error(500, "second-body-kept")])
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        raise next(errors)
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    target = HttpTarget(url="http://localhost:8080/run", retries=1, backoff_s=0.01)
+
+    with pytest.raises(TargetInvocationError, match="second-body-kept") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    assert "HTTP 500" in str(exc_info.value)
+    assert "category=server" in str(exc_info.value)
+    assert "first-body" not in str(exc_info.value)
+
+
+@pytest.mark.unit
+async def test_http_invalid_json_is_response_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    calls = 0
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        nonlocal calls
+        calls += 1
+        return FakeHTTPResponse("not-json", content_type="application/json")
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    target = HttpTarget(url="http://localhost:8080/run", retries=2)
+
+    with pytest.raises(TargetInvocationError, match="not-json") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    assert "category=response_parse" in str(exc_info.value)
+    assert calls == 1
+
+
+@pytest.mark.unit
+async def test_http_missing_selector_stays_empty_unless_strict(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"other": "value"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    legacy = HttpTarget(url="http://localhost:8080/run", output_path="$.missing")
+    result = await legacy.ainvoke(Golden(input="q"))
+    assert result.output == ""
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    strict = HttpTarget(url="http://localhost:8080/run", output_path="$.missing", strict_onboarding=True)
+    with pytest.raises(TargetInvocationError, match="missing_response_path") as exc_info:
+        await strict.ainvoke(Golden(input="q"))
+    assert "selector: $.missing" in str(exc_info.value)
+    assert "authentication" not in str(exc_info.value).lower()
+
+
+@pytest.mark.unit
+async def test_http_diagnostic_redacts_env_secret_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    secret = "super-secret-value"
+    monkeypatch.setenv("API_TOKEN", secret)
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured.append(request)
+        raise _http_error(
+            400,
+            json.dumps({"echo": secret}),
+            {"Content-Type": "application/json", "Set-Cookie": f"session={secret}", "X-Request-Id": "req-visible"},
+        )
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        headers={
+            "Authorization": "Bearer {{env.API_TOKEN}}",
+            "Proxy-Authorization": "Basic proxypasswordvalue",
+            "X-Trace": "trace-visible",
+            "X-User": "{{input.user}}",
+        },
+        body_template={
+            "token": "{{env.API_TOKEN}}",
+            "note": f"prefix {secret} suffix",
+            "user": "{{input.user}}",
+        },
+        retries=0,
+        record_diagnostics=True,
+    )
+
+    with pytest.raises(TargetInvocationError) as exc_info:
+        await target.ainvoke(Golden(input={"user": "alice"}))
+
+    diagnostic = exc_info.value.diagnostic
+    assert diagnostic is target.last_diagnostic
+    payload = json.dumps(diagnostic.to_dict())
+    assert secret not in payload
+    assert "proxypasswordvalue" not in payload
+    assert "trace-visible" in payload
+    assert "alice" in payload
+    assert diagnostic.response_status == 400
+    assert diagnostic.category == "request"
+    assert diagnostic.method == "POST"
+    assert diagnostic.url == "http://localhost:8080/run"
+    by_name = {header.name: header for header in diagnostic.headers}
+    assert by_name["Authorization"].redacted is True
+    assert by_name["Authorization"].value == "[REDACTED]"
+    assert by_name["Authorization"].provenance[0].kind == "env"
+    assert by_name["Authorization"].provenance[0].env_var == "API_TOKEN"
+    assert by_name["Proxy-Authorization"].redacted is True
+    assert by_name["X-Trace"].value == "trace-visible"
+    assert by_name["X-Trace"].provenance[0].kind == "literal"
+    assert by_name["X-Trace"].redacted is False
+    assert by_name["X-User"].provenance[0].kind == "golden"
+    assert by_name["Content-Type"].provenance[0].kind == "default"
+    response_headers = dict(diagnostic.response_headers)
+    assert response_headers["Set-Cookie"] == "[REDACTED]"
+    assert response_headers["X-Request-Id"] == "req-visible"
+    assert secret in captured[0].data.decode()
+
+
+@pytest.mark.unit
+async def test_http_diagnostic_redacts_auth_material_copied_into_body_and_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness_evals.targets import http as target_http
+
+    secret = "query-secret-value"
+    captured: list[Request] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        captured.append(request)
+        return FakeHTTPResponse(json.dumps({"output": "ok"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        auth=ApiKeyAuth(key=secret, header="X-API-Key", location="query"),
+        body_template={"echo": secret, "q": "{{input}}"},
+        record_diagnostics=True,
+    )
+    result = await target.ainvoke(Golden(input="hello"))
+
+    diagnostic = result.metadata[HTTP_DIAGNOSTIC_METADATA_KEY]
+    assert secret not in json.dumps(diagnostic)
+    assert diagnostic["extracted_value"] == "ok"
+    assert "[REDACTED]" in diagnostic["url"]
+    assert secret in captured[0].full_url
+
+
+@pytest.mark.unit
+async def test_short_env_secret_does_not_redact_unrelated_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import http as target_http
+
+    monkeypatch.setenv("SHORT_SECRET", "ab")
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        return FakeHTTPResponse(json.dumps({"output": "abbot"}))
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        body_template={"token": "{{env.SHORT_SECRET}}", "note": "abbot"},
+        output_path="$.output",
+        record_diagnostics=True,
+    )
+    result = await target.ainvoke(Golden(input="q"))
+    body = result.metadata[HTTP_DIAGNOSTIC_METADATA_KEY]["body"]
+    assert "[REDACTED]" in body
+    assert "abbot" in body
+
+
+@pytest.mark.unit
+async def test_http_response_body_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets.http_diagnostics import DISPLAY_LIMIT
+
+    _patch_http_error(monkeypatch, _http_error(422, "y" * (DISPLAY_LIMIT + 80)))
+    target = HttpTarget(url="http://localhost:8080/run", retries=0, record_diagnostics=True)
+
+    with pytest.raises(TargetInvocationError) as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    body = exc_info.value.diagnostic.response_body
+    assert body.startswith("y" * 20)
+    assert "truncated" in body
+    assert len(body) < DISPLAY_LIMIT + 80
+    assert "category=request" in str(exc_info.value)

@@ -12,8 +12,11 @@ class HarnessEvalsError(Exception):
 class TargetInvocationError(HarnessEvalsError):
     """Raised when a target cannot produce an EvalCase."""
 
-    def __init__(self, message: str, *, latency_ms: float | None = None) -> None:
+    def __init__(self, message: str, *, latency_ms: float | None = None, diagnostic: Any | None = None) -> None:
         self.latency_ms = latency_ms
+        # Opt-in HttpDiagnostic. None unless the target was constructed with
+        # record_diagnostics=True. Typed as Any so this module stays vendor-free.
+        self.diagnostic = diagnostic
         super().__init__(message)
 
 

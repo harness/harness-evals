@@ -5,6 +5,25 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.6]
+
+### Added
+
+- **HTTP target diagnostics**: `HttpTarget` and `StreamingHttpTarget` report
+  authentication (`401`/`403`/`407`), request/body (`400`/`405`/`409`/`415`/`422`),
+  transport (DNS, connection refused, TLS, timeout), remote `5xx`, response-parse,
+  and missing response-path failures. Statuses outside those sets keep the numeric
+  code and a bounded body without a guessed cause. Likely-cause text is advisory.
+  `strict_onboarding=True` raises when the primary response selector matches
+  nothing; the default still returns an empty output. `record_diagnostics=True`
+  attaches a redacted `HttpDiagnostic` (method, final URL, rendered body, header
+  names, non-secret header values, header provenance, response status, redacted
+  response headers, truncated response body, and extracted value) on the target,
+  on `TargetInvocationError.diagnostic`, and at
+  `EvalCase.metadata["http_diagnostic"]`. Credential headers and
+  environment-sourced values are redacted by provenance, including when the same
+  value is repeated in a body field.
+
 ## [0.25.5]
 
 ### Added

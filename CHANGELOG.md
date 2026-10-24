@@ -5,6 +5,13 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.6]
+
+### Fixed
+
+- Require `certifi>=2026.10.19` so installs using network-capable extras do not
+  resolve a CA bundle affected by the eMudhra intermediate compromise.
+
 ## [0.25.5]
 
 ### Added

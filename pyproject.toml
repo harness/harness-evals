@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "harness-evals"
-version = "0.25.5"
+version = "0.25.6"
 description = "Open-source AI evaluation framework for LLM agents, prompts, and structured outputs"
 readme = "README.md"
 license = "Apache-2.0"
@@ -31,6 +31,7 @@ deepdiff = ">=7.0"
 jsonschema = ">=4.0"
 jsonpath-ng = ">=1.6"
 pyyaml = ">=6.0"
+certifi = ">=2026.10.19"
 openai = { version = ">=1.40", optional = true }
 anthropic = { version = ">=0.60", optional = true }  # >=0.60 for AWS Bedrock API-key (bearer) auth
 opentelemetry-sdk = { version = ">=1.20", optional = true }

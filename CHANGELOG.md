@@ -5,6 +5,20 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1]
+
+### Fixed
+
+- Trace adaptation tolerates non-object attributes and ignores invalid token,
+  cost, and duration telemetry without crashing or truncating fractional token
+  counts. Valid token dimensions and observed zeroes remain available in both
+  full and selective adaptation; invalid telemetry remains unobserved.
+- Trace latency uses the latest observed span end, including overlapping
+  parents, rather than the end of the last-starting span. Invalid timestamps
+  no longer inflate latency, and missing durations are not fabricated as zero.
+- Document trace/span projection, applicability limits, telemetry validation,
+  and the tag-triggered release workflow.
+
 ## [0.26.0]
 
 ### Added

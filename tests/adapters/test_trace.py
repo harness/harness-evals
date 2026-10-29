@@ -3,6 +3,7 @@ langfuse-marker, and span_type dialects, plus the unscorable-content signal."""
 
 import json
 from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -182,6 +183,140 @@ class TestClassifyDialects:
         span = dict(_semconv_root())
         span["attributes"] = json.loads(span["attributes"])
         assert classify_span(span) == SpanType.AGENT_ROOT
+
+
+class TestTelemetryValidation:
+    @pytest.mark.parametrize("attributes", [[], [1], True, 5, "null", "[]", "[1]", '"text"', "true", "5"])
+    def test_non_object_attributes_do_not_break_classification_or_adaptation(self, attributes: Any) -> None:
+        span = {**_span("llm", parent="root", span_type="llm"), "attributes": attributes}
+
+        assert classify_span(span) == SpanType.LLM_TURN
+        case, _ = spans_to_eval_case([span])
+
+        assert case.output == ""
+        assert case.token_count is None
+        assert case.cost_usd is None
+        assert span["attributes"] == attributes
+
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    @pytest.mark.parametrize(
+        "invalid",
+        [True, False, -1, -0.5, 2.5, float("nan"), float("inf"), -float("inf"), "NaN", "²", [], {}],
+    )
+    def test_invalid_token_dimension_does_not_discard_valid_usage(self, selective: bool, invalid: Any) -> None:
+        turn = _semconv_llm("answer")
+        turn["input_tokens"] = invalid
+        metrics = [TokenCostMetric(), TurnTokenCostMetric()] if selective else None
+
+        case, _ = spans_to_eval_case([turn], metrics=metrics)
+
+        assert case.token_count == 5
+        assert case.messages[-1].token_count == 5
+        if not selective:
+            assert case.input_tokens is None
+            assert case.output_tokens == 5
+
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    @pytest.mark.parametrize("tokens", [0, "0", 0.0, 5, "5", 5.0])
+    def test_integral_token_values_and_observed_zero_are_preserved(
+        self, selective: bool, tokens: int | float | str
+    ) -> None:
+        turn = _semconv_llm("answer")
+        turn["input_tokens"] = tokens
+        turn["output_tokens"] = tokens
+        metrics = [TokenCostMetric(), TurnTokenCostMetric()] if selective else None
+
+        case, _ = spans_to_eval_case([turn], metrics=metrics)
+
+        assert case.token_count == int(tokens) * 2
+        assert case.messages[-1].token_count == int(tokens) * 2
+
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    @pytest.mark.parametrize("invalid", [True, False, float("nan"), float("inf"), -float("inf"), "NaN", "Infinity"])
+    def test_invalid_cost_does_not_override_observed_root_cost(self, selective: bool, invalid: Any) -> None:
+        root = _span("root", attrs={"gen_ai.usage.cost": 0.07})
+        turn = _span("llm", parent="root", span_type="llm", attrs={"gen_ai.usage.cost": invalid})
+
+        case, _ = spans_to_eval_case([root, turn], metrics=[CostEfficiencyMetric()] if selective else None)
+
+        assert case.cost_usd == 0.07
+
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    @pytest.mark.parametrize("invalid", [True, False, float("nan"), float("inf"), -1, "invalid"])
+    def test_invalid_duration_remains_unobserved(self, selective: bool, invalid: Any) -> None:
+        root = {**_semconv_root(), "duration_ms": invalid}
+        turn = {**_semconv_llm("answer"), "duration_ms": invalid}
+        metrics = [LatencyMetric(), TurnLatencyMetric()] if selective else None
+
+        case, _ = spans_to_eval_case([root, turn], metrics=metrics)
+
+        assert case.latency_ms is None
+        assert case.messages[-1].latency_ms is None
+
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    def test_zero_duration_is_observed(self, selective: bool) -> None:
+        root = {**_semconv_root(), "duration_ms": 0}
+        case, _ = spans_to_eval_case([root], metrics=[LatencyMetric()] if selective else None)
+
+        assert case.latency_ms == 0
+
+    @pytest.mark.parametrize("scope", ["trace", "span"])
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    def test_latency_uses_latest_end_not_latest_start(self, scope: str, selective: bool) -> None:
+        root = {**_semconv_root(), "duration_ms": 10000}
+        turn = {
+            **_semconv_llm("answer"),
+            "start_timestamp": "2026-08-03T10:00:01Z",
+            "duration_ms": 100,
+        }
+        metrics = [LatencyMetric()] if selective else None
+        if scope == "span":
+            case, _ = spans_to_eval_case_for_span([turn, root], "root", metrics=metrics)
+        else:
+            case, _ = spans_to_eval_case([turn, root], metrics=metrics)
+
+        assert case.latency_ms == pytest.approx(10000)
+        assert LatencyMetric(max_ms=5000).measure(case).value == 0
+
+    @pytest.mark.parametrize("timestamp", [None, "invalid", True, float("nan"), float("inf")])
+    def test_invalid_start_does_not_inflate_trace_latency(self, timestamp: Any) -> None:
+        root = {**_semconv_root(), "duration_ms": 10000}
+        turn = {**_semconv_llm("answer"), "start_timestamp": timestamp, "duration_ms": 100}
+
+        case, _ = spans_to_eval_case([root, turn], metrics=[LatencyMetric()])
+
+        assert case.latency_ms == pytest.approx(10000)
+
+    @pytest.mark.parametrize("scope", ["trace", "span"])
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    @pytest.mark.parametrize("timestamp", [None, "invalid", True, float("nan"), float("inf")])
+    def test_untimed_root_duration_bounds_child_envelope(self, scope: str, selective: bool, timestamp: Any) -> None:
+        root = {**_semconv_root(), "start_timestamp": timestamp, "duration_ms": 10000}
+        turn = {**_semconv_llm("answer"), "duration_ms": 100}
+        metrics = [LatencyMetric()] if selective else None
+        if scope == "span":
+            case, _ = spans_to_eval_case_for_span([root, turn], "root", metrics=metrics)
+        else:
+            case, _ = spans_to_eval_case([root, turn], metrics=metrics)
+
+        assert case.latency_ms == pytest.approx(10000)
+        assert LatencyMetric(max_ms=5000).measure(case).value == 0
+
+    def test_unobserved_durations_do_not_become_zero(self) -> None:
+        root = _semconv_root()
+        turn = {**_semconv_llm("answer"), "start_timestamp": "2026-08-03T10:00:01Z"}
+
+        case, _ = spans_to_eval_case([root, turn], metrics=[LatencyMetric()])
+
+        assert case.latency_ms is None
+
+    def test_unix_epoch_is_a_valid_start(self) -> None:
+        root = {**_semconv_root(), "start_timestamp": 0, "duration_ms": 10000}
+        turn = {**_semconv_llm("answer"), "start_timestamp": 1, "duration_ms": 100}
+
+        case, _ = spans_to_eval_case([root, turn], metrics=[LatencyMetric()])
+
+        assert case.latency_ms == pytest.approx(10000)
 
 
 class TestEvalCaseParity:

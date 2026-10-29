@@ -29,6 +29,7 @@ import ast
 import enum
 import json
 import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -61,14 +62,7 @@ class SpanType(enum.Enum):
 def normalize_span(span: dict[str, Any]) -> dict[str, Any]:
     """Normalize one span row: attributes JSON string → dict."""
     span = dict(span)
-    attrs = span.get("attributes")
-    if isinstance(attrs, str):
-        try:
-            span["attributes"] = json.loads(attrs or "{}")
-        except (json.JSONDecodeError, TypeError):
-            span["attributes"] = {}
-    elif attrs is None:
-        span["attributes"] = {}
+    span["attributes"] = _attrs(span)
     return span
 
 
@@ -76,10 +70,10 @@ def _attrs(span: dict[str, Any]) -> dict[str, Any]:
     attrs = span.get("attributes")
     if isinstance(attrs, str):
         try:
-            return json.loads(attrs or "{}")
+            attrs = json.loads(attrs or "{}")
         except (json.JSONDecodeError, TypeError):
             return {}
-    return attrs or {}
+    return attrs if isinstance(attrs, dict) else {}
 
 
 def classify_span(span: dict[str, Any]) -> SpanType:
@@ -375,16 +369,10 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
     return ToolCall(name=name, input=tool_input, output=tool_output)
 
 
-def _get_token_counts(span: dict[str, Any]) -> tuple[int, int]:
+def _get_token_counts(span: dict[str, Any]) -> tuple[int | None, int | None]:
     """Input/output tokens: narrow columns win, gen_ai.usage.* attrs fallback."""
     input_tokens, output_tokens = _raw_token_counts(span)
-    input_tokens = input_tokens or 0
-    output_tokens = output_tokens or 0
-    if isinstance(input_tokens, str):
-        input_tokens = int(input_tokens) if input_tokens.isdigit() else 0
-    if isinstance(output_tokens, str):
-        output_tokens = int(output_tokens) if output_tokens.isdigit() else 0
-    return int(input_tokens), int(output_tokens)
+    return _parse_token_count(input_tokens), _parse_token_count(output_tokens)
 
 
 def _raw_token_counts(span: dict[str, Any]) -> tuple[Any, Any]:
@@ -399,22 +387,27 @@ def _raw_token_counts(span: dict[str, Any]) -> tuple[Any, Any]:
     return input_tokens, output_tokens
 
 
-def _is_valid_token_count(value: Any) -> bool:
-    """Return whether a reported token value can safely represent usage."""
-    if isinstance(value, str):
-        return value.isdigit()
-    if isinstance(value, bool):
-        return False
+def _parse_token_count(value: Any) -> int | None:
+    """Preserve observed integers without truncating or inventing usage."""
+    if isinstance(value, bool) or (isinstance(value, str) and not value.isdecimal()):
+        return None
     try:
-        return int(value) >= 0
-    except (TypeError, ValueError):
-        return False
+        parsed = int(value)
+        if parsed < 0 or (not isinstance(value, str) and parsed != value):
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed
 
 
-def _has_token_usage(span: dict[str, Any]) -> tuple[bool, bool]:
-    """Return whether each token dimension was validly reported, including zero."""
-    input_tokens, output_tokens = _raw_token_counts(span)
-    return _is_valid_token_count(input_tokens), _is_valid_token_count(output_tokens)
+def _nonnegative_finite_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) and parsed >= 0 else None
 
 
 def _observed_token_count(span: dict[str, Any]) -> int | None:
@@ -429,12 +422,8 @@ def _trace_cost_usd(spans: list[dict[str, Any]]) -> float | None:
     saw_child_cost = False
     saw_root_cost = False
     for span in spans:
-        raw_cost = _attrs(span).get("gen_ai.usage.cost")
-        try:
-            cost = float(raw_cost)
-        except (TypeError, ValueError):
-            continue
-        if cost < 0:
+        cost = _nonnegative_finite_number(_attrs(span).get("gen_ai.usage.cost"))
+        if cost is None:
             continue
         if classify_span(span) == SpanType.AGENT_ROOT:
             root_cost += cost
@@ -443,26 +432,32 @@ def _trace_cost_usd(spans: list[dict[str, Any]]) -> float | None:
             child_cost += cost
             saw_child_cost = True
     if saw_child_cost:
-        return child_cost
+        return _nonnegative_finite_number(child_cost)
     if saw_root_cost:
-        return root_cost
+        return _nonnegative_finite_number(root_cost)
     return None
 
 
-def _sort_key(span: dict[str, Any]) -> float:
+def _span_start_seconds(span: dict[str, Any]) -> float | None:
     ts = span.get("start_timestamp")
-    if isinstance(ts, datetime):
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        return ts.timestamp()
-    if isinstance(ts, str) and ts:
-        try:
-            return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            pass
-    if isinstance(ts, (int, float)):
-        return float(ts)
-    return 0.0
+    try:
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if isinstance(ts, datetime):
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            parsed = ts.timestamp()
+        elif isinstance(ts, (int, float)) and not isinstance(ts, bool):
+            parsed = float(ts)
+        else:
+            return None
+    except (ValueError, OverflowError, OSError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _sort_key(span: dict[str, Any]) -> float:
+    return _span_start_seconds(span) or 0.0
 
 
 def _decode_telemetry_value(value: Any) -> Any:
@@ -838,10 +833,9 @@ def _sum_token_usage(spans: list[dict[str, Any]]) -> _TokenUsage:
     output_total: int | None = None
     for span in spans:
         input_tokens, output_tokens = _get_token_counts(span)
-        has_input, has_output = _has_token_usage(span)
-        if has_input:
+        if input_tokens is not None:
             input_total = (input_total or 0) + input_tokens
-        if has_output:
+        if output_tokens is not None:
             output_total = (output_total or 0) + output_tokens
     return _TokenUsage(input_tokens=input_total, output_tokens=output_total)
 
@@ -927,30 +921,23 @@ def spans_to_eval_case_for_span(
 
 
 def _compute_total_duration(sorted_spans: list[dict[str, Any]]) -> float | None:
-    """Total trace duration: first span start to last span end."""
-    if not sorted_spans:
-        return None
-    t0 = _sort_key(sorted_spans[0])
-    t1 = _sort_key(sorted_spans[-1])
-    last_duration = sorted_spans[-1].get("duration_ms") or 0
-    if t1 > t0 > 0:
-        return (t1 - t0) * 1000 + float(last_duration)
-    # Fallback: agent root span duration
-    for span in sorted_spans:
-        if classify_span(span) == SpanType.AGENT_ROOT:
-            d = span.get("duration_ms")
-            if d:
-                return float(d)
-    return None
+    """Earliest valid start to latest observed end, bounded below by root durations."""
+    durations = [
+        duration
+        for span in sorted_spans
+        if classify_span(span) == SpanType.AGENT_ROOT and (duration := _span_duration_ms(span)) is not None
+    ]
+    timed_spans = [(start, span) for span in sorted_spans if (start := _span_start_seconds(span)) is not None]
+    if timed_spans:
+        first_start = min(start for start, _ in timed_spans)
+        durations.extend(
+            (start - first_start) * 1000 + duration
+            for start, span in timed_spans
+            if (duration := _span_duration_ms(span)) is not None
+        )
+    return _nonnegative_finite_number(max(durations)) if durations else None
 
 
 def _span_duration_ms(span: dict[str, Any]) -> float | None:
-    """Return a non-negative span duration when the source reported one."""
-    duration = span.get("duration_ms")
-    if duration is None:
-        return None
-    try:
-        parsed = float(duration)
-    except (TypeError, ValueError):
-        return None
-    return parsed if parsed >= 0 else None
+    """Return a finite non-negative duration when the source reported one."""
+    return _nonnegative_finite_number(span.get("duration_ms"))

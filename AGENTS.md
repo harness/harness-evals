@@ -4,7 +4,7 @@
 
 **harness-evals** is an open-source AI evaluation framework for LLM agents, prompts, and structured outputs. It provides a `pip install`-able scoring engine with 70+ metrics across deterministic, structural, operational, reliability, predictability, MCP, similarity, LLM-judged, RAG, grounding, safety, agent, conversation, and security categories.
 
-**Core principle**: An eval always produces a `Score`. Every metric is a single class with a `measure()` method.
+**Core principle**: Every applicable metric produces a `Score`. A metric may return `None` to skip a case; skipped results are excluded from aggregation, not converted to failed or zero scores. Every metric is a single class with a `measure()` method.
 
 **Data flow**: `Golden` (authored) + agent output -> `EvalCase` (evaluated) -> `Score` (result)
 
@@ -58,15 +58,16 @@ Ruff handles both formatting and linting (replaces black + flake8 + isort).
 
 ## Publishing
 
-The package is published automatically via the Harness CI pipeline (`.harness/publish.yaml`) when a version change is detected on `main`.
+The checked-in release workflow is `.github/workflows/publish.yml`. It runs on
+`v*.*.*` tags, tests the package, verifies that the tag matches the version in
+`pyproject.toml`, and publishes to PyPI.
 
-**How it works**: The pipeline compares `version` in `pyproject.toml` at `HEAD` vs `HEAD~1`. If the version changed, it builds and publishes to `harness-pip-internal`.
-
-**You MUST bump the version in `pyproject.toml`** whenever your changes should be released. If you don't bump the version, the package will NOT be published — even if code changes are merged.
+**Bump the package version** for release-worthy changes using `poetry version`.
+A version bump or merge alone does not publish a release; a matching tag is
+also required. Do not create a release tag unless explicitly requested.
 
 ```bash
-# In pyproject.toml, update:
-version = "X.Y.Z"  # Bump this to trigger a publish
+poetry version patch  # or minor/major, according to semver
 ```
 
 Follow semver: patch for fixes, minor for new metrics/features, major for breaking changes.
@@ -110,7 +111,7 @@ harness-evals/
 ├── PLAN.md                          # Full vision spec
 ├── CHANGELOG.md                     # Version history
 ├── LICENSE                          # Apache 2.0
-├── .harness/publish.yaml            # CI pipeline for publishing
+├── .github/workflows/publish.yml    # Tag-triggered release workflow
 │
 ├── src/harness_evals/
 │   ├── __init__.py                  # Public API re-exports
@@ -347,6 +348,31 @@ def test_my_metric_failure():
 ```
 
 6. **Run tests** — `pytest tests/ -v`
+
+## Trace Adapter Contracts
+
+- Shared flat-span adaptation lives in `adapters/trace.py`; importer hydration
+  in `importers/otel.py` is a separate path. Do not assume changing one changes
+  the other.
+- Resolve configured metrics before requesting selective adaptation. Both
+  required and optional `eval_inputs` are projected; `metrics=None` requests all
+  fields, while an empty iterable requests none.
+- Applicability is a source-capability check, not proof of usable case values.
+  Do not reject all metrics because output is empty. Group is reserved until
+  grouped-trace adaptation exists; never advertise it as supported today.
+- Normalize malformed/non-object attributes without mutating the source row.
+  Validate token dimensions independently before conversion: do not truncate
+  fractions, accept booleans/non-finite values, or replace unknown usage with
+  zero. Preserve genuine zeroes and narrow-column precedence.
+- Costs and durations must be finite and non-negative. Do not sum rolled-up
+  root costs together with observed child costs.
+- Compute trace latency from the latest observed end, not the latest start;
+  overlapping parents can outlive their children. An untimed root's observed
+  duration is still a lower bound on trace latency. Keep missing duration unknown
+  and preserve observed zero duration.
+- Add regressions for full and selective adaptation, invalid/missing/zero
+  telemetry, and span-scoped association. Run `pytest tests/adapters/ -v` plus
+  metric-input/catalog/factory tests, then the full suite before committing.
 
 ## Core Types Reference
 

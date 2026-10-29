@@ -568,6 +568,43 @@ ec = OTELEvalCaseSource.from_spans(collected_spans)
 scores = evaluate(ec, metrics=[...])
 ```
 
+#### Adapt assembled trace or span rows
+
+For flat span rows with `attributes` dictionaries or JSON-encoded objects, use the trace
+adapter directly. Pass configured metrics to materialize their declared inputs:
+
+```python
+from harness_evals.adapters.trace import spans_to_eval_case
+from harness_evals.metrics import LatencyMetric, TokenCostMetric
+
+metrics = [LatencyMetric(), TokenCostMetric()]
+ec, warnings = spans_to_eval_case(collected_spans, metrics=metrics)
+scores = evaluate(ec, metrics=metrics)
+```
+
+Use `spans_to_eval_case_for_span(spans, span_id, metrics=metrics)` for a subtree.
+Omitting `metrics` materializes every supported field; `metrics=[]` requests no
+fields. Span-scoped cases retain their span association even when metadata is
+not requested. This adapter is separate from `OTELEvalCaseSource` hydration.
+
+- Non-object or malformed `attributes` are treated as absent.
+- Token counts must be non-negative integers (including integral numbers and
+  decimal integer strings). Booleans, fractional counts, and non-finite values
+  are ignored; valid input/output dimensions remain usable independently.
+- Cost and duration must be finite, non-negative numbers. Missing or invalid
+  telemetry stays `None`; an observed zero stays zero. Child-span costs take
+  precedence over rolled-up root costs to avoid counting both.
+- Trace latency uses the earliest valid start and latest observed span end,
+  not the end of the last-starting span. Missing durations are not invented;
+  a reported root duration also bounds latency from below when its timestamp is
+  missing or invalid.
+
+A metric's `eval_inputs` describes field dependencies, and `applicability`
+reports source capability, **not** whether a particular trace has usable values.
+Inspect adapter warnings and each metric's missing-data behavior. Empty output
+is not a blanket skip signal: telemetry-only metrics need no answer text.
+Trace and Span scopes are supported; Group remains reserved, not implemented.
+
 Time-window listing and session merge are generic (`lookback_days`,
 `group_by=session_id`). Pass any `TraceCatalog` to list traces; Langfuse is one
 implementation:

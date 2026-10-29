@@ -17,9 +17,10 @@ dialect coalescing for the attribute shapes seen in deployed agent traffic.
 - Token counts coalesce narrow input_tokens/output_tokens columns with the
   gen_ai.usage.* attributes (columns win).
 
-Unscorable-content rule: callers should treat a trace whose adapted
-`eval_case.output` is empty as unscorable and skip it before any metric
-runs (no judge spend, no persisted score).
+Missing-content rule: empty `eval_case.output` is not a blanket skip signal.
+Selective adaptation leaves unrequested output empty, including valid
+telemetry-only cases. Callers must check the inputs their metrics need;
+requested but missing output is reported in the returned warnings.
 """
 
 from __future__ import annotations
@@ -28,10 +29,17 @@ import ast
 import enum
 import json
 import logging
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from harness_evals import EvalCase, Message, ToolCall
+from harness_evals.core.eval_case import EvalCase
+from harness_evals.core.metric import MetricInput, MetricInputs
+from harness_evals.core.types import Message, ToolCall
+
+if TYPE_CHECKING:
+    from harness_evals.core.metric import BaseMetric
 
 logger = logging.getLogger("harness_evals.adapters.trace")
 
@@ -369,18 +377,76 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
 
 def _get_token_counts(span: dict[str, Any]) -> tuple[int, int]:
     """Input/output tokens: narrow columns win, gen_ai.usage.* attrs fallback."""
-    attrs = _attrs(span)
-    input_tokens = span.get("input_tokens")
-    output_tokens = span.get("output_tokens")
-    if input_tokens is None:
-        input_tokens = attrs.get("gen_ai.usage.input_tokens") or 0
-    if output_tokens is None:
-        output_tokens = attrs.get("gen_ai.usage.output_tokens") or 0
+    input_tokens, output_tokens = _raw_token_counts(span)
+    input_tokens = input_tokens or 0
+    output_tokens = output_tokens or 0
     if isinstance(input_tokens, str):
         input_tokens = int(input_tokens) if input_tokens.isdigit() else 0
     if isinstance(output_tokens, str):
         output_tokens = int(output_tokens) if output_tokens.isdigit() else 0
     return int(input_tokens), int(output_tokens)
+
+
+def _raw_token_counts(span: dict[str, Any]) -> tuple[Any, Any]:
+    """Return source token values before coercion, preserving zero."""
+    attrs = _attrs(span)
+    input_tokens = span.get("input_tokens")
+    output_tokens = span.get("output_tokens")
+    if input_tokens is None:
+        input_tokens = attrs.get("gen_ai.usage.input_tokens")
+    if output_tokens is None:
+        output_tokens = attrs.get("gen_ai.usage.output_tokens")
+    return input_tokens, output_tokens
+
+
+def _is_valid_token_count(value: Any) -> bool:
+    """Return whether a reported token value can safely represent usage."""
+    if isinstance(value, str):
+        return value.isdigit()
+    if isinstance(value, bool):
+        return False
+    try:
+        return int(value) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _has_token_usage(span: dict[str, Any]) -> tuple[bool, bool]:
+    """Return whether each token dimension was validly reported, including zero."""
+    input_tokens, output_tokens = _raw_token_counts(span)
+    return _is_valid_token_count(input_tokens), _is_valid_token_count(output_tokens)
+
+
+def _observed_token_count(span: dict[str, Any]) -> int | None:
+    """Return a span total using only validly reported token dimensions."""
+    return _sum_token_usage([span]).total
+
+
+def _trace_cost_usd(spans: list[dict[str, Any]]) -> float | None:
+    """Return observed span cost, preferring child spans over rolled-up roots."""
+    child_cost = 0.0
+    root_cost = 0.0
+    saw_child_cost = False
+    saw_root_cost = False
+    for span in spans:
+        raw_cost = _attrs(span).get("gen_ai.usage.cost")
+        try:
+            cost = float(raw_cost)
+        except (TypeError, ValueError):
+            continue
+        if cost < 0:
+            continue
+        if classify_span(span) == SpanType.AGENT_ROOT:
+            root_cost += cost
+            saw_root_cost = True
+        else:
+            child_cost += cost
+            saw_child_cost = True
+    if saw_child_cost:
+        return child_cost
+    if saw_root_cost:
+        return root_cost
+    return None
 
 
 def _sort_key(span: dict[str, Any]) -> float:
@@ -522,146 +588,286 @@ def spans_to_eval_case(
     spans: list[dict[str, Any]],
     *,
     aggregate_tool_call_attribute_keys: tuple[str, ...] = (),
+    metrics: Iterable[BaseMetric] | None = None,
 ) -> tuple[EvalCase, list[str]]:
     """Convert a list of span dicts into an EvalCase.
 
-    Returns (EvalCase, warnings); warnings mark missing content that may
-    affect metric applicability. An empty `eval_case.output` means the trace
-    is unscorable — callers skip it (no metric runs, no judge spend).
+    Returns (EvalCase, warnings); warnings report requested content that was
+    not observed. Empty ``eval_case.output`` can mean output was not requested
+    or was not observed; it does not make telemetry-only metrics unscorable.
+    Callers must check sufficiency for each metric rather than skip all metrics.
 
     ``aggregate_tool_call_attribute_keys`` is opt-in so callers can map
     source-specific aggregate attributes without embedding their convention in
     the shared adapter.
-    """
-    warnings: list[str] = []
 
+    When ``metrics`` is supplied, only the fields in those metrics'
+    ``eval_inputs`` are materialized from the trace. Internal dependencies,
+    such as message-level tool intents used to reconcile aggregate calls, are
+    still read without materializing unrequested fields. Omitting ``metrics``
+    materializes every field; an empty iterable requests none. Normalization
+    and sorting still process every supplied span.
+    """
     if not spans:
         return EvalCase(input="", output=""), ["No spans found in trace"]
 
-    normalized = [normalize_span(s) for s in spans]
-    sorted_spans = sorted(normalized, key=_sort_key)
+    projection = _TraceProjection.for_metrics(metrics)
+    sorted_spans = sorted((normalize_span(span) for span in spans), key=_sort_key)
+    warnings: list[str] = []
 
-    classified: list[tuple[SpanType, dict[str, Any]]] = []
-    for span in sorted_spans:
-        classified.append((classify_span(span), span))
+    content = _TraceContent(projection)
+    if projection.reads_span_content:
+        for span in sorted_spans:
+            content.add_span(span)
+        content.add_aggregate_tool_calls(sorted_spans, aggregate_tool_call_attribute_keys, warnings)
 
-    user_input: str | None = None
-    last_output: str | None = None
-    messages: list[Message] = []
-    tool_calls: list[ToolCall] = []
-    root_span: dict[str, Any] | None = None
-
-    for span_type, span in classified:
-        if span_type == SpanType.AGENT_ROOT:
-            root_span = span
-            if not user_input:
-                user_input = _extract_input_from_span(span)
-            _append_user_messages(
-                messages,
-                _messages_from_attrs(_attrs(span), ("gen_ai.input.messages", "gen_ai.input_messages"))
-                or _langfuse_messages(_attrs(span).get("langfuse.observation.input")),
-            )
-
-        elif span_type == SpanType.LLM_TURN:
-            if not user_input:
-                user_input = _extract_input_from_span(span)
-            _append_user_messages(
-                messages,
-                _messages_from_attrs(_attrs(span), ("gen_ai.input.messages", "gen_ai.input_messages"))
-                or _langfuse_messages(_attrs(span).get("langfuse.observation.input")),
-            )
-
-            # Tool call intents from chat spans go to the trajectory only —
-            # execute_tool spans are the authoritative record (with results).
-            content, turn_tool_calls = _extract_output_from_span(span)
-
-            if content:
-                last_output = content
-
-            if content or turn_tool_calls:
-                messages.append(Message(role="assistant", content=content, tool_calls=turn_tool_calls or None))
-            else:
-                messages.append(Message(role="assistant", content=""))
-
-        elif span_type == SpanType.TOOL_CALL:
-            tc = _extract_tool_from_span(span)
-            tool_calls.append(tc)
-            if not _has_matching_message_tool_call(messages, tc):
-                messages.append(Message(role="assistant", content=None, tool_calls=[tc]))
-            if tc.output:
-                messages.append(Message(role="tool", content=str(tc.output)))
-
-    # Concrete spans and message-level calls are authoritative when they
-    # overlap, but aggregate telemetry may still contain additional calls.
-    message_tool_calls = [tool_call for message in messages for tool_call in message.tool_calls or []]
-    aggregate_tool_calls = _aggregate_tool_calls(sorted_spans, aggregate_tool_call_attribute_keys, warnings)
-    additional_aggregate_calls = [
-        candidate
-        for candidate in aggregate_tool_calls
-        if not any(_same_tool_call(existing, candidate) for existing in [*tool_calls, *message_tool_calls])
-    ]
-    if additional_aggregate_calls:
-        tool_calls.extend(additional_aggregate_calls)
-        messages.append(
-            Message(
-                role="assistant",
-                content=None,
-                tool_calls=additional_aggregate_calls,
-            )
-        )
-
-    if not last_output:
+    if projection.output and not content.output:
         warnings.append(
             "No LLM output content found in trace spans. "
             "Metrics requiring output text may produce low-confidence scores."
         )
 
-    if user_input and not any(message.role == "user" for message in messages):
-        messages.insert(0, Message(role="user", content=user_input))
-
-    total_input_tokens = 0
-    total_output_tokens = 0
-    for _, span in classified:
-        inp, out = _get_token_counts(span)
-        total_input_tokens += inp
-        total_output_tokens += out
-
-    metadata: dict[str, Any] = {
-        "trace_id": spans[0].get("trace_id"),
-        "source": "online_eval",
-    }
-    if root_span:
-        root_attrs = root_span.get("attributes") or {}
-        metadata["service_name"] = root_span.get("service_name")
-        model = (
-            root_attrs.get("gen_ai.request.model")
-            or root_attrs.get("gen_ai.response.model")
-            or root_attrs.get("langfuse.observation.model.name")
-        )
-        if model:
-            metadata["model"] = model
-        agent_name = (
-            root_attrs.get("gen_ai.agent.name")
-            or root_attrs.get("agent.name")
-            or root_attrs.get("langfuse.observation.name")
-        )
-        if agent_name:
-            metadata["agent_name"] = agent_name
+    tokens = _sum_token_usage(sorted_spans) if projection.reads_token_usage else _TokenUsage()
 
     eval_case = EvalCase(
-        input=user_input or "",
-        output=last_output or "",
+        input=(content.user_input or "") if projection.input else "",
+        output=content.output or "",
         expected=None,
-        messages=messages if messages else None,
-        tool_calls=tool_calls if tool_calls else None,
-        latency_ms=_compute_total_duration(sorted_spans),
-        token_count=total_input_tokens + total_output_tokens,
-        input_tokens=total_input_tokens or None,
-        output_tokens=total_output_tokens or None,
-        metadata=metadata,
+        messages=content.conversation() or None,
+        tool_calls=content.tool_calls or None,
+        latency_ms=_compute_total_duration(sorted_spans) if projection.latency_ms else None,
+        token_count=tokens.total if projection.token_count else None,
+        input_tokens=tokens.input_tokens if projection.input_tokens else None,
+        output_tokens=tokens.output_tokens if projection.output_tokens else None,
+        cost_usd=_trace_cost_usd(sorted_spans) if projection.cost_usd else None,
+        metadata=_trace_metadata(spans[0].get("trace_id"), content.root_span) if projection.metadata else None,
     )
 
     return eval_case, warnings
+
+
+@dataclass(frozen=True)
+class _TraceProjection:
+    """Requested EvalCase fields and the extraction dependencies they imply.
+
+    Reading evidence is separate from exposing a field: tool-call projection
+    needs message-level intents but need not build a public conversation.
+    """
+
+    input: bool
+    output: bool
+    messages: bool
+    tool_calls: bool
+    metadata: bool
+    latency_ms: bool
+    cost_usd: bool
+    token_count: bool
+    input_tokens: bool
+    output_tokens: bool
+
+    @classmethod
+    def for_metrics(cls, metrics: Iterable[BaseMetric] | None) -> _TraceProjection:
+        fields = (
+            frozenset(MetricInput)
+            if metrics is None
+            else frozenset().union(*(_declared_fields(metric) for metric in metrics))
+        )
+        return cls(
+            input=MetricInput.INPUT in fields,
+            output=MetricInput.OUTPUT in fields,
+            messages=MetricInput.MESSAGES in fields,
+            tool_calls=MetricInput.TOOL_CALLS in fields,
+            metadata=MetricInput.METADATA in fields,
+            latency_ms=MetricInput.LATENCY_MS in fields,
+            cost_usd=MetricInput.COST_USD in fields,
+            token_count=MetricInput.TOKEN_COUNT in fields,
+            input_tokens=MetricInput.INPUT_TOKENS in fields,
+            output_tokens=MetricInput.OUTPUT_TOKENS in fields,
+        )
+
+    @property
+    def reads_user_input(self) -> bool:
+        return self.input or self.messages
+
+    @property
+    def reads_assistant_output(self) -> bool:
+        return self.output or self.reads_tool_activity
+
+    @property
+    def reads_tool_activity(self) -> bool:
+        return self.tool_calls or self.messages
+
+    @property
+    def reads_span_content(self) -> bool:
+        """Whether spans must be classified and their payloads parsed."""
+        return self.reads_user_input or self.reads_assistant_output or self.reads_tool_activity or self.metadata
+
+    @property
+    def reads_token_usage(self) -> bool:
+        return self.token_count or self.input_tokens or self.output_tokens
+
+
+def _declared_fields(metric: BaseMetric) -> frozenset[MetricInput]:
+    """Return a metric's declared fields, or every field when the declaration is invalid."""
+    inputs = getattr(metric, "eval_inputs", None)
+    return inputs.fields if isinstance(inputs, MetricInputs) else frozenset(MetricInput)
+
+
+class _TraceContent:
+    """Accumulates the span-derived EvalCase fields a projection requests."""
+
+    def __init__(self, projection: _TraceProjection) -> None:
+        self._projection = projection
+        self.user_input: str | None = None
+        self.output: str | None = None
+        self.messages: list[Message] = []
+        self.tool_calls: list[ToolCall] = []
+        # Evidence must not depend on which public fields are materialized.
+        self._known_tool_calls: list[ToolCall] = []
+        self.root_span: dict[str, Any] | None = None
+
+    def add_span(self, span: dict[str, Any]) -> None:
+        span_type = classify_span(span)
+        if span_type == SpanType.AGENT_ROOT:
+            self.root_span = span
+            self._add_user_input(span)
+        elif span_type == SpanType.LLM_TURN:
+            self._add_user_input(span)
+            self._add_llm_output(span)
+        elif span_type == SpanType.TOOL_CALL:
+            self._add_tool_call(span)
+
+    def add_aggregate_tool_calls(
+        self,
+        spans: list[dict[str, Any]],
+        attribute_keys: tuple[str, ...],
+        warnings: list[str],
+    ) -> None:
+        """Add aggregate calls not already recorded by concrete spans or messages.
+
+        Concrete spans and message-level calls are authoritative when they
+        overlap, but aggregate telemetry may still contain additional calls.
+        """
+        if not self._projection.reads_tool_activity:
+            return
+        additional = [
+            candidate
+            for candidate in _aggregate_tool_calls(spans, attribute_keys, warnings)
+            if not any(_same_tool_call(existing, candidate) for existing in self._known_tool_calls)
+        ]
+        if not additional:
+            return
+        if self._projection.tool_calls:
+            self.tool_calls.extend(additional)
+        if self._projection.messages:
+            self.messages.append(Message(role="assistant", content=None, tool_calls=additional))
+
+    def conversation(self) -> list[Message]:
+        """Return the messages, led by the user input when no user turn was recorded."""
+        if (
+            self._projection.messages
+            and self.user_input
+            and not any(message.role == "user" for message in self.messages)
+        ):
+            return [Message(role="user", content=self.user_input), *self.messages]
+        return self.messages
+
+    def _add_user_input(self, span: dict[str, Any]) -> None:
+        if self._projection.reads_user_input and not self.user_input:
+            self.user_input = _extract_input_from_span(span)
+        if self._projection.messages:
+            attrs = _attrs(span)
+            _append_user_messages(
+                self.messages,
+                _messages_from_attrs(attrs, ("gen_ai.input.messages", "gen_ai.input_messages"))
+                or _langfuse_messages(attrs.get("langfuse.observation.input")),
+            )
+
+    def _add_llm_output(self, span: dict[str, Any]) -> None:
+        if not self._projection.reads_assistant_output:
+            return
+        # Intents inform aggregate deduplication even without public messages;
+        # execute_tool spans remain the authoritative record (with results).
+        content, turn_tool_calls = _extract_output_from_span(span)
+        if self._projection.reads_tool_activity:
+            self._known_tool_calls.extend(turn_tool_calls)
+        if self._projection.output and content:
+            self.output = content
+        if self._projection.messages:
+            self.messages.append(
+                Message(
+                    role="assistant",
+                    content=content if content or turn_tool_calls else "",
+                    tool_calls=turn_tool_calls or None,
+                    latency_ms=_span_duration_ms(span),
+                    token_count=_observed_token_count(span),
+                )
+            )
+
+    def _add_tool_call(self, span: dict[str, Any]) -> None:
+        if not self._projection.reads_tool_activity:
+            return
+        tool_call = _extract_tool_from_span(span)
+        self._known_tool_calls.append(tool_call)
+        if self._projection.tool_calls:
+            self.tool_calls.append(tool_call)
+        if self._projection.messages:
+            if not _has_matching_message_tool_call(self.messages, tool_call):
+                self.messages.append(Message(role="assistant", content=None, tool_calls=[tool_call]))
+            if tool_call.output:
+                self.messages.append(Message(role="tool", content=str(tool_call.output)))
+
+
+@dataclass(frozen=True)
+class _TokenUsage:
+    """Token totals; ``None`` means the dimension was never validly reported."""
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+    @property
+    def total(self) -> int | None:
+        if self.input_tokens is None and self.output_tokens is None:
+            return None
+        return (self.input_tokens or 0) + (self.output_tokens or 0)
+
+
+def _sum_token_usage(spans: list[dict[str, Any]]) -> _TokenUsage:
+    """Sum validly reported token usage across spans, keeping unreported dimensions ``None``."""
+    input_total: int | None = None
+    output_total: int | None = None
+    for span in spans:
+        input_tokens, output_tokens = _get_token_counts(span)
+        has_input, has_output = _has_token_usage(span)
+        if has_input:
+            input_total = (input_total or 0) + input_tokens
+        if has_output:
+            output_total = (output_total or 0) + output_tokens
+    return _TokenUsage(input_tokens=input_total, output_tokens=output_total)
+
+
+def _trace_metadata(trace_id: Any, root_span: dict[str, Any] | None) -> dict[str, Any]:
+    """Trace correlation plus the service, model, and agent labels on the root span."""
+    metadata: dict[str, Any] = {"trace_id": trace_id, "source": "online_eval"}
+    if not root_span:
+        return metadata
+    root_attrs = root_span.get("attributes") or {}
+    metadata["service_name"] = root_span.get("service_name")
+    model = (
+        root_attrs.get("gen_ai.request.model")
+        or root_attrs.get("gen_ai.response.model")
+        or root_attrs.get("langfuse.observation.model.name")
+    )
+    if model:
+        metadata["model"] = model
+    agent_name = (
+        root_attrs.get("gen_ai.agent.name")
+        or root_attrs.get("agent.name")
+        or root_attrs.get("langfuse.observation.name")
+    )
+    if agent_name:
+        metadata["agent_name"] = agent_name
+    return metadata
 
 
 def extract_span_subtree(spans: list[dict[str, Any]], target_span_id: str) -> list[dict[str, Any]]:
@@ -698,6 +904,7 @@ def spans_to_eval_case_for_span(
     target_span_id: str,
     *,
     aggregate_tool_call_attribute_keys: tuple[str, ...] = (),
+    metrics: Iterable[BaseMetric] | None = None,
 ) -> tuple[EvalCase, list[str]]:
     """Convert the subtree rooted at target_span_id into an EvalCase (span scope)."""
     subtree = extract_span_subtree(spans, target_span_id)
@@ -707,8 +914,10 @@ def spans_to_eval_case_for_span(
     eval_case, warnings = spans_to_eval_case(
         subtree,
         aggregate_tool_call_attribute_keys=aggregate_tool_call_attribute_keys,
+        metrics=metrics,
     )
 
+    # The span association is stamped even when the projection omits metadata.
     if eval_case.metadata:
         eval_case.metadata["span_id"] = target_span_id
     else:
@@ -733,3 +942,15 @@ def _compute_total_duration(sorted_spans: list[dict[str, Any]]) -> float | None:
             if d:
                 return float(d)
     return None
+
+
+def _span_duration_ms(span: dict[str, Any]) -> float | None:
+    """Return a non-negative span duration when the source reported one."""
+    duration = span.get("duration_ms")
+    if duration is None:
+        return None
+    try:
+        parsed = float(duration)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None

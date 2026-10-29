@@ -6,8 +6,9 @@ from typing import Any
 
 import yaml
 
+from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.metrics.composite._combine import fold_sub_scores
 from harness_evals.metrics.composite.operators import OPERATORS, OperatorError
@@ -15,9 +16,28 @@ from harness_evals.utils.path import extract_path
 
 logger = logging.getLogger(__name__)
 
+_CHECK_PATH_KEYS = ("field", "output_field", "expected_field")
+
+
+def _sub_score_inputs(sub_scores: list[dict[str, Any]]) -> MetricInputs:
+    """Output is always parsed; each sub-check reads the paths its operator names."""
+    required = ["output"]
+    optional = ["expected"]
+    for sub in sub_scores:
+        check = sub["check"]
+        for key in _CHECK_PATH_KEYS:
+            if path := check.get(key):
+                skippable = key == "field" and sub.get("skip_when_missing", False)
+                (optional if skippable else required).append(path)
+    return MetricInputs.from_paths(required=required, optional=optional)
+
 
 class CompositeMetric(BaseMetric):
     """Declarative composite metric supporting weighted sub-checks."""
+
+    # Every instance derives its inputs from its sub-checks' paths.
+    eval_inputs = MetricInputs.unknown()
+    catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT}))
 
     def __init__(
         self,
@@ -36,6 +56,7 @@ class CompositeMetric(BaseMetric):
                 raise ValueError(f"sub_scores[{i}] ({sub['name']}) check missing required 'type' key")
         self.sub_scores = sub_scores
         self.output_format = output_format.lower()
+        self._configure_inputs(CompositeMetric, _sub_score_inputs(sub_scores))
 
     def _parse(self, value: Any) -> Any:
         if not isinstance(value, str):

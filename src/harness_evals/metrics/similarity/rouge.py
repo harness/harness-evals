@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 _VALID_VARIANTS = {"rouge-1", "rouge-2", "rouge-l"}
@@ -76,6 +76,8 @@ class ROUGEMetric(BaseMetric):
     Pure Python implementation using whitespace tokenization.
     Score is in [0.0, 1.0] where 1.0 indicates perfect overlap.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(self, threshold: float = 0.5, variant: str = "rouge-l", **kwargs: object) -> None:
         if variant not in _VALID_VARIANTS:

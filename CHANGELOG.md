@@ -5,6 +5,46 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0]
+
+### Added
+
+- **Metric input declarations**: metrics declare the `EvalCase` fields they
+  read with a class-level `eval_inputs = MetricInputs(required=..., optional=...)`.
+  Every built-in metric declares its inputs; metrics configured by field paths
+  or flags (decision primitives, composites, structural similarity,
+  hallucination references) derive them per instance. Undeclared metrics, and
+  subclasses that override a concrete scoring method without declaring
+  `eval_inputs`, are treated as reading every field. `WebhookMetric` accepts
+  `eval_inputs=` to declare what a custom `payload_fn` reads.
+- **Selective trace adaptation**: pass metrics to `spans_to_eval_case()` or
+  `spans_to_eval_case_for_span()` to materialize only the fields their
+  `eval_inputs` name; callers that omit metrics receive every field.
+  `TRACE_INPUTS` lists the fields trace adapters can supply.
+- **Metric applicability**: `BaseMetric.applicability` reports offline/online
+  modes and online trace/span/group scopes from the instance's required inputs.
+  Catalog entries describe possible support across valid configurations;
+  `catalog_applicability` can override discovery metadata without changing
+  instance eligibility. Trace adapters serve trace and span scopes; group is
+  reserved until grouped-trace adaptation is added.
+- `CatalogEntry` gains `eval_inputs` and `applicability` fields with defaults, so
+  existing constructions remain valid.
+
+### Fixed
+
+- Catalog mode/scope filters no longer hide configurable metrics that support
+  online evaluation, including negated checks, hallucination reference flags,
+  structural field paths, and composite checks. Configured instances retain
+  their own input requirements.
+- Selective trace adaptation reconciles aggregate tool calls against the same
+  concrete calls and message-level intents as full adaptation. Adding an
+  unrelated metric no longer changes another metric's tool evidence or score.
+- Configuration-derived inputs preserve explicit subclass declarations even
+  when they reuse the parent's `MetricInputs` object.
+- Clarify that scope applicability describes source capabilities, not usable
+  values on an individual case. Empty, unrequested output is not a blanket
+  skip signal for telemetry-only evaluations.
+
 ## [0.25.6]
 
 ### Fixed

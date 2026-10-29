@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from harness_evals._async_compat import _run_async
+from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ChoiceQuestion, NoulQuestion, Question, ScoreQuestion
@@ -33,6 +34,17 @@ def _score_answer(
     raise TypeError(f"Unknown question type: {type(question)!r}")
 
 
+def _sub_score_inputs(sub_scores: list[dict[str, Any]]) -> MetricInputs:
+    """Each sub-check reads its ``state_field`` and, when set, its ``expected_field``."""
+    required: list[str] = []
+    optional: list[str] = []
+    for sub in sub_scores:
+        (optional if sub.get("skip_when_missing") else required).append(sub["state_field"])
+        if expected_field := sub.get("expected_field"):
+            (required if sub.get("mode") == "correctness" else optional).append(expected_field)
+    return MetricInputs.from_paths(required=required, optional=optional)
+
+
 class DecisionCompositeMetric(BaseMetric):
     """Batch decision-primitive sub-checks sharing a ``state_field`` into one provider call per group.
 
@@ -54,6 +66,10 @@ class DecisionCompositeMetric(BaseMetric):
     semantics.
     """
 
+    # Every instance derives its inputs from its sub-checks' paths.
+    eval_inputs = MetricInputs.unknown()
+    catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT}))
+
     def __init__(
         self,
         provider: BaseDecisionProvider,
@@ -73,6 +89,7 @@ class DecisionCompositeMetric(BaseMetric):
                 raise ValueError(f"sub_scores[{i}] ({sub['name']}) missing required 'state_field' key")
         self.provider = provider
         self.sub_scores = sub_scores
+        self._configure_inputs(DecisionCompositeMetric, _sub_score_inputs(sub_scores))
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

@@ -7,7 +7,7 @@ from typing import Any
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.llm.base import BaseLLM
@@ -68,6 +68,8 @@ class ToolUseMetric(BaseMetric):
     For **single-turn agent** tool argument evaluation, see
     :class:`~harness_evals.metrics.agent.argument_correctness.ArgumentCorrectnessMetric`.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.MESSAGES}, optional={MetricInput.TOOL_CALLS})
 
     def __init__(
         self,

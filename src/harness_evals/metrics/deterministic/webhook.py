@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 if TYPE_CHECKING:
@@ -21,7 +21,14 @@ class WebhookMetric(BaseMetric):
     - use_status_code: 2xx = pass (1.0), anything else = fail (0.0)
 
     Default payload (when no payload_fn): {"input": ..., "output": ..., "expected": ..., "context": ...}
+
+    A custom ``payload_fn`` is treated as reading every field unless
+    ``eval_inputs`` declares the fields it reads.
     """
+
+    eval_inputs = MetricInputs(
+        required={MetricInput.INPUT, MetricInput.OUTPUT}, optional={MetricInput.EXPECTED, MetricInput.CONTEXT}
+    )
 
     def __init__(
         self,
@@ -29,6 +36,7 @@ class WebhookMetric(BaseMetric):
         *,
         headers: dict[str, str] | None = None,
         payload_fn: Callable[[EvalCase], dict] | None = None,
+        eval_inputs: MetricInputs | None = None,
         response_fn: Callable[[httpx.Response], Score] | None = None,
         response_key: str | None = None,
         score_key: str | None = None,
@@ -56,6 +64,10 @@ class WebhookMetric(BaseMetric):
         self.url = url
         self.headers = headers
         self.payload_fn = payload_fn
+        if eval_inputs is not None:
+            self._configure_inputs(WebhookMetric, eval_inputs)
+        elif payload_fn is not None:
+            self._configure_inputs(WebhookMetric, MetricInputs.unknown())
         self.response_fn = response_fn
         self.response_key = response_key
         self.score_key = score_key

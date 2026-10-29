@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 
+from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.metrics.deterministic._negation import resolve_negation
 
@@ -14,6 +15,9 @@ class RegexMetric(BaseMetric):
     Positive checks use the pattern in ``EvalCase.expected``. Negative checks
     require a metric-level ``forbidden`` pattern.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
+    catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT}))
 
     def __init__(
         self,
@@ -35,6 +39,8 @@ class RegexMetric(BaseMetric):
         self.negate = negate
         self.forbidden = forbidden
         self._forbidden_pattern = forbidden_pattern
+        if negate:
+            self._configure_inputs(RegexMetric, MetricInputs(required={MetricInput.OUTPUT}))
 
     def measure(self, eval_case: EvalCase) -> Score:
         if eval_case.output is None:

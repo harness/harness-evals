@@ -19,7 +19,17 @@ from harness_evals.conversation import (
 )
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.golden import Golden
-from harness_evals.core.metric import BaseMetric, Dimension, ReliabilityMetric, SafetyMetric
+from harness_evals.core.metric import (
+    BaseMetric,
+    Dimension,
+    EvaluationMode,
+    MetricApplicability,
+    MetricInput,
+    MetricInputs,
+    OnlineScope,
+    ReliabilityMetric,
+    SafetyMetric,
+)
 from harness_evals.core.runner import (
     OnResult,
     a_evaluate,
@@ -78,6 +88,11 @@ __all__ = [
     "BaseMetric",
     "CatalogEntry",
     "Dimension",
+    "EvaluationMode",
+    "OnlineScope",
+    "MetricApplicability",
+    "MetricInput",
+    "MetricInputs",
     "catalog",
     "ResourceRef",
     "resolve",

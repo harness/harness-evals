@@ -6,7 +6,7 @@ from typing import Any
 from deepdiff import DeepDiff
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -19,6 +19,8 @@ class JsonDiffMetric(BaseMetric):
 
     Both output and expected can be dict, list, or JSON strings.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(
         self,

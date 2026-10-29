@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -41,6 +41,8 @@ class AnswerRelevancyMetric(BaseMetric):
     Score 0.0-1.0 based on how directly and completely the output
     addresses the question/task in the input.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT})
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="answer_relevancy", dimension=Dimension.GROUNDEDNESS, threshold=threshold, **kwargs)

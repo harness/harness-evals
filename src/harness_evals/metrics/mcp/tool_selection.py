@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -18,6 +18,8 @@ class ToolSelectionAccuracyMetric(BaseMetric):
     Score = ``|intersection| / |union|`` of tool name multisets.
     Returns 0.0 if either field is missing.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.TOOL_CALLS, MetricInput.EXPECTED_TOOLS})
 
     def __init__(self, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="tool_selection_accuracy", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import Dimension, ReliabilityMetric
+from harness_evals.core.metric import Dimension, MetricInput, MetricInputs, ReliabilityMetric
 from harness_evals.core.score import Score
 
 
@@ -12,6 +12,8 @@ class OutcomeConsistencyMetric(ReliabilityMetric):
     value = (count of most common output) / K.
     A score of 1.0 means all runs produced identical output.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.RUNS})
 
     def __init__(self, threshold: float = 0.8, k: int = 5, **kwargs: object) -> None:
         super().__init__(

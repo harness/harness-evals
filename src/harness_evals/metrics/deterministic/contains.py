@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.metrics.deterministic._negation import resolve_negation
 
@@ -19,6 +20,9 @@ class ContainsMetric(BaseMetric):
     for leak-style checks where a recased match should still fail.
     """
 
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
+    catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT}))
+
     def __init__(
         self,
         threshold: float = 1.0,
@@ -32,6 +36,8 @@ class ContainsMetric(BaseMetric):
         self.case_sensitive = case_sensitive
         self.negate = negate
         self.forbidden = forbidden
+        if negate:
+            self._configure_inputs(ContainsMetric, MetricInputs(required={MetricInput.OUTPUT}))
 
     def measure(self, eval_case: EvalCase) -> Score:
         if eval_case.output is None:

@@ -6,7 +6,7 @@ import math
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -50,6 +50,8 @@ class BLEUMetric(BaseMetric):
     Uses a dependency-free sentence BLEU implementation with method-1
     smoothing. Score is in [0.0, 1.0], where 1.0 is perfect n-gram overlap.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(self, threshold: float = 0.5, max_n: int = 4, **kwargs: object) -> None:
         super().__init__(name="bleu", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

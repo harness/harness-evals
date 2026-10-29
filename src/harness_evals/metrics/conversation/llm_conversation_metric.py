@@ -6,7 +6,7 @@ import logging
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.logging_config import truncate_repr
@@ -34,6 +34,8 @@ class LLMConversationMetric(BaseMetric):
     placeholders. The aggregate score is the mean of per-turn scores, with
     the breakdown stored in ``score.metadata["turn_scores"]``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.MESSAGES}, optional={MetricInput.METADATA})
 
     _prompt_template: str = ""
     _per_turn: bool = False

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import NoulQuestion
-from harness_evals.metrics.decision._common import _MISSING, resolve_mode, resolve_state, score_noul
+from harness_evals.metrics.decision._common import _MISSING, decision_inputs, resolve_mode, resolve_state, score_noul
 
 
 class NoulMetric(BaseMetric):
@@ -21,6 +21,8 @@ class NoulMetric(BaseMetric):
     probability (or ``1 - noul`` when ``invert=True``) — a calibration signal,
     not a pass/fail judgment.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(
         self,
@@ -41,6 +43,7 @@ class NoulMetric(BaseMetric):
         self.criteria = criteria
         self.state_field = state_field
         self.mode = mode
+        self._configure_inputs(NoulMetric, decision_inputs(state_field, mode))
         self.invert = invert
 
     def measure(self, eval_case: EvalCase) -> Score:

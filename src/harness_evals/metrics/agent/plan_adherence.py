@@ -6,7 +6,7 @@ import json
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -59,6 +59,8 @@ class PlanAdherenceMetric(BaseMetric):
     ``eval_case.tool_calls`` (for actual execution) to compare
     planned steps vs actions taken.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.MESSAGES}, optional={MetricInput.TOOL_CALLS})
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="plan_adherence", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)

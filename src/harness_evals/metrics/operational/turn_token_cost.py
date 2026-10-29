@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -14,6 +14,8 @@ class TurnTokenCostMetric(BaseMetric):
     max(0, 1 - token_count / max_tokens_per_turn), then returns the mean.
     Turns with no token_count are skipped. Returns 0.0 if no turns have data.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.MESSAGES})
 
     def __init__(
         self,

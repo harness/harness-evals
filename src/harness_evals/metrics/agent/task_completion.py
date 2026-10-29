@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -45,6 +45,8 @@ class TaskCompletionMetric(BaseMetric):
     not 0.0. Useful for complex multi-step agent tasks where binary
     pass/fail is too coarse.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(self, llm: BaseLLM, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="task_completion", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

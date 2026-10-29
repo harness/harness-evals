@@ -3,7 +3,7 @@ from __future__ import annotations
 import statistics
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import Dimension, ReliabilityMetric
+from harness_evals.core.metric import Dimension, MetricInput, MetricInputs, ReliabilityMetric
 from harness_evals.core.score import Score
 
 
@@ -16,6 +16,8 @@ class ResourceConsistencyMetric(ReliabilityMetric):
     Reads a typed field (e.g. ``token_count``) first, then falls back to
     ``metadata[resource_key]`` for custom keys like ``gpu_memory``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.RUNS})
 
     def __init__(
         self,

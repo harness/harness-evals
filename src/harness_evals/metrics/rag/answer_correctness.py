@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.llm.embedding import BaseEmbedding, _cosine_similarity
@@ -43,6 +43,8 @@ class AnswerCorrectnessMetric(BaseMetric):
     Final score = factuality_weight * F1 + similarity_weight * cosine_sim.
     Requires ``eval_case.expected``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(
         self,

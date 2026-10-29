@@ -5,7 +5,7 @@ import json
 import jsonschema
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.utils.json_output import JSON_PARSE_FAILED, json_parse_failure_reason, parse_json_value
 
@@ -17,6 +17,8 @@ class SchemaValidationMetric(BaseMetric):
     for its standard meaning (ground truth answer).
     ``output`` is the data to validate (dict, list, or JSON string).
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT})
 
     def __init__(self, schema: dict | str, threshold: float = 1.0, **kwargs: object) -> None:
         super().__init__(name="schema_validation", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

@@ -21,6 +21,7 @@ from typing import Any, get_args, get_origin, get_type_hints
 
 from harness_evals import BaseMetric, Dimension, EvalCase, Score
 from harness_evals.catalog import catalog
+from harness_evals.core.metric import MetricInputs
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.llm.openai_embedding import OpenAIEmbedding
 from harness_evals.metrics import AnswerCorrectnessMetric, GEvalMetric, RubricJudgeMetric
@@ -981,6 +982,7 @@ def _build_composite_metric(
             self.sub_metrics = sub_metrics
             self.weights = weights
             self.aggregation = aggregation
+            self.eval_inputs = MetricInputs.union(*(metric.eval_inputs for metric in sub_metrics))
 
         def _build_score(
             self,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from harness_evals.core.metric import Dimension
+from harness_evals.core.metric import Dimension, MetricInput, MetricInputs
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.conversation.llm_conversation_metric import (
     LLMConversationMetric,
@@ -32,6 +32,8 @@ class ConversationResolutionMetric(LLMConversationMetric):
     ordered turns.  Returns 0.0 if messages is missing or has fewer than
     2 turns.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.MESSAGES}, optional={MetricInput.METADATA})
 
     _prompt_template = _PROMPT_TEMPLATE
     _use_expected_outcome = True

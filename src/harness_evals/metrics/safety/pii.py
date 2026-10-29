@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import SafetyMetric
+from harness_evals.core.metric import MetricInput, MetricInputs, SafetyMetric
 from harness_evals.core.score import Score
 
 # Tool/provider IDs and eval harness tokens that resemble phone numbers or other PII.
@@ -103,6 +103,8 @@ class PIIMetric(SafetyMetric):
         pair with an LLM-based approach such as ``ToxicityMetric`` or a
         dedicated NER model.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT})
 
     def __init__(
         self,

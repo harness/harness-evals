@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -11,6 +11,8 @@ class NumericDiffMetric(BaseMetric):
     value = 1.0 - (|actual - expected| / max(|expected|, epsilon))
     Clamped to [0.0, 1.0].
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(self, threshold: float = 0.95, epsilon: float = 1e-9, **kwargs: object) -> None:
         super().__init__(name="numeric_diff", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

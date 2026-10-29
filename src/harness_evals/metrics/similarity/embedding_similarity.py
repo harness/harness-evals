@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.embedding import BaseEmbedding, _cosine_similarity
 
@@ -15,6 +15,8 @@ class EmbeddingSimilarityMetric(BaseMetric):
     Score is the cosine similarity clamped to [0.0, 1.0].
     Requires an ``embedding`` provider for vectorization.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(self, embedding: BaseEmbedding, threshold: float = 0.8, **kwargs: object) -> None:
         super().__init__(name="embedding_similarity", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

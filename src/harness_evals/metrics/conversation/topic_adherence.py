@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -49,6 +49,8 @@ class TopicAdherenceMetric(BaseMetric):
     ``eval_case.messages`` for the conversation. Returns 0.0 if messages
     are missing or fewer than 2 turns.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.MESSAGES})
 
     def __init__(
         self,

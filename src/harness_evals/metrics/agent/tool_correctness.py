@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -28,6 +28,8 @@ class ToolCorrectnessMetric(BaseMetric):
       are allowed. Score is the fraction of expected tools matched in
       order (``matched / len(expected)``).
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.TOOL_CALLS, MetricInput.EXPECTED_TOOLS})
 
     def __init__(
         self,

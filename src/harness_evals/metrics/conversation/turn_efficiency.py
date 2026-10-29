@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -17,6 +17,8 @@ class TurnEfficiencyMetric(BaseMetric):
     Derives ``actual_turns`` from ``len(eval_case.messages)`` and reads
     ``metadata["expected_turns"]`` (int) for the target.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.MESSAGES, MetricInput.METADATA})
 
     def __init__(self, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="turn_efficiency", dimension=Dimension.TRAJECTORY, threshold=threshold, **kwargs)

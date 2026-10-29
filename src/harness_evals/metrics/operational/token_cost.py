@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -10,6 +10,8 @@ class TokenCostMetric(BaseMetric):
 
     value = max(0, 1 - token_count / max_tokens). At max_tokens, score = 0.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.TOKEN_COUNT})
 
     def __init__(self, max_tokens: int = 10000, threshold: float = 0.5, **kwargs: object) -> None:
         super().__init__(name="token_cost", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.llm_judge.types import RubricLevel
@@ -110,6 +110,8 @@ class GEvalMetric(BaseMetric):
     Subclasses may declare ``criteria``, ``evaluation_steps``, ``rubric`` as
     class attributes; constructor arguments override them if given.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     # Optional class-level defaults. Subclasses may override.
     criteria: str = ""

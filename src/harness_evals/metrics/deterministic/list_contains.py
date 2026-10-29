@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -32,6 +32,8 @@ class ListContainsMetric(BaseMetric):
         ``"subset"`` (default): score = fraction of expected items found in output.
         ``"exact"``: score = 1.0 if sets are equal, else Jaccard-like fraction.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     _VALID_MODES = ("subset", "exact")
 

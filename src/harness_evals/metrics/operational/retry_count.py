@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -10,6 +10,8 @@ class RetryCountMetric(BaseMetric):
 
     value = max(0, 1 - retry_count / max_retries). 0 retries = 1.0.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.RETRY_COUNT})
 
     def __init__(self, max_retries: int = 5, threshold: float = 0.5, **kwargs: object) -> None:
         super().__init__(name="retry_count", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)

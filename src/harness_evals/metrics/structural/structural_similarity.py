@@ -9,8 +9,9 @@ import jsonschema
 import yaml
 from deepdiff import DeepDiff
 
+from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.utils.path import extract_path
 
@@ -31,6 +32,9 @@ class StructuralSimilarityMetric(BaseMetric):
     Supports raw deepdiff, structural (with keys ignored/required fields),
     and schema validation via JSON Schema or entry point validators.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
+    catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT}))
 
     def __init__(
         self,
@@ -56,6 +60,14 @@ class StructuralSimilarityMetric(BaseMetric):
         self.schema_validator = schema_validator
         self.expected_field = expected_field
         self.output_field = output_field
+        if output_field or expected_field:
+            self._configure_inputs(
+                StructuralSimilarityMetric,
+                MetricInputs.from_paths(
+                    required=[output_field or "output", expected_field or "expected"],
+                    optional=["output", "expected"],
+                ),
+            )
 
     def _parse(self, value: Any) -> Any:
         if not isinstance(value, str):

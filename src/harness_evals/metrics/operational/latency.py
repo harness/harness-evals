@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -10,6 +10,8 @@ class LatencyMetric(BaseMetric):
 
     value = 1.0 if latency_ms <= max_ms else 0.0.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.LATENCY_MS})
 
     def __init__(self, max_ms: float = 5000, threshold: float = 1.0, **kwargs: object) -> None:
         super().__init__(name="latency", dimension=Dimension.PERFORMANCE, threshold=threshold, **kwargs)

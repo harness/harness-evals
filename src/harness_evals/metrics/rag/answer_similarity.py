@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
+from harness_evals.core.metric import MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.embedding import BaseEmbedding
 from harness_evals.metrics.similarity.embedding_similarity import EmbeddingSimilarityMetric
@@ -16,6 +17,8 @@ class AnswerSimilarityMetric(EmbeddingSimilarityMetric):
     ``EmbeddingSimilarityMetric`` but uses the name ``answer_similarity``.
     Requires ``eval_case.expected``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(self, embedding: BaseEmbedding, threshold: float = 0.8, **kwargs: object) -> None:
         super().__init__(embedding=embedding, threshold=threshold, **kwargs)

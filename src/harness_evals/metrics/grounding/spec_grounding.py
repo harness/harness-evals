@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics.grounding.scoring import (
@@ -247,6 +247,8 @@ class SpecGroundingMetric(BaseMetric):
     Uses ``EvalCase.context[0]`` as the spec. Pre-extracted requirements skip
     the extraction judge call via ``requirements=`` or ``with_requirements``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT, MetricInput.CONTEXT})
 
     catalog_name = _SCORE_NAME
     factory_reserved_options = frozenset({"requirements"})

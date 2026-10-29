@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ScoreQuestion
-from harness_evals.metrics.decision._common import _MISSING, resolve_mode, resolve_state, score_rubric
+from harness_evals.metrics.decision._common import _MISSING, decision_inputs, resolve_mode, resolve_state, score_rubric
 
 
 class ScoreMetric(BaseMetric):
@@ -23,6 +23,8 @@ class ScoreMetric(BaseMetric):
     self-reported confidence in the score; the raw probability-weighted score
     is preserved in ``Score.metadata``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(
         self,
@@ -42,6 +44,7 @@ class ScoreMetric(BaseMetric):
         self.criteria = criteria
         self.state_field = state_field
         self.mode = mode
+        self._configure_inputs(ScoreMetric, decision_inputs(state_field, mode))
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

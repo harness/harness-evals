@@ -2,9 +2,11 @@
 langfuse-marker, and span_type dialects, plus the unscorable-content signal."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
+import harness_evals.adapters.trace as trace_adapter
 from harness_evals.adapters.trace import (
     SpanType,
     classify_span,
@@ -12,7 +14,20 @@ from harness_evals.adapters.trace import (
     spans_to_eval_case,
     spans_to_eval_case_for_span,
 )
+from harness_evals.applicability import TRACE_INPUTS
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
+from harness_evals.core.runner import a_evaluate, evaluate
+from harness_evals.core.score import Score
+from harness_evals.core.types import ToolCall
+from harness_evals.metrics.agent.plan_adherence import PlanAdherenceMetric
 from harness_evals.metrics.conversation.tool_use import ToolUseMetric
+from harness_evals.metrics.mcp.trace_completeness import MCPTraceCompletenessMetric
+from harness_evals.metrics.operational.cost_efficiency import CostEfficiencyMetric
+from harness_evals.metrics.operational.latency import LatencyMetric
+from harness_evals.metrics.operational.token_cost import TokenCostMetric
+from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
+from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
+from harness_evals.metrics.structural.schema_validation import SchemaValidationMetric
 from tests.conftest import MockLLM
 
 TS = "2026-08-03T10:00:00Z"
@@ -235,17 +250,287 @@ class TestEvalCaseParity:
         assert case.output_tokens == 2
         assert case.token_count == 3
 
-    def test_empty_output_marks_unscorable(self):
+    def test_requested_output_warns_when_missing(self):
         proxy = _span("p", attrs={"gen_ai.operation.name": "chat"})
         case, warnings = spans_to_eval_case([proxy])
         assert case.output == ""
         assert any("No LLM output" in w for w in warnings)
+
+    def test_selected_metrics_materialize_only_required_trace_data(self):
+        spans = [_semconv_root(), _semconv_llm('{"status": "ok"}'), _semconv_tool()]
+
+        case, warnings = spans_to_eval_case(
+            spans,
+            metrics=[SchemaValidationMetric(schema={"type": "object"})],
+        )
+
+        assert case.output == '{"status": "ok"}'
+        assert case.input == ""
+        assert case.messages is None
+        assert case.tool_calls is None
+        assert case.latency_ms is None
+        assert case.token_count is None
+        assert case.metadata is None
+        assert warnings == []
+
+    def test_selected_latency_metric_avoids_content_materialization(self, monkeypatch):
+        def unexpected_extraction(*args, **kwargs):
+            pytest.fail("latency-only adaptation must not extract span content")
+
+        for name in ("_extract_input_from_span", "_extract_output_from_span", "_extract_tool_from_span"):
+            monkeypatch.setattr(trace_adapter, name, unexpected_extraction)
+        spans = [_semconv_root(), _semconv_llm("answer")]
+        spans[1]["duration_ms"] = 15
+        spans[1]["start_timestamp"] = "2026-08-03T10:00:01Z"
+
+        case, warnings = spans_to_eval_case(spans, metrics=[LatencyMetric()])
+
+        assert case.input == ""
+        assert case.output == ""
+        assert case.messages is None
+        assert case.tool_calls is None
+        assert case.latency_ms == 1015.0
+        assert case.token_count is None
+        assert case.metadata is None
+        assert warnings == []
+
+    async def test_latency_only_case_can_be_scored_without_output(self):
+        root = _semconv_root()
+        root["duration_ms"] = 15
+        metric = LatencyMetric()
+        case, warnings = spans_to_eval_case([root], metrics=[metric])
+
+        assert case.output == ""
+        assert warnings == []
+        for scores in (evaluate(case, [metric]), await a_evaluate(case, [metric])):
+            assert len(scores) == 1
+            assert scores[0].passed
+            assert scores[0].value > 0
+
+    @pytest.mark.parametrize(
+        "metric",
+        [
+            LatencyMetric(),
+            TokenCostMetric(),
+            CostEfficiencyMetric(),
+            TurnLatencyMetric(),
+            TurnTokenCostMetric(),
+            SchemaValidationMetric(schema={"type": "object"}),
+            MCPTraceCompletenessMetric(expected_trace=[ToolCall(name="search", input={"q": "x"})]),
+        ],
+        ids=lambda metric: metric.name,
+    )
+    async def test_selected_fields_and_scores_match_full_adaptation(self, metric):
+        root = _semconv_root()
+        root["duration_ms"] = 30
+        turn = _semconv_llm('{"status": "ok"}')
+        turn["duration_ms"] = 15
+        turn["attributes"] = json.dumps({**json.loads(turn["attributes"]), "gen_ai.usage.cost": 0.01})
+        spans = [root, turn, _semconv_tool()]
+        full, _ = spans_to_eval_case(spans)
+        selected, _ = spans_to_eval_case(spans, metrics=[metric])
+
+        for field in metric.eval_inputs.fields:
+            assert getattr(selected, field.value) == getattr(full, field.value)
+        expected = metric.measure(full)
+        for score in (metric.measure(selected), await metric.a_measure(selected)):
+            assert replace(score, created_at=expected.created_at) == expected
+
+    def test_selected_plan_adherence_metric_materializes_input(self):
+        case, _ = spans_to_eval_case(
+            [_semconv_root(), _semconv_llm("answer"), _semconv_tool()],
+            metrics=[PlanAdherenceMetric(llm=MockLLM())],
+        )
+
+        assert case.input == "summarize this"
+        assert case.messages is not None
+        assert case.tool_calls is not None
+
+    def test_selected_turn_metrics_materialize_per_turn_telemetry(self):
+        turn = _semconv_llm("answer")
+        turn["duration_ms"] = 15
+
+        latency_case, _ = spans_to_eval_case([_semconv_root(), turn], metrics=[TurnLatencyMetric()])
+        token_case, _ = spans_to_eval_case([_semconv_root(), turn], metrics=[TurnTokenCostMetric()])
+
+        assert latency_case.messages is not None
+        assert latency_case.messages[1].latency_ms == 15
+        assert TurnLatencyMetric(max_ms_per_turn=15).measure(latency_case).passed
+        assert token_case.messages is not None
+        assert token_case.messages[1].token_count == 15
+        assert TurnTokenCostMetric(max_tokens_per_turn=15).measure(token_case).value == 0.0
+
+    def test_selected_token_metrics_keep_missing_usage_unobserved(self):
+        unmetered_turn = _span(
+            "llm",
+            parent="root",
+            attrs={
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": json.dumps(
+                    [{"role": "assistant", "parts": [{"type": "text", "text": "answer"}]}]
+                ),
+            },
+        )
+
+        total_case, _ = spans_to_eval_case([_semconv_root(), unmetered_turn], metrics=[TokenCostMetric()])
+        turn_case, _ = spans_to_eval_case([_semconv_root(), unmetered_turn], metrics=[TurnTokenCostMetric()])
+
+        assert total_case.token_count is None
+        assert turn_case.messages is not None
+        assert turn_case.messages[1].token_count is None
+        assert TurnTokenCostMetric().measure(turn_case).value == 0.0
+
+    def test_selected_token_metrics_reject_invalid_usage(self):
+        invalid_turn = _semconv_llm("answer")
+        invalid_turn["input_tokens"] = "not-a-number"
+        invalid_turn["output_tokens"] = "also-not-a-number"
+
+        total_case, _ = spans_to_eval_case([_semconv_root(), invalid_turn], metrics=[TokenCostMetric()])
+        turn_case, _ = spans_to_eval_case([_semconv_root(), invalid_turn], metrics=[TurnTokenCostMetric()])
+
+        assert total_case.token_count is None
+        assert turn_case.messages is not None
+        assert turn_case.messages[1].token_count is None
+
+    def test_selected_token_metrics_exclude_invalid_dimensions(self):
+        mixed_turn = _semconv_llm("answer")
+        mixed_turn["input_tokens"] = 10
+        mixed_turn["output_tokens"] = -9
+
+        total_case, _ = spans_to_eval_case([_semconv_root(), mixed_turn], metrics=[TokenCostMetric()])
+        turn_case, _ = spans_to_eval_case([_semconv_root(), mixed_turn], metrics=[TurnTokenCostMetric()])
+
+        assert total_case.token_count == 10
+        assert turn_case.messages is not None
+        assert turn_case.messages[1].token_count == 10
+
+    def test_selected_cost_metric_materializes_observed_span_cost(self):
+        turn = _semconv_llm("answer")
+        attrs = json.loads(turn["attributes"])
+        attrs["gen_ai.usage.cost"] = "0.01"
+        turn["attributes"] = json.dumps(attrs)
+
+        case, _ = spans_to_eval_case(
+            [_semconv_root(), turn],
+            metrics=[CostEfficiencyMetric(max_cost_usd=0.10)],
+        )
+
+        assert case.cost_usd == 0.01
+        assert CostEfficiencyMetric(max_cost_usd=0.10).measure(case).value == 0.9
+
+    @pytest.mark.parametrize("selective", [False, True], ids=["full", "selective"])
+    @pytest.mark.parametrize(
+        "root_cost, child_costs, expected_cost",
+        [
+            pytest.param(0.07, [None], 0.07, id="root-fallback"),
+            pytest.param(0.07, [0.01, 0.02], 0.03, id="sum-children-without-root"),
+            pytest.param(0.07, [0.0], 0.0, id="zero-child-overrides-root"),
+            pytest.param(0.07, [-1.0, 0.02], 0.02, id="skip-negative-child"),
+            pytest.param(0.07, [-1.0], 0.07, id="negative-child-keeps-root-fallback"),
+            pytest.param(-1.0, [0.02], 0.02, id="skip-negative-root"),
+            pytest.param(-1.0, [-0.02], None, id="all-negative-is-unobserved"),
+            pytest.param(None, [None], None, id="missing-is-unobserved"),
+            pytest.param(0.0, [None], 0.0, id="observed-zero-root"),
+            pytest.param("invalid", ["invalid"], None, id="invalid-is-unobserved"),
+        ],
+    )
+    def test_trace_cost_aggregation(self, selective, root_cost, child_costs, expected_cost):
+        spans = [_semconv_root()] + [_semconv_llm("answer", span_id=f"llm{index}") for index in range(len(child_costs))]
+        for span, cost in zip(spans, [root_cost, *child_costs], strict=True):
+            if cost is not None:
+                attrs = json.loads(span["attributes"])
+                attrs["gen_ai.usage.cost"] = cost
+                span["attributes"] = json.dumps(attrs)
+
+        case, _ = spans_to_eval_case(
+            spans,
+            metrics=[CostEfficiencyMetric()] if selective else None,
+        )
+
+        if expected_cost is None:
+            assert case.cost_usd is None
+        else:
+            assert case.cost_usd == pytest.approx(expected_cost)
 
     def test_span_scope_subtree(self):
         spans = [_semconv_root(), _semconv_llm("a"), _semconv_tool(), _semconv_llm("b", span_id="llm2")]
         case, _ = spans_to_eval_case_for_span(spans, "llm1")
         assert case.output == "a"
         assert case.metadata["span_id"] == "llm1"
+
+    def test_span_scope_selective_projection_keeps_span_id(self):
+        case, _ = spans_to_eval_case_for_span(
+            [_semconv_root(), _semconv_llm('{"status": "ok"}')],
+            "llm1",
+            metrics=[SchemaValidationMetric(schema={"type": "object"})],
+        )
+
+        assert case.metadata == {"span_id": "llm1", "source": "online_eval"}
+
+    def test_selected_custom_metric_inputs_are_honored(self):
+        class ToolOutputMetric(BaseMetric):
+            eval_inputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.TOOL_CALLS})
+
+            def __init__(self):
+                super().__init__(name="tool_output", dimension=Dimension.CORRECTNESS)
+
+            def measure(self, eval_case):
+                return Score(name=self.name, value=1.0, threshold=self.threshold)
+
+        case, _ = spans_to_eval_case(
+            [_semconv_root(), _semconv_llm("answer"), _semconv_tool()],
+            metrics=[ToolOutputMetric()],
+        )
+
+        assert case.output == "answer"
+        assert case.tool_calls is not None and case.tool_calls[0].name == "search"
+        assert case.input == ""
+        assert case.messages is None
+        assert case.metadata is None
+
+    def test_selected_undeclared_custom_metric_materializes_every_field(self):
+        class UndeclaredMetric(BaseMetric):
+            def __init__(self):
+                super().__init__(name="undeclared", dimension=Dimension.CORRECTNESS)
+
+            def measure(self, eval_case):
+                return Score(name=self.name, value=1.0, threshold=self.threshold)
+
+        spans = [_semconv_root(), _semconv_llm("answer"), _semconv_tool()]
+
+        full = spans_to_eval_case(spans)
+        assert spans_to_eval_case(spans, metrics=[UndeclaredMetric()]) == full
+        assert spans_to_eval_case(spans, metrics=[LatencyMetric(), UndeclaredMetric()]) == full
+
+    def test_empty_metric_list_does_not_request_content(self, monkeypatch):
+        def unexpected_extraction(*args, **kwargs):
+            pytest.fail("an empty metric list must not extract span content")
+
+        monkeypatch.setattr(trace_adapter, "_extract_output_from_span", unexpected_extraction)
+        case, warnings = spans_to_eval_case([_semconv_root(), _semconv_llm("answer")], metrics=[])
+
+        assert case.input == case.output == ""
+        assert all(
+            getattr(case, field.value) is None
+            for field in MetricInput
+            if field not in {MetricInput.INPUT, MetricInput.OUTPUT}
+        )
+        assert warnings == []
+
+    def test_full_projection_populates_exactly_trace_inputs_and_metadata(self):
+        turn = _semconv_llm("answer")
+        turn["duration_ms"] = 15
+        attrs = json.loads(turn["attributes"])
+        attrs["gen_ai.usage.cost"] = "0.01"
+        turn["attributes"] = json.dumps(attrs)
+
+        root = _semconv_root()
+        root["duration_ms"] = 30
+
+        case, _ = spans_to_eval_case([root, turn, _semconv_tool()])
+
+        populated = {field for field in MetricInput if getattr(case, field.value) not in (None, "")}
+        assert populated == TRACE_INPUTS | {MetricInput.METADATA}
 
     def test_python_repr_messages_parsed(self):
         span = _span(
@@ -395,6 +680,79 @@ class TestEvalCaseParity:
         )
 
         assert [tool_call.name for tool_call in case.tool_calls or []] == ["search", "Write"]
+
+    @pytest.mark.parametrize("dialect", ["semconv", "langfuse"])
+    @pytest.mark.parametrize("scope", ["trace", "span"])
+    @pytest.mark.parametrize("executed", [False, True])
+    @pytest.mark.parametrize("additional_call", [False, True])
+    async def test_tool_evidence_does_not_depend_on_projected_messages(self, dialect, scope, executed, additional_call):
+        root = _semconv_root()
+        aggregate_calls = [{"name": "search", "input": {"q": "x"}}]
+        if additional_call:
+            aggregate_calls.append("Write")
+        root["attributes"] = json.dumps({**json.loads(root["attributes"]), "custom.tool_calls": aggregate_calls})
+        if dialect == "semconv":
+            attrs = {
+                "gen_ai.operation.name": "chat",
+                "gen_ai.output.messages": [
+                    {"role": "assistant", "parts": [{"type": "tool_call", "name": "search", "arguments": {"q": "x"}}]}
+                ],
+            }
+        else:
+            attrs = {
+                "langfuse.observation.type": "generation",
+                "langfuse.observation.output": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "search", "input": {"q": "x"}}],
+                },
+            }
+        spans = [root, _span("intent", parent="root", attrs=attrs)]
+        if executed:
+            spans.append(_semconv_tool())
+        metric = MCPTraceCompletenessMetric(expected_trace=[ToolCall(name="search", input={"q": "x"})])
+
+        def adapt(metrics=None):
+            kwargs = {"metrics": metrics, "aggregate_tool_call_attribute_keys": ("custom.tool_calls",)}
+            if scope == "span":
+                return spans_to_eval_case_for_span(spans, "root", **kwargs)[0]
+            return spans_to_eval_case(spans, **kwargs)[0]
+
+        full = adapt()
+        expected = metric.measure(full)
+        assert expected.value == float(executed)
+        assert [call.name for call in full.tool_calls or []] == (
+            (["search"] if executed else []) + (["Write"] if additional_call else [])
+        )
+        for metrics in (
+            [metric],
+            [metric, LatencyMetric()],
+            [metric, TurnLatencyMetric()],
+            [metric, LatencyMetric(), TurnLatencyMetric()],
+        ):
+            selected = adapt(metrics)
+            assert selected.tool_calls == full.tool_calls
+            for score in (metric.measure(selected), await metric.a_measure(selected)):
+                assert replace(score, created_at=expected.created_at) == expected
+            if any(MetricInput.MESSAGES in item.eval_inputs.fields for item in metrics):
+                assert selected.messages == full.messages
+            else:
+                assert selected.messages is None
+
+    def test_tool_only_projection_avoids_conversation_materialization(self, monkeypatch):
+        def unexpected_conversation_work(*args, **kwargs):
+            pytest.fail("tool-only adaptation must not build messages or per-turn telemetry")
+
+        for name in ("Message", "_extract_input_from_span", "_span_duration_ms", "_observed_token_count"):
+            monkeypatch.setattr(trace_adapter, name, unexpected_conversation_work)
+        metric = MCPTraceCompletenessMetric(expected_trace=[ToolCall(name="search", input={"q": "x"})])
+        case, warnings = spans_to_eval_case(
+            [_semconv_root(), _semconv_llm("answer"), _semconv_tool()], metrics=[metric]
+        )
+
+        assert case.messages is None
+        assert case.output == ""
+        assert metric.measure(case).value == 1.0
+        assert warnings == []
 
     def test_langfuse_trace_preserves_tool_use_trajectory(self):
         case, warnings = spans_to_eval_case(_langfuse_trace())

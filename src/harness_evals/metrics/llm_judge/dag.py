@@ -13,7 +13,7 @@ from typing import Any
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -141,6 +141,8 @@ class DAGMetric(BaseMetric):
     Each LLM call focuses on a single decision, producing more deterministic
     results than a single-prompt approach like GEval.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(
         self,

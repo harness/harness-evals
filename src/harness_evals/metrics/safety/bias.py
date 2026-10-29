@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import SafetyMetric
+from harness_evals.core.metric import MetricInput, MetricInputs, SafetyMetric
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -76,6 +76,8 @@ class BiasMetric(SafetyMetric):
     Score = 1 - (biased_count / total_opinions). A score of 1.0 means no bias detected.
     Returns 1.0 (pass) if there are no opinions to evaluate.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT})
 
     def __init__(self, llm: BaseLLM, threshold: float = 1.0, **kwargs: object) -> None:
         super().__init__(name="bias", threshold=threshold, **kwargs)

@@ -6,14 +6,21 @@ available metrics and sync them into their persistence layer.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from harness_evals.core.metric import BaseMetric, Dimension, SafetyMetric
+from harness_evals.applicability import applicability_for_inputs
+from harness_evals.core.metric import BaseMetric, Dimension, MetricApplicability, MetricInputs, SafetyMetric
 
 
 @dataclass(frozen=True)
 class CatalogEntry:
-    """Metadata for a single built-in metric."""
+    """Metadata for a single built-in metric.
+
+    ``eval_inputs`` is the metric's class-level input declaration.
+    ``applicability`` is for discovery: a context is advertised when at least
+    one valid configuration supports it. Check the configured instance's
+    ``applicability`` for its actual input-derived eligibility.
+    """
 
     kind: str
     name: str
@@ -25,6 +32,8 @@ class CatalogEntry:
     requires_embedding: bool
     requires_provider: bool
     description: str
+    eval_inputs: MetricInputs = field(default_factory=MetricInputs.unknown)
+    applicability: MetricApplicability = field(default_factory=MetricApplicability)
 
 
 def _category_from_module(cls: type) -> str:
@@ -328,6 +337,12 @@ def catalog() -> list[CatalogEntry]:
                 requires_embedding=_requires_param(cls, "embedding"),
                 requires_provider=_requires_param(cls, "provider"),
                 description=(cls.__doc__ or "").split("\n")[0].strip(),
+                eval_inputs=cls.eval_inputs,
+                applicability=(
+                    cls.catalog_applicability
+                    if cls.catalog_applicability is not None
+                    else applicability_for_inputs(cls.eval_inputs)
+                ),
             )
         )
 

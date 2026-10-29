@@ -8,7 +8,7 @@ from collections import Counter
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics._coerce import safe_float
@@ -62,6 +62,8 @@ class PairwiseMetric(BaseMetric):
     returns a score reflecting how good the output (A) is relative to
     the expected (B).
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(
         self,

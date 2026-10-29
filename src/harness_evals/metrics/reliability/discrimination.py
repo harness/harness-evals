@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -15,6 +15,8 @@ class DiscriminationMetric(BaseMetric):
 
     This metric operates over multiple eval cases via ``measure_dataset()``.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.CONFIDENCE})
 
     def __init__(self, threshold: float = 0.7, **kwargs: object) -> None:
         super().__init__(name="discrimination", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

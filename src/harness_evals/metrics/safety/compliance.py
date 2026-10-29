@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import SafetyMetric
+from harness_evals.core.metric import MetricInput, MetricInputs, SafetyMetric
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 
@@ -53,6 +53,8 @@ class ComplianceMetric(SafetyMetric):
     policies. Score is the fraction of policies complied with: 1.0 means full
     compliance, 0.0 means no policies were met.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT})
 
     def __init__(self, llm: BaseLLM, policies: list[str], threshold: float = 1.0, **kwargs: object) -> None:
         super().__init__(name="compliance", threshold=threshold, **kwargs)

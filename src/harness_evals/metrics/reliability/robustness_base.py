@@ -10,7 +10,7 @@ method is ``measure_robustness()`` rather than ``measure_dataset()``.
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric
+from harness_evals.core.metric import BaseMetric, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -33,6 +33,8 @@ class RobustnessMetric(BaseMetric):
     because degradation cannot be attributed to perturbation.  Evaluate
     raw capability separately.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.METADATA})
 
     def measure(self, eval_case: EvalCase) -> Score:
         _sentinel = object()

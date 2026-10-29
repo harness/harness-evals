@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 from harness_evals.core.types import ToolCall
 
@@ -18,6 +18,8 @@ class MCPTraceCompletenessMetric(BaseMetric):
     Each actual entry can match at most one expected entry.
     Returns 0.0 if ``tool_calls`` is missing.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.TOOL_CALLS})
 
     def __init__(
         self,

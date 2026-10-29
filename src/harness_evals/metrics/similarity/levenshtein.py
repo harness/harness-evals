@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension
+from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, MetricInputs
 from harness_evals.core.score import Score
 
 
@@ -31,6 +31,8 @@ class LevenshteinMetric(BaseMetric):
     Score = 1.0 - (edit_distance / max(len(output), len(expected))).
     Returns 1.0 when both strings are identical (including both empty).
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
 
     def __init__(self, threshold: float = 0.8, **kwargs: object) -> None:
         super().__init__(name="levenshtein", dimension=Dimension.CORRECTNESS, threshold=threshold, **kwargs)

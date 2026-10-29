@@ -10,11 +10,19 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from harness_evals.core.eval_case import EvalCase
+from harness_evals.core.metric import MetricInputs
 from harness_evals.decision.types import Answer
 from harness_evals.utils.path import extract_path
 
 _MISSING = object()
 Mode = Literal["correctness", "confidence"]
+
+
+def decision_inputs(state_field: str, mode: str | None) -> MetricInputs:
+    """Inputs for a primitive that reads ``state_field`` and compares against ``expected``."""
+    if mode == "correctness":
+        return MetricInputs.from_paths(required=[state_field, "expected"])
+    return MetricInputs.from_paths(required=[state_field], optional=["expected"])
 
 
 def resolve_state(eval_case: EvalCase, state_field: str) -> Any:

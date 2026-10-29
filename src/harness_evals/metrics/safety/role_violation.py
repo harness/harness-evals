@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from harness_evals._async_compat import _run_async
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import SafetyMetric
+from harness_evals.core.metric import MetricInput, MetricInputs, SafetyMetric
 from harness_evals.core.score import Score
 from harness_evals.llm.base import BaseLLM
 from harness_evals.metrics._coerce import safe_float
@@ -98,6 +98,8 @@ class RoleViolationMetric(SafetyMetric):
     so the judge sees simulator HITL evidence (YAML review accept, form
     replies) that may not appear in the final assistant message.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT}, optional={MetricInput.METADATA})
 
     def __init__(
         self,

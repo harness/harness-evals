@@ -6,7 +6,7 @@ import math
 from collections import Counter
 
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import Dimension, ReliabilityMetric
+from harness_evals.core.metric import Dimension, MetricInput, MetricInputs, ReliabilityMetric
 from harness_evals.core.score import Score
 
 
@@ -76,6 +76,8 @@ class TrajectoryConsistencyMetric(ReliabilityMetric):
     trajectory to its last *N* actions before comparison.  This bounds
     sequential-mode cost to O(K^2 * L^2) where L is the cap.
     """
+
+    eval_inputs = MetricInputs(required={MetricInput.RUNS})
 
     def __init__(
         self,

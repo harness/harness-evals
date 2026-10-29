@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 
 from harness_evals._async_compat import _run_async
+from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import SafetyMetric
+from harness_evals.core.metric import MetricInput, MetricInputs, SafetyMetric
 from harness_evals.core.score import Score
 from harness_evals.core.types import Message, ToolCall
 from harness_evals.llm.base import BaseLLM
@@ -67,6 +68,9 @@ class HallucinationMetric(SafetyMetric):
     gate: any significant hallucination should fail the check.
     """
 
+    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.CONTEXT}, optional={MetricInput.EXPECTED})
+    catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT, MetricInput.MESSAGES}))
+
     def __init__(
         self,
         llm: BaseLLM,
@@ -87,6 +91,25 @@ class HallucinationMetric(SafetyMetric):
         self.include_scenario_metadata_as_reference = include_scenario_metadata_as_reference
         self.include_sse_events_as_reference = include_sse_events_as_reference
         self.sse_reference_events = tuple(sse_reference_events or ())
+
+        references = []
+        if (
+            include_messages_as_reference
+            or include_assistant_tool_inputs_as_reference
+            or include_assistant_tool_results_as_reference
+        ):
+            references.append(MetricInput.MESSAGES)
+        if include_scenario_metadata_as_reference or include_sse_events_as_reference:
+            references.append(MetricInput.METADATA)
+        if references:
+            primary, *alternatives = references
+            self._configure_inputs(
+                HallucinationMetric,
+                MetricInputs(
+                    required={MetricInput.OUTPUT, primary},
+                    optional={MetricInput.CONTEXT, MetricInput.EXPECTED, *alternatives},
+                ),
+            )
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

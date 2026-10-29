@@ -5,8 +5,9 @@ for an online scope when its adapter can supply all declared required fields.
 This is a source capability check, not proof that a particular trace contains
 usable values or authored metadata keys. Metrics retain their own missing-data
 behavior. Alternative input sources can make declarations conservative; see
-``MetricInputs``. No adapter assembles a group of traces into one eval case yet,
-so no metric supports ``OnlineScope.GROUP``.
+``MetricInputs``. The Group adapter assembles message-scoped evidence, but
+Group metric compatibility and actual-input sufficiency require a separate
+reviewed gate. Group is deliberately not advertised by this capability table.
 """
 
 from __future__ import annotations

@@ -603,7 +603,75 @@ A metric's `eval_inputs` describes field dependencies, and `applicability`
 reports source capability, **not** whether a particular trace has usable values.
 Inspect adapter warnings and each metric's missing-data behavior. Empty output
 is not a blanket skip signal: telemetry-only metrics need no answer text.
-Trace and Span scopes are supported; Group remains reserved, not implemented.
+Trace and Span metric scopes are supported. The bounded Group assembly API below
+is separate; it does not enable Group metric eligibility or scheduling.
+
+#### Assemble a bounded Group from captured traces
+
+`traces_to_group_eval_case()` accepts **2–64 already-selected member traces**.
+It is a pure local adapter: no discovery, membership selection, network calls,
+target execution, or model-context fitting. The member bound is not a bound on
+span count, bytes, or model tokens; oversized input is never silently truncated.
+
+```python
+from harness_evals.adapters import GroupTrace, traces_to_group_eval_case
+
+members = [
+    GroupTrace(trace_id="first", spans=[{
+        "span_id": "generation", "start_timestamp": 1, "duration_ms": 10,
+        "attributes": {"gen_ai.output.messages": [
+            {"id": "answer", "role": "assistant", "content": "First answer"},
+        ]},
+    }]),
+    GroupTrace(trace_id="second", spans=[{
+        "span_id": "generation", "start_timestamp": 2, "duration_ms": 10,
+        "attributes": {"gen_ai.output.messages": [
+            {"id": "answer", "role": "assistant", "content": "Second answer"},
+        ]},
+    }]),
+]
+assembly = traces_to_group_eval_case(members)
+case = assembly.case
+assert case.input == case.output == ""
+assert case.runs is None
+assert [message.content for message in case.messages] == ["First answer", "Second answer"]
+```
+
+- The conversation is in typed `case.messages`, with actual execution evidence
+  in `case.tool_calls`. Empty `input`/`output` are schema placeholders, **not** a
+  synthesized prompt or final answer. No Group latency, expected answer, retry
+  count, confidence, or repeated runs are invented.
+- Roles, empty/tool-only messages, legitimate repeated text, and supported
+  per-message telemetry/retrieval data are retained. Duplicate capture is
+  removed only with a trace-scoped span/message identity. Missing identity
+  retains uncertain occurrences and produces an ambiguity diagnostic; conflicting
+  captures with the same identity raise a payload-safe `GroupInputError`.
+- Tool links use explicit call IDs or an unambiguous structural association,
+  never just tool names, arguments, or the most recent assistant message.
+  Ambiguous results remain visible without being assigned to an arbitrary call.
+  Cycles and partial trees are reported rather than represented as complete.
+- Token and cost values use the same validation as Trace adaptation. Totals are
+  **observed nonoverlapping subtotals**, not evidence of complete usage. A valid
+  descendant report excludes an ancestor rollup independently for each usage
+  dimension. Unresolvable overlap is excluded and reported. Missing remains
+  `None`; an observed zero remains zero. No prices or costs are estimated.
+- `capture_complete=None` (the default) means unknown capture. An explicit source
+  assertion of `True` can establish known absence (`[]`), but observed structural
+  contradictions downgrade it. Connected spans alone never establish complete
+  capture. Typed `assembly.diagnostics` contains only counts and fixed issue
+  codes; source payloads and identifiers stay out of diagnostics and exceptions.
+- Pass configured `metrics=` to materialize required **and optional** fields.
+  Omit it for all supported fields; `metrics=[]` returns placeholders only.
+  Canonical evidence and diagnostics are computed before projection, so adding
+  unrelated metrics cannot change another metric's evidence. Unknown custom
+  declarations fall back to full materialization. This saves materialization,
+  not parsing or canonical-assembly work.
+- `GroupAuthoredData` optionally supplies explicit `expected_tools`,
+  `expected_tool_calls`, `metadata`, and `tags`; these are copied, never inferred
+  from actual calls. Do not place raw grouping values or sensitive data in labels.
+- Assembly is **not metric admission**: do not run single-response metrics against
+  the empty placeholders. Group compatibility and actual-input sufficiency need
+  a separate gate; this release does not advertise any metric as Group-capable.
 
 Time-window listing and session merge are generic (`lookback_days`,
 `group_by=session_id`). Pass any `TraceCatalog` to list traces; Langfuse is one

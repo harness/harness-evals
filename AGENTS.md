@@ -134,9 +134,10 @@ harness-evals/
 │   │   ├── sink.py                  # BaseSink ABC
 │   │   └── runner.py                # evaluate(), assert_test(), evaluate_cases(), evaluate_dataset()
 │   │
-│   ├── adapters/                    # External trace/span shapes → EvalCase
-│   │   └── trace.py                 # spans_to_eval_case() (+ span-scope variant),
-│   │                                # semconv + Langfuse dialect coalescing
+│   ├── adapters/                    # Captured span/trace/Group evidence → EvalCase
+│   │   ├── trace.py                 # spans_to_eval_case() (+ span-scope variant)
+│   │   ├── group.py                 # Bounded Group API and typed safe diagnostics
+│   │   └── _group.py                # Private canonical Group evidence assembly
 │   │
 │   ├── metrics/
 │   │   ├── factory.py               # build_metric()/build_llm_provider() — shared
@@ -358,8 +359,9 @@ def test_my_metric_failure():
   required and optional `eval_inputs` are projected; `metrics=None` requests all
   fields, while an empty iterable requests none.
 - Applicability is a source-capability check, not proof of usable case values.
-  Do not reject all metrics because output is empty. Group is reserved until
-  grouped-trace adaptation exists; never advertise it as supported today.
+  Do not reject all metrics because output is empty. Group assembly exists,
+  but Group metric compatibility and actual-input checks are a separate gate;
+  never infer Group eligibility from field availability or empty placeholders.
 - Normalize malformed/non-object attributes without mutating the source row.
   Validate token dimensions independently before conversion: do not truncate
   fractions, accept booleans/non-finite values, or replace unknown usage with
@@ -373,6 +375,52 @@ def test_my_metric_failure():
 - Add regressions for full and selective adaptation, invalid/missing/zero
   telemetry, and span-scoped association. Run `pytest tests/adapters/ -v` plus
   metric-input/catalog/factory tests, then the full suite before committing.
+
+## Bounded Group Adapter Contracts
+
+- `adapters/group.py` exposes `GroupTrace`, `GroupAuthoredData`, typed diagnostics,
+  and `traces_to_group_eval_case()`; `_group.py` owns private canonical evidence
+  assembly. Keep the public types separate from parsing/graph implementation.
+- Accept 2–64 preselected member traces; never discover, select, truncate, fit to
+  model context, or invoke targets/providers. The trace bound is not a span,
+  byte, or model-token bound. Do not add platform configuration or scheduling.
+- Always use `input=""`, `output=""`, and `runs=None`. Preserve the conversation
+  in typed messages and observed executions in tool calls. Group members are
+  related captures, not independent repeated executions. Do not synthesize a
+  final answer, expected answer, aggregate request latency, retry count, or
+  confidence to unlock unrelated metrics.
+- Preserve actual roles, repeated legitimate turns, empty/tool-only messages,
+  and observed per-message data. Deduplicate only trace-scoped event identities,
+  never text, names, or arguments. Missing identity means uncertainty. Reject
+  contradictory captures with safe static errors, not last-write-wins.
+- Match explicit tool IDs or uniquely justified structural links. Do not reuse
+  historical intents with contradictory identity/name/arguments, assign shared
+  results to multiple executions, or attach results to the latest assistant.
+  Parent completion follows nested children; concurrent calls can complete in
+  reverse execution order. Cycle recovery must preserve dependencies outside
+  the cyclic component.
+- Reuse Trace parsing/telemetry validation, not its conversation assembly or
+  text deduplication. Canonical evidence precedes projection; required and
+  optional fields, mixed metric lists, and unknown custom declarations must
+  preserve full/selective evidence and score parity.
+- Usage totals are nonoverlapping observed subtotals, selected independently
+  by dimension. Exclude ancestor rollups when descendants report usage. Unknown
+  identity/ancestry must not manufacture nonoverlap; expose coverage separately.
+  Preserve unknown versus zero. Never estimate price/cost or multiply span usage
+  across several output messages.
+- Capture completeness is a caller assertion, not a connected-tree inference.
+  Downgrade contradicted assertions. Return known empty evidence only with
+  sufficient capture assertions; otherwise absence remains `None`.
+- All mutable state and output payloads are call-owned. Frozen wrappers do not
+  make nested dictionaries immutable. Keep source payloads, identifiers, and
+  exception strings out of diagnostics/logs; authored labels remain caller-owned
+  data with copied values, not an automatic redaction boundary.
+- Cover bounds, capture identity, repeated messages, nested/concurrent tools,
+  cycles, partial trees, usage overlap/coverage, projection/score parity, and
+  concurrent shared-metric calls. Preserve all existing Trace/Span regressions.
+- Group assembly does not authorize Group scoring. Keep `OnlineScope.GROUP`
+  out of the capability table until a separately reviewed compatibility and
+  actual-input gate exists.
 
 ## Core Types Reference
 
@@ -429,8 +477,14 @@ Token accounting is per-`asyncio`-task, not global: `collect_token_usage()` is a
 @dataclass
 class Message:
     role: str
-    content: str
+    content: str | None = None
     tool_calls: list[ToolCall] | None = None
+    latency_ms: float | None = None
+    token_count: int | None = None
+    cost_usd: float | None = None
+    metadata: dict[str, Any] | None = None
+    retrieval_context: list[str] | None = None
+    expected: str | None = None
 ```
 
 ### ToolCall (tool/function invocation)

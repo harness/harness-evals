@@ -5,6 +5,21 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0]
+
+### Added
+
+- A pure bounded Group adapter, `traces_to_group_eval_case()`, for 2–64
+  already-selected captured traces. It returns typed conversation/tool evidence
+  and payload-free coverage diagnostics without invoking a target or provider.
+- Trace-scoped capture identity, causal ordering, explicit tool-result
+  association, nonoverlapping observed usage, and explicit authored expectations.
+  Group input/output remain empty placeholders; members never become `runs`.
+- Full/selective projection, telemetry validation, partial-capture, concurrency,
+  and tool-association regressions. Existing Trace/Span adaptation is unchanged.
+- Public usage documentation and contributor invariants. Group metric eligibility
+  and scheduling remain disabled.
+
 ## [0.26.1]
 
 ### Fixed

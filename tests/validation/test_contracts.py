@@ -217,6 +217,8 @@ def test_invalid_non_json_runtime_and_factory_options_fail_closed(options, no_ex
         ("decision_noul", {"instructions": "Accept?", "state_field": "$..output"}),
         ("structural_similarity", {"schema_validator": {"type": "entry_point", "name": "user-code"}}),
         ("mcp_trace_completeness", {"expected_trace": [{"name": "lookup", "input": []}]}),
+        ("mcp_trace_completeness", {"expected_trace": [{"name": "lookup"}]}),
+        ("mcp_trace_completeness", {"expected_trace": [{"name": "lookup", "input": None}]}),
         ("composite", {"sub_scores": [{"name": "x", "check": {"type": "custom_code", "field": "output"}}]}),
         (
             "decision_composite",
@@ -753,6 +755,7 @@ def test_describe_rederives_current_configuration_and_projection(kind, initial, 
         ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", None),
         ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", [{"name": "lookup"}]),
         ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", [ToolCall("")]),
+        ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", [ToolCall("lookup")]),
         ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", [ToolCall("lookup", [])]),
         ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", [ToolCall("lookup", {}, [])]),
         ("mcp_trace_completeness", {"expected_trace": []}, "expected_trace", [ToolCall("lookup", {"x": float("nan")})]),
@@ -918,6 +921,94 @@ def test_local_schemas_and_internal_references_are_pure(kind, schema, no_executi
     described = describe_configured_metric(_construct_metric(kind, _build_registry()[kind], options))
     assert resolved.reviewed and described.reviewed
     assert _roundtrip(resolved) == _roundtrip(described)
+
+
+@pytest.mark.parametrize("kind", ["schema_validation", "composite", "structural_similarity"])
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "properties": {"$ref": {"type": "string"}}},
+        {"properties": {"$dynamicRef": {}, "$recursiveRef": {}, "$id": {}, "$anchor": {}}},
+        {"$defs": {"$ref": {"type": "string"}}, "$ref": "#/$defs/$ref"},
+        {"const": {"$ref": "https://invalid.example/literal"}},
+        {"enum": [{"$ref": "file:///private/literal", "$anchor": "literal"}]},
+        {"default": {"$ref": "missing.json"}, "examples": [{"$ref": 42}]},
+        {"extension": {"$ref": "missing.json", "$id": "ignored", "$schema": "ignored"}},
+        {"$defs": {"named": {"$anchor": "local", "const": {"$ref": "literal"}}}, "$ref": "#local"},
+        {
+            "$schema": "http://json-schema.org/draft-04/schema#",
+            "definitions": {"node": {"id": "#node"}},
+            "$ref": "#node",
+        },
+        {"$schema": "https://json-schema.org/draft/2019-09/schema", "$recursiveAnchor": True, "$recursiveRef": "#"},
+        {"$defs": {"node": {"$id": "nested", "$defs": {"s": {"type": "string"}}, "$ref": "#/$defs/s"}}},
+        {"$defs": {"node": {"$anchor": "local", "properties": {"next": {"$ref": "#local"}}}}},
+    ],
+)
+def test_schema_positions_distinguish_property_names_anchors_and_literals(kind, schema, no_execution):
+    from harness_evals.validation.contracts import _construct_metric
+
+    options = _schema_configuration(kind, schema)
+    configured = resolve_metric_contract(kind, options)
+    described = describe_configured_metric(_construct_metric(kind, _build_registry()[kind], options))
+    assert configured.reviewed and described.reviewed
+    assert _roundtrip(configured) == _roundtrip(described)
+    assert validate_metric(configured, EvalCase(input="", output={}, expected={})).ready
+
+
+@pytest.mark.parametrize("kind", ["schema_validation", "composite", "structural_similarity"])
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"properties": {"$ref": {"$ref": "https://invalid.example/schema"}}},
+        {"patternProperties": {"$ref": {"$dynamicRef": "file:///private/schema"}}},
+        {"additionalProperties": {"$ref": "missing.json"}},
+        {"items": {"$ref": "missing.json"}},
+        {"prefixItems": [{"$ref": "missing.json"}]},
+        {"allOf": [{"$ref": "missing.json"}]},
+        {"anyOf": [{"$ref": "missing.json"}]},
+        {"oneOf": [{"$ref": "missing.json"}]},
+        {"not": {"$ref": "missing.json"}},
+        {"if": {"$ref": "missing.json"}},
+        {"then": {"$ref": "missing.json"}},
+        {"else": {"$ref": "missing.json"}},
+        {"contains": {"$ref": "missing.json"}},
+        {"propertyNames": {"$ref": "missing.json"}},
+        {"unevaluatedProperties": {"$ref": "missing.json"}},
+        {"unevaluatedItems": {"$ref": "missing.json"}},
+        {"dependentSchemas": {"$ref": {"$ref": "missing.json"}}},
+        {"contentSchema": {"$ref": "missing.json"}},
+        {"$schema": "http://json-schema.org/draft-07/schema#", "items": [{"$ref": "missing.json"}]},
+        {"$schema": "http://json-schema.org/draft-07/schema#", "additionalItems": {"$ref": "missing.json"}},
+        {
+            "$schema": "http://json-schema.org/draft-04/schema#",
+            "dependencies": {"a": ["b"], "b": {"$ref": "missing.json"}},
+        },
+        {"$schema": "http://json-schema.org/draft-03/schema#", "extends": {"$ref": "missing.json"}},
+        {"$schema": "http://json-schema.org/draft-03/schema#", "type": [{"$ref": "missing.json"}]},
+        {"$schema": "http://json-schema.org/draft-03/schema#", "disallow": [{"$ref": "missing.json"}]},
+        {"$schema": "https://json-schema.org/draft/2019-09/schema", "items": {"$recursiveRef": "missing.json"}},
+        {
+            "$defs": {
+                "old": {
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "dependencies": {"a": {"$ref": "missing.json"}},
+                }
+            }
+        },
+        {"extension": {"$ref": "https://invalid.example/schema"}, "$ref": "#/extension"},
+        {"const": {"$ref": "file:///private/schema"}, "$ref": "#/const"},
+        {"enum": [{"$ref": "missing.json"}], "$ref": "#/enum/0"},
+        {"const": {"$anchor": "literal"}, "$ref": "#literal"},
+        {"properties": {"$anchor": {"type": "string"}, "local": {}}, "$ref": "#local"},
+        {"$defs": {"named": {"$id": "nested", "$anchor": "local"}}, "$ref": "#local"},
+    ],
+)
+def test_nested_schema_references_cannot_hide_in_applicable_positions(kind, schema, no_execution):
+    configured = resolve_metric_contract(kind, _schema_configuration(kind, schema))
+    assert not configured.reviewed
+    assert configured.reasons[0].code == ReasonCode.INVALID_CONFIGURATION
+    _roundtrip(configured)
 
 
 def test_schema_json_string_is_checked_after_parsing(no_execution):

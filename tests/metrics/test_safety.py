@@ -1,5 +1,7 @@
 """Tests for safety metrics."""
 
+from unittest.mock import patch
+
 import pytest
 
 from harness_evals import EvalCase, evaluate
@@ -9,6 +11,7 @@ from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.safety.pii import PIIMetric
 from harness_evals.metrics.safety.prompt_injection import PromptInjectionMetric
 from harness_evals.metrics.safety.toxicity import ToxicityMetric
+from harness_evals.validation import ValidationContext, resolve_metric_contract, validate_metric
 from tests.conftest import MockLLM
 
 # ---------------------------------------------------------------------------
@@ -420,6 +423,37 @@ class TestHallucinationMetric:
         score = await metric.a_measure(ec)
         assert score.value == 0.0
         assert "without reference material" in score.reason
+
+    @pytest.mark.parametrize(
+        "context,ready",
+        [
+            (None, True),
+            ([], True),
+            ([""], True),
+            (["reference"], True),
+            ([1], False),
+            (["reference", 1], False),
+            ("malformed", False),
+        ],
+    )
+    async def test_configured_admission_checks_all_consumed_references_before_provider(self, context, ready):
+        llm = MockLLM(default={"score": 1.0})
+        metric = HallucinationMetric(llm=llm)
+        ec = EvalCase(input="question", output="answer", context=context, expected="valid reference")
+        with patch.object(
+            HallucinationMetric, "a_measure", side_effect=AssertionError("Admission called scorer")
+        ) as scorer:
+            configured = resolve_metric_contract("hallucination")
+            decision = validate_metric(
+                configured, ec, context=ValidationContext(available_resources=frozenset({"llm"}))
+            )
+            scorer.assert_not_called()
+        assert decision.ready is ready
+        assert llm.prompts == []
+        if ready:
+            assert (await metric.a_measure(ec)).value == 1.0
+            assert len(llm.prompts) == 1
+            assert "valid reference" in llm.prompts[0]
 
     async def test_uses_expected_as_reference(self):
         llm = MockLLM(

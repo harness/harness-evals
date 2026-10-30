@@ -17,8 +17,10 @@ from harness_evals.metrics.agent.tool_argument_match import ToolArgumentMatchMet
 from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from harness_evals.metrics.composite.composite import CompositeMetric
 from harness_evals.metrics.factory import build_metric
+from harness_evals.metrics.mcp.trace_completeness import MCPTraceCompletenessMetric
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
+from harness_evals.metrics.structural.schema_validation import SchemaValidationMetric
 from harness_evals.validation import (
     ConfiguredMetricContract,
     ReasonCode,
@@ -106,6 +108,110 @@ def test_argument_comparison_retains_known_empty_execution_evidence(expected: li
     assert assembled.case.tool_calls == []
     assert validate_metric(roundtrip("tool_argument_match"), assembled.case, context=context).ready
     assert ToolArgumentMatchMetric().measure(assembled.case).value == (0.0 if expected else 1.0)
+
+
+@pytest.mark.parametrize(
+    "schema,output",
+    [
+        ({"type": "object", "properties": {"$ref": {"type": "string"}}}, {"$ref": "literal property"}),
+        ({"const": {"$ref": "https://invalid.example/literal"}}, {"$ref": "https://invalid.example/literal"}),
+        ({"enum": [{"$ref": "file:///private/literal"}]}, {"$ref": "file:///private/literal"}),
+        ({"$defs": {"$ref": {"type": "object"}}, "$ref": "#/$defs/$ref"}, {}),
+        ({"$defs": {"node": {"$anchor": "local", "type": "object"}}, "$ref": "#local"}, {}),
+        (
+            {
+                "$schema": "http://json-schema.org/draft-04/schema#",
+                "definitions": {"node": {"id": "#node", "type": "object"}},
+                "$ref": "#node",
+            },
+            {},
+        ),
+        ({"extension": {"type": "object"}, "$ref": "#/extension"}, {}),
+        (
+            {
+                "$defs": {
+                    "inner": {
+                        "$id": "https://invalid.example/inner",
+                        "$defs": {"target": {"type": "object"}},
+                        "properties": {"foo": {"$ref": "#/$defs/target"}},
+                    }
+                },
+                "$ref": "#/$defs/inner/properties/foo",
+            },
+            {},
+        ),
+    ],
+)
+def test_admitted_schema_property_names_and_literals_score_without_network(schema: dict, output: dict) -> None:
+    case = EvalCase(input="", output=output)
+    with patch.object(SchemaValidationMetric, "measure", side_effect=AssertionError("Gate called scorer")) as scorer:
+        configured = roundtrip("schema_validation", {"schema": schema})
+        assert configured.reviewed and validate_metric(configured, case).ready
+        scorer.assert_not_called()
+    assert SchemaValidationMetric(schema=schema).measure(case).value == 1.0
+
+
+@pytest.mark.parametrize("expected", [None, {}, {"q": "value"}])
+@pytest.mark.parametrize("actual", [None, {}, {"q": "value"}])
+def test_mcp_completeness_requires_known_argument_objects(expected: dict | None, actual: dict | None) -> None:
+    metric = MCPTraceCompletenessMetric([ToolCall("lookup", expected)])
+    case = EvalCase(input="", output="", tool_calls=[ToolCall("lookup", actual)])
+    with patch.object(
+        MCPTraceCompletenessMetric, "measure", side_effect=AssertionError("Gate called scorer")
+    ) as scorer:
+        configured = roundtrip("mcp_trace_completeness", {"expected_trace": [{"name": "lookup", "input": expected}]})
+        described = describe_configured_metric(metric)
+        decision = validate_metric(configured, case)
+        scorer.assert_not_called()
+    assert decision.ready is (expected is not None and actual is not None)
+    if expected is None:
+        assert not described.reviewed
+        assert configured.reasons[0].code == described.reasons[0].code == ReasonCode.INVALID_CONFIGURATION
+    elif actual is None:
+        assert {reason.code for reason in decision.reasons} == {ReasonCode.INVALID_EVIDENCE}
+    if expected is not None:
+        assert configured.to_dict() == described.to_dict()
+    # Legacy direct scoring remains unchanged; admission is an opt-in boundary.
+    assert metric.measure(case).value == float(expected == actual)
+
+
+@pytest.mark.parametrize("expected", [[], [ToolCall("lookup", {})]])
+@pytest.mark.parametrize("actual", [None, [], [ToolCall("lookup")]])
+def test_mcp_completeness_known_empty_lists_do_not_require_vacuous_argument_checks(
+    expected: list[ToolCall], actual: list[ToolCall] | None
+) -> None:
+    metric = MCPTraceCompletenessMetric(expected)
+    decision = validate_metric(describe_configured_metric(metric), EvalCase(input="", output="", tool_calls=actual))
+    assert decision.ready is (actual is not None and (not expected or not actual))
+    if decision.ready:
+        assert metric.measure(EvalCase(input="", output="", tool_calls=actual)).value == (0.0 if expected else 1.0)
+
+
+@pytest.mark.parametrize("selective", [False, True])
+@pytest.mark.parametrize("observed", [False, True])
+def test_mcp_group_admission_distinguishes_unknown_arguments_from_observed_empty(
+    selective: bool, observed: bool
+) -> None:
+    options = {"expected_trace": [{"name": "lookup", "input": {}}]}
+    metric = MCPTraceCompletenessMetric([ToolCall("lookup", {})])
+    attrs = {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "lookup", "gen_ai.tool.call.id": "call"}
+    if observed:
+        attrs["gen_ai.tool.call.arguments"] = {}
+    assembled = traces_to_group_eval_case(
+        [GroupTrace([{"span_id": "call", "attributes": attrs}], "one", True), GroupTrace([], "two", True)],
+        metrics=[metric] if selective else None,
+    )
+    context = ValidationContext(mode="online", scope="group", group_diagnostics=assembled.diagnostics)
+    with patch.object(
+        MCPTraceCompletenessMetric, "measure", side_effect=AssertionError("Gate called scorer")
+    ) as scorer:
+        decision = validate_metric(roundtrip("mcp_trace_completeness", options), assembled.case, context=context)
+        scorer.assert_not_called()
+    assert decision.ready is observed
+    if observed:
+        assert metric.measure(assembled.case).value == 1.0
+    else:
+        assert {reason.code for reason in decision.reasons} == {ReasonCode.INVALID_EVIDENCE}
 
 
 @pytest.mark.parametrize("kind", ["turn_latency", "turn_token_cost"])

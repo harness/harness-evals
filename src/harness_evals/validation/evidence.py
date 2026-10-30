@@ -270,11 +270,18 @@ def _references(rule: EvidenceRequirement, data: dict[str, Any], coordinate: str
         raise _ConfigurationError
     candidates: list[bool] = []
     chunks = data.get("context")
-    candidates.append(_predicate(chunks, "string_list") and any(chunk.strip() for chunk in chunks))
+    if chunks is not None and not _predicate(chunks, "string_list"):
+        return [_reason(ReasonCode.INVALID_EVIDENCE, coordinate)]
+    candidates.append(bool(chunks) and any(chunk.strip() for chunk in chunks))
     expected = data.get("expected")
     candidates.append(expected is not None and (not isinstance(expected, str) or bool(expected.strip())))
     messages = data.get("messages")
-    if any(parameters.get(flag, False) for flag in flags[:3]) and _messages(messages):
+    if any(parameters.get(flag, False) for flag in flags[:3]) and messages is not None:
+        # Validate reference fields, not unrelated turn telemetry.
+        if not isinstance(messages, list) or not _messages(
+            [{key: message.get(key) for key in ("role", "content", "tool_calls")} for message in messages]
+        ):
+            return [_reason(ReasonCode.INVALID_EVIDENCE, coordinate)]
         from harness_evals.metrics.safety.hallucination import (
             _assistant_tool_input_references,
             _assistant_tool_result_references,
@@ -288,7 +295,9 @@ def _references(rule: EvidenceRequirement, data: dict[str, Any], coordinate: str
         if parameters.get(flags[2]):
             candidates.append(bool(_assistant_tool_result_references(typed)))
     metadata = data.get("metadata")
-    if isinstance(metadata, dict):
+    if any(parameters.get(flag, False) for flag in flags[3:]) and metadata is not None:
+        if not isinstance(metadata, dict):
+            return [_reason(ReasonCode.INVALID_EVIDENCE, coordinate)]
         from harness_evals.metrics.safety.hallucination import _scenario_metadata_references, _sse_event_references
 
         if parameters.get(flags[3]):

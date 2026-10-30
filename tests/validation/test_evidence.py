@@ -375,6 +375,65 @@ def test_hallucination_does_not_invent_references(evidence):
     ).ready
 
 
+@pytest.mark.parametrize(
+    "parameters,evidence",
+    [
+        ({}, {"context": [1]}),
+        ({}, {"context": ["valid", None]}),
+        ({}, {"context": "not a chunk list"}),
+        ({"include_messages_as_reference": True}, {"messages": [Message("user", ["not text"])]}),
+        ({"include_messages_as_reference": True}, {"messages": "not messages"}),
+        (
+            {"include_assistant_tool_inputs_as_reference": True},
+            {"messages": [Message("assistant", tool_calls=[ToolCall("tool", [])])]},
+        ),
+        (
+            {"include_assistant_tool_results_as_reference": True},
+            {"messages": [Message("assistant", tool_calls=[ToolCall("tool", output=1)])]},
+        ),
+        ({"include_scenario_metadata_as_reference": True}, {"metadata": "not metadata"}),
+        ({"include_sse_events_as_reference": True, "sse_reference_events": ["ref"]}, {"metadata": ["not metadata"]}),
+    ],
+)
+def test_malformed_consumed_references_do_not_hide_behind_valid_alternative(parameters, evidence):
+    configured = contract(EvidenceRequirement(op="hallucination_references", parameters=parameters))
+    result = validate_metric(configured, case(expected="valid alternative", **evidence))
+    assert not result.ready
+    assert codes(result) == {ReasonCode.INVALID_EVIDENCE}
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"context": None},
+        {"context": []},
+        {"context": [""]},
+        {"messages": []},
+        {"messages": [Message("assistant", "ignored answer")]},
+        {"messages": [Message("user", "reference", latency_ms="ignored telemetry")]},
+        {"metadata": {}},
+        {"metadata": {"sse_events": {"unselected": ["ignored"]}}},
+    ],
+)
+def test_reference_alternatives_retain_empty_and_unconsumed_semantics(evidence):
+    configured = contract(
+        EvidenceRequirement(
+            op="hallucination_references",
+            parameters={
+                "include_messages_as_reference": True,
+                "include_sse_events_as_reference": True,
+                "sse_reference_events": ["ref"],
+            },
+        )
+    )
+    assert validate_metric(configured, case(expected="valid alternative", **evidence)).ready
+
+
+def test_disabled_reference_sources_are_not_consumed():
+    configured = contract(EvidenceRequirement(op="hallucination_references"))
+    assert validate_metric(configured, case(expected="valid", messages="ignored", metadata="ignored")).ready
+
+
 def decision(question="choice", **parameters):
     defaults = {
         "question_type": question,

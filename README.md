@@ -710,7 +710,11 @@ Unknown/custom or unreviewed configurations fail closed in this new API.
   be valid evidence; `tool_calls=None` cannot establish that no calls occurred.
 - Alternatives, structural fallback paths, enabled reference sources,
   decision labels, composite operators, and assistant-turn evidence are checked
-  without invoking a provider or computing a quality score.
+  without invoking a provider or computing a quality score. Hallucination
+  admission rejects malformed consumed references even when another reference
+  source is valid; absent or known-empty sources can still use a valid alternative.
+  Schema checks follow schema positions and local references, not literal data
+  or property names such as `$ref`, and never fetch external references.
 - Decisions expose stable reason codes, severity, static messages, and safe
   requirement coordinates through `decision.to_dict()`. Payloads, source IDs,
   configured paths, and exception strings are not echoed in reasons.
@@ -718,11 +722,17 @@ Unknown/custom or unreviewed configurations fail closed in this new API.
   selection, tool argument matching without missing-data skips, MCP trace
   completeness, turn latency, and turn token cost. Tool comparisons require
   complete, unambiguous capture; order-sensitive comparisons require reliable
-  ordering, not identifier-based tie-breaking. Tool argument matching requires
-  explicit argument objects on both observed and authored calls: use `{}` for
-  known-empty arguments; `None` means unknown. Greedy subset argument pairing
+  ordering, not identifier-based tie-breaking. Greedy subset argument pairing
   also requires established ordering. Turn telemetry may admit missing
   measurements with warnings, but malformed consumed values are rejected.
+- In every scope, tool argument matching and nonempty MCP trace comparisons
+  require argument objects on both actual and expected calls: `{}` means
+  observed no arguments; `None` means unknown. MCP expected entries with unknown
+  arguments are invalid configurations; unknown actual arguments fail evidence
+  validation. An empty expected trace needs no argument comparison, but still
+  requires observed tool calls (including `[]`). Legacy direct MCP scoring is
+  unchanged and can match two `None` inputs; use admission before scoring when
+  argument equality must be verified.
 - Weighted composites require finite positive configured and remaining active
   weight. A legitimate zero quality score remains usable evidence; zero total
   weight does not.

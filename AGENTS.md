@@ -473,7 +473,14 @@ def test_my_metric_failure():
   without computing quality. A composite with no usable children is not ready.
 - Validate decision configuration and expected values before provider calls;
   share pure validators with scoring. Reject invalid/non-finite structural values
-  and schemas without resolving external references.
+  and schemas without resolving external references. Traverse schema positions,
+  not property maps or literal data; check local reference targets too.
+- A valid hallucination reference alternative must not hide malformed consumed
+  sources. Preserve absent/known-empty alternatives and ignore disabled sources.
+- MCP admission requires argument objects on expected and actual calls when
+  comparisons are needed: `{}` is observed empty, `None` is unknown. Empty
+  expected traces need no argument comparison. Keep the opt-in gate distinct
+  from legacy direct scoring, which can still match two unknown inputs.
 - `validate_metric` context-only success is not readiness. Check mode, scope,
   execution/resources first; then actual typed evidence and associated Group
   diagnostics. Related traces are not repeated runs or labeled datasets.

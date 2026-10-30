@@ -11,6 +11,7 @@ import json
 import math
 import re
 import types
+from collections.abc import Iterator
 from enum import Enum
 from typing import Any, Union, get_args, get_origin, get_type_hints
 from urllib.parse import unquote
@@ -259,8 +260,8 @@ def _tool_call(value: Any) -> ToolCall:
         raise ValueError("Invalid tool configuration")
     if type(value.get("name")) is not str or not value["name"]:
         raise ValueError("Invalid tool configuration")
-    if value.get("input") is not None and type(value["input"]) is not dict:
-        raise ValueError("Invalid tool configuration")
+    if type(value.get("input")) is not dict:
+        raise ValueError("Expected trace arguments must be observed objects")
     if value.get("output") is not None and type(value["output"]) not in (str, dict):
         raise ValueError("Invalid tool configuration")
     return ToolCall(**value)
@@ -309,31 +310,73 @@ def _schema(value: Any) -> None:
     validator = validator_for(value)
     validator.check_schema(value)
 
-    def anchor(resource: Any, name: str, *, root: bool = True) -> Any:
-        if type(resource) is dict:
-            identifier = validator.ID_OF(resource)
-            if not root and isinstance(identifier, str) and identifier and not identifier.startswith("#"):
-                return None
-            if name in (resource.get("$anchor"), resource.get("$dynamicAnchor")) or identifier == f"#{name}":
-                return resource
-            for child in resource.values():
-                found = anchor(child, name, root=False)
-                if found is not None:
-                    return found
-        elif type(resource) is list:
-            for child in resource:
-                found = anchor(child, name, root=False)
-                if found is not None:
-                    return found
-        return None
+    def subschemas(node: dict[str, Any], dialect: Any) -> Iterator[Any]:
+        # Only schema positions, never property maps, examples, const/enum values
+        # or unknown extension data. Older drafts also allow tuple items and
+        # schema-valued dependencies, extends, type and disallow.
+        keywords = dialect.VALIDATORS.keys()
+        for key in {"properties", "patternProperties", "dependencies", "dependentSchemas"} & keywords | {
+            "definitions",
+            "$defs",
+        }:
+            for child in node.get(key, {}).values():
+                if type(child) in (dict, bool):
+                    yield child
+        single = {
+            "items",
+            "additionalItems",
+            "additionalProperties",
+            "contains",
+            "propertyNames",
+            "not",
+            "unevaluatedItems",
+            "unevaluatedProperties",
+            "extends",
+            "type",
+            "disallow",
+        } & keywords
+        if "if" in keywords:
+            single.update({"if", "then", "else"})
+        if "dependentSchemas" in keywords:
+            single.add("contentSchema")
+        for key in single | ({"allOf", "anyOf", "oneOf", "prefixItems"} & keywords):
+            child = node.get(key)
+            if type(child) in (dict, bool):
+                yield child
+            elif type(child) is list:
+                yield from (item for item in child if type(item) in (dict, bool))
 
-    def target(resource: Any, reference: str) -> Any:
+    def anchor(resource: Any, name: str, dialect: Any, *, root: bool = True) -> tuple[Any, Any]:
+        if type(resource) is not dict:
+            return None, dialect
+        dialect = validator_for(resource, default=dialect)
+        identifier = dialect.ID_OF(resource)
+        legacy_anchor = resource.get("id" if "id" in dialect.META_SCHEMA else "$id")
+        if not root and isinstance(identifier, str) and identifier and not identifier.startswith("#"):
+            return None, dialect
+        if (
+            ("$recursiveRef" in dialect.VALIDATORS or "$dynamicRef" in dialect.VALIDATORS)
+            and resource.get("$anchor") == name
+            or "$dynamicRef" in dialect.VALIDATORS
+            and resource.get("$dynamicAnchor") == name
+            or legacy_anchor == f"#{name}"
+        ):
+            return resource, dialect
+        for child in subschemas(resource, dialect):
+            found, found_dialect = anchor(child, name, dialect, root=False)
+            if found is not None:
+                return found, found_dialect
+        return None, dialect
+
+    def target(resource: Any, reference: str, dialect: Any) -> tuple[Any, Any, Any]:
         fragment = unquote(reference.removeprefix("#"))
         if not fragment:
-            return resource
+            return resource, resource, dialect
         if not fragment.startswith("/"):
-            return anchor(resource, fragment)
+            found, found_dialect = anchor(resource, fragment, dialect)
+            return found, resource, found_dialect
         current = resource
+        schema_children = {id(child) for child in subschemas(current, dialect)}
         for part in fragment[1:].split("/"):
             part = part.replace("~1", "/").replace("~0", "~")
             if type(current) is dict and part in current:
@@ -341,28 +384,44 @@ def _schema(value: Any) -> None:
             elif type(current) is list and part.isdecimal() and int(part) < len(current):
                 current = current[int(part)]
             else:
-                return None
-        return current
+                return None, resource, dialect
+            # Crossing a schema resource changes local-reference scope; IDs in
+            # literal data and property maps do not.
+            if id(current) in schema_children and type(current) is dict:
+                dialect = validator_for(current, default=dialect)
+                identifier = dialect.ID_OF(current)
+                if isinstance(identifier, str) and identifier and not identifier.startswith("#"):
+                    resource = current
+                schema_children = {id(child) for child in subschemas(current, dialect)}
+        return current, resource, dialect
 
-    def local_references(node: Any, resource: Any) -> None:
-        if type(node) is dict:
-            identifier = validator.ID_OF(node)
-            if isinstance(identifier, str) and identifier and not identifier.startswith("#"):
-                resource = node
-            for key, child in node.items():
-                if key in {"$ref", "$dynamicRef", "$recursiveRef"}:
-                    if type(child) is not str or (child and not child.startswith("#")):
-                        raise ValueError("External schema references are unsupported")
-                    resolved = target(resource, child)
-                    if type(resolved) not in (dict, bool):
-                        raise ValueError("Local schema reference has no schema target")
-                    validator.check_schema(resolved)
-                local_references(child, resource)
-        elif type(node) is list:
-            for child in node:
-                local_references(child, resource)
+    visited = set()
 
-    local_references(value, value)
+    def local_references(node: Any, resource: Any, dialect: Any) -> None:
+        if type(node) is not dict:
+            return
+        dialect = validator_for(node, default=dialect)
+        identifier = dialect.ID_OF(node)
+        if isinstance(identifier, str) and identifier and not identifier.startswith("#"):
+            resource = node
+        identity = (id(node), id(resource), dialect)
+        if identity in visited:
+            return
+        visited.add(identity)
+        for key in {"$ref", "$dynamicRef", "$recursiveRef"} & node.keys():
+            reference = node[key]
+            if type(reference) is not str or (reference and not reference.startswith("#")):
+                raise ValueError("External schema references are unsupported")
+            resolved, resolved_resource, resolved_dialect = target(resource, reference, dialect)
+            if type(resolved) not in (dict, bool):
+                raise ValueError("Local schema reference has no schema target")
+            validator_for(resolved, default=resolved_dialect).check_schema(resolved)
+            # A pointer can turn an otherwise literal dictionary into a schema.
+            local_references(resolved, resolved_resource, resolved_dialect)
+        for child in subschemas(node, dialect):
+            local_references(child, resource, dialect)
+
+    local_references(value, value, validator)
 
 
 def _construct_metric(kind: str, cls: type[BaseMetric], options: dict[str, Any] | None) -> BaseMetric:
@@ -789,6 +848,9 @@ def _requirements(kind: str, metric: BaseMetric) -> EvidenceRequirement:
                 for path in ("tool_calls", "expected_tool_calls")
             )
         )
+    if kind == "mcp_trace_completeness":
+        predicate = "tool_calls_with_arguments" if metric.expected_trace else "tool_calls"
+        return _field("tool_calls", predicate)
     if kind == "argument_correctness":
         return _all(_field("input"), _field("tool_calls", "tool_calls", min_items=1))
     if kind in {"faithfulness", "context_precision", "context_recall", "context_relevancy", "context_entity_recall"}:

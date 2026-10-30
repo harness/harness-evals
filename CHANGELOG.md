@@ -5,6 +5,20 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.1]
+
+### Fixed
+
+- Hallucination admission rejects malformed consumed references even when a
+  valid alternative exists, while preserving absent and known-empty alternatives.
+- Schema admission distinguishes schema positions from property names and
+  literal data, accepting properties named `$ref` while validating nested local
+  references without external I/O.
+- MCP trace completeness admission requires known argument objects for expected
+  and actual calls when comparisons are needed. `{}` means observed no arguments;
+  `None` remains unknown. Empty expected traces and legacy direct scoring retain
+  their existing behavior.
+
 ## [0.28.0]
 
 ### Added

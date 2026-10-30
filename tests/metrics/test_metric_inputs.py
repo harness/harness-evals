@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import abc
 import inspect
+from dataclasses import FrozenInstanceError
+from itertools import combinations
 
 import pytest
 
@@ -97,6 +99,32 @@ class TestMetricInputs:
         assert inputs.optional == frozenset({EXPECTED})
         assert inputs.fields == frozenset({OUTPUT, EXPECTED})
 
+    def test_alternatives_are_normalized_immutable_and_deterministic(self):
+        groups = [["context", "expected", "context"], ["messages"], ["messages"]]
+        inputs = MetricInputs(["output"], ["tags"], any_of=groups)
+        same = MetricInputs({OUTPUT}, {MetricInput.TAGS}, any_of=({MetricInput.MESSAGES}, {EXPECTED, CONTEXT}))
+        groups[0].append("metadata")
+
+        assert inputs == same
+        assert hash(inputs) == hash(same)
+        assert inputs.any_of == (frozenset({CONTEXT, EXPECTED}), frozenset({MetricInput.MESSAGES}))
+        assert inputs.fields == frozenset({OUTPUT, CONTEXT, EXPECTED, MetricInput.MESSAGES, MetricInput.TAGS})
+        with pytest.raises(FrozenInstanceError):
+            inputs.any_of = ()
+
+    def test_empty_alternative_is_unconditional_but_keeps_all_projection_fields(self):
+        inputs = MetricInputs({OUTPUT}, any_of=({OUTPUT}, {EXPECTED, CONTEXT}))
+
+        assert inputs == MetricInputs({OUTPUT}, {EXPECTED, CONTEXT})
+        assert MetricInputs(any_of=((),)) == MetricInputs()
+
+    @pytest.mark.parametrize("groups", ["output", ["output"]])
+    def test_rejects_strings_instead_of_alternative_groups(self, groups):
+        with pytest.raises(TypeError, match="not a string"):
+            MetricInputs(any_of=groups)
+        with pytest.raises(TypeError, match="not a string"):
+            MetricInputs.from_paths(any_of=groups)
+
     def test_rejects_a_field_that_is_both_required_and_optional(self):
         with pytest.raises(ValueError, match="both required and optional: output"):
             MetricInputs(required={OUTPUT}, optional={OUTPUT})
@@ -118,6 +146,39 @@ class TestMetricInputs:
         )
 
         assert combined == MetricInputs(required={OUTPUT, EXPECTED, CONTEXT})
+
+    def test_union_preserves_conjunction_of_alternatives(self):
+        left = MetricInputs({OUTPUT}, any_of=({CONTEXT}, {EXPECTED}))
+        right = MetricInputs(any_of=({MetricInput.MESSAGES}, {MetricInput.TOOL_CALLS}))
+        combined = MetricInputs.union(left, right)
+
+        assert set(combined.any_of) == {
+            frozenset({a, b}) for a in (CONTEXT, EXPECTED) for b in (MetricInput.MESSAGES, MetricInput.TOOL_CALLS)
+        }
+        assert combined.fields == left.fields | right.fields
+        fields = tuple(combined.fields)
+
+        def satisfied(inputs: MetricInputs, supplied: frozenset[MetricInput]) -> bool:
+            return inputs.required <= supplied and (
+                not inputs.any_of or any(group <= supplied for group in inputs.any_of)
+            )
+
+        for size in range(len(fields) + 1):
+            for subset in combinations(fields, size):
+                supplied = frozenset(subset)
+                assert satisfied(combined, supplied) == (satisfied(left, supplied) and satisfied(right, supplied))
+
+    def test_union_with_unknown_stays_unknown_and_empty_union_is_empty(self):
+        alternatives = MetricInputs(any_of=({OUTPUT}, {CONTEXT}))
+        assert MetricInputs.union(alternatives, MetricInputs.unknown()) == MetricInputs.unknown()
+        assert MetricInputs.union() == MetricInputs()
+
+    def test_from_paths_resolves_alternative_roots_and_fails_closed(self):
+        assert MetricInputs.from_paths(
+            required=["output"], any_of=(["context"], ["$.messages[0].content"])
+        ) == MetricInputs({OUTPUT}, any_of=({CONTEXT}, {MetricInput.MESSAGES}))
+        assert MetricInputs.from_paths(any_of=(["output"], ["$..id"])) == MetricInputs.unknown()
+        assert MetricInputs.from_paths(optional=["$.*"]) == MetricInputs.unknown()
 
     @pytest.mark.parametrize(
         ("path", "field"),
@@ -289,7 +350,7 @@ class TestConfiguredInputs:
         )
 
         assert metric.eval_inputs == MetricInputs(
-            required={OUTPUT, MetricInput.TOOL_CALLS}, optional={EXPECTED, MetricInput.TAGS}
+            required={OUTPUT}, optional={EXPECTED, MetricInput.TOOL_CALLS, MetricInput.TAGS}
         )
 
     def test_decision_composite_reads_its_sub_check_paths(self):
@@ -319,7 +380,7 @@ class TestConfiguredInputs:
     def test_structural_similarity_reads_its_field_paths(self):
         metric = StructuralSimilarityMetric(output_field="metadata.manifest")
 
-        assert metric.eval_inputs == MetricInputs(required={MetricInput.METADATA, EXPECTED}, optional={OUTPUT})
+        assert metric.eval_inputs == MetricInputs(required={EXPECTED}, any_of=({MetricInput.METADATA}, {OUTPUT}))
 
     def test_negated_checks_need_only_output(self):
         assert ContainsMetric(negate=True, forbidden="secret").eval_inputs == MetricInputs(required={OUTPUT})
@@ -340,10 +401,10 @@ class TestConfiguredInputs:
 
     def test_hallucination_references_follow_configuration(self):
         assert HallucinationMetric(llm=MockLLM()).eval_inputs == MetricInputs(
-            required={OUTPUT, CONTEXT}, optional={EXPECTED}
+            required={OUTPUT}, any_of=({CONTEXT}, {EXPECTED})
         )
         assert HallucinationMetric(llm=MockLLM(), include_messages_as_reference=True).eval_inputs == MetricInputs(
-            required={OUTPUT, MetricInput.MESSAGES}, optional={CONTEXT, EXPECTED}
+            required={OUTPUT}, any_of=({CONTEXT}, {EXPECTED}, {MetricInput.MESSAGES})
         )
 
 
@@ -354,6 +415,19 @@ class TestApplicability:
             applicability_for_inputs(MetricInputs(required={INPUT, OUTPUT}, optional={EXPECTED})) == ONLINE_EVERYWHERE
         )
         assert applicability_for_inputs(MetricInputs(required={OUTPUT, EXPECTED})) == OFFLINE_ONLY
+
+    def test_applicability_requires_a_whole_alternative_and_all_required_fields(self):
+        assert (
+            applicability_for_inputs(
+                MetricInputs({OUTPUT}, any_of=({CONTEXT}, {MetricInput.MESSAGES, MetricInput.TOOL_CALLS}))
+            )
+            == ONLINE_EVERYWHERE
+        )
+        assert (
+            applicability_for_inputs(MetricInputs({OUTPUT}, any_of=({MetricInput.MESSAGES, EXPECTED}, {CONTEXT})))
+            == OFFLINE_ONLY
+        )
+        assert applicability_for_inputs(MetricInputs({EXPECTED}, any_of=({MetricInput.MESSAGES},))) == OFFLINE_ONLY
 
     def test_authored_metadata_keeps_a_metric_offline(self):
         assert RoleAdherenceMetric(llm=MockLLM()).applicability == OFFLINE_ONLY
@@ -387,7 +461,7 @@ class TestApplicability:
             ),
             pytest.param(
                 CompositeMetric(
-                    sub_scores=[{"name": "check", "check": {"type": "field_exists", "field": "metadata.x"}}]
+                    sub_scores=[{"name": "check", "check": {"type": "json_schema", "field": "metadata.x"}}]
                 ),
                 CompositeMetric(sub_scores=[{"name": "check", "check": {"type": "field_exists", "field": "output.x"}}]),
                 id="composite",

@@ -18,6 +18,7 @@ import os
 import types
 from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
+from weakref import WeakSet
 
 from harness_evals import BaseMetric, Dimension, EvalCase, Score
 from harness_evals.catalog import catalog
@@ -27,6 +28,8 @@ from harness_evals.llm.openai_embedding import OpenAIEmbedding
 from harness_evals.metrics import AnswerCorrectnessMetric, GEvalMetric, RubricJudgeMetric
 
 logger = logging.getLogger("harness_evals.metrics.factory")
+
+_FACTORY_COMPOSITE_CLASSES: WeakSet[type[BaseMetric]] = WeakSet()
 
 # Legacy option names supported by earlier metric configuration schemas.
 # Translate only values whose semantics remain unambiguous.
@@ -1057,6 +1060,7 @@ def _build_composite_metric(
                 return self._build_score(sub_scores, sub_weights, sub_details)
             return asyncio.run(self.a_measure(eval_case))
 
+    _FACTORY_COMPOSITE_CLASSES.add(CompositeMetric)
     return CompositeMetric()
 
 

@@ -8,7 +8,14 @@ from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, Metric
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ScoreQuestion
-from harness_evals.metrics.decision._common import _MISSING, decision_inputs, resolve_mode, resolve_state, score_rubric
+from harness_evals.metrics.decision._common import (
+    _MISSING,
+    decision_inputs,
+    resolve_mode,
+    resolve_state,
+    score_rubric,
+    validate_expected,
+)
 
 
 class ScoreMetric(BaseMetric):
@@ -24,7 +31,7 @@ class ScoreMetric(BaseMetric):
     is preserved in ``Score.metadata``.
     """
 
-    eval_inputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
+    eval_inputs: MetricInputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(
         self,
@@ -61,6 +68,10 @@ class ScoreMetric(BaseMetric):
 
         effective_mode = resolve_mode(self.mode, eval_case.expected)
         question = ScoreQuestion(instructions=self.instructions, criteria=self.criteria)
+        try:
+            validate_expected(question, effective_mode, eval_case.expected)
+        except ValueError as e:
+            raise ValueError(f"ScoreMetric {e}") from e
         response = await self.provider.a_ask(state, {self.name: question})
         answer = response.answers[self.name]
         num_levels = len(self.criteria)

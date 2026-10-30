@@ -7,9 +7,13 @@ available metrics and sync them into their persistence layer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from harness_evals.applicability import applicability_for_inputs
 from harness_evals.core.metric import BaseMetric, Dimension, MetricApplicability, MetricInputs, SafetyMetric
+
+if TYPE_CHECKING:
+    from harness_evals.validation.types import ConfiguredMetricContract
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,49 @@ class CatalogEntry:
     description: str
     eval_inputs: MetricInputs = field(default_factory=MetricInputs.unknown)
     applicability: MetricApplicability = field(default_factory=MetricApplicability)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON discovery metadata, not eligibility for a selected configuration.
+
+        Legacy applicability is unchanged, including its exclusion of Group.
+        ``group_candidate`` only invites configuration-specific contract review.
+        The class itself is deliberately excluded from this JSON representation.
+        """
+        from harness_evals.validation.contracts import _catalog_contract_metadata
+
+        return {
+            "description_kind": "catalog",
+            "kind": self.kind,
+            "name": self.name,
+            "dimension": self.dimension.value,
+            "category": self.category,
+            "default_threshold": self.default_threshold,
+            "requires_llm": self.requires_llm,
+            "requires_embedding": self.requires_embedding,
+            "requires_provider": self.requires_provider,
+            "description": self.description,
+            "projection_kind": "class_declaration",
+            "eval_inputs": {
+                "required": sorted(value.value for value in self.eval_inputs.required),
+                "optional": sorted(value.value for value in self.eval_inputs.optional),
+                "any_of": [sorted(value.value for value in group) for group in self.eval_inputs.any_of],
+            },
+            "applicability_kind": "possibilities",
+            "applicability": {
+                "modes": sorted(mode.value for mode in self.applicability.modes),
+                "online_scopes": sorted(scope.value for scope in self.applicability.online_scopes),
+            },
+            **_catalog_contract_metadata(self.kind, self.metric_class),
+        }
+
+    def configured_contract(self, options: dict[str, Any] | None = None) -> ConfiguredMetricContract:
+        """Resolve constructor-style options; plugin rows cannot resolve as built-ins."""
+        from harness_evals.validation.contracts import _rejected, resolve_metric_contract
+        from harness_evals.validation.types import ReasonCode
+
+        if _build_registry().get(self.kind) is not self.metric_class:
+            return _rejected(self.kind, ReasonCode.UNREVIEWED_CONTRACT)
+        return resolve_metric_contract(self.kind, options)
 
 
 def _category_from_module(cls: type) -> str:

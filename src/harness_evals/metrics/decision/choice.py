@@ -8,7 +8,14 @@ from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, Metric
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ChoiceQuestion
-from harness_evals.metrics.decision._common import _MISSING, decision_inputs, resolve_mode, resolve_state, score_choice
+from harness_evals.metrics.decision._common import (
+    _MISSING,
+    decision_inputs,
+    resolve_mode,
+    resolve_state,
+    score_choice,
+    validate_expected,
+)
 
 
 class ChoiceMetric(BaseMetric):
@@ -22,7 +29,7 @@ class ChoiceMetric(BaseMetric):
     pass/fail judgment.
     """
 
-    eval_inputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
+    eval_inputs: MetricInputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(
         self,
@@ -59,10 +66,11 @@ class ChoiceMetric(BaseMetric):
 
         effective_mode = resolve_mode(self.mode, eval_case.expected)
         question = ChoiceQuestion(instructions=self.instructions, criteria=self.criteria)
+        validate_expected(question, effective_mode, eval_case.expected)
         response = await self.provider.a_ask(state, {self.name: question})
         answer = response.answers[self.name]
 
-        value, metadata = score_choice(answer, effective_mode, eval_case.expected)
+        value, metadata = score_choice(answer, effective_mode, eval_case.expected, self.criteria)
         metadata.update(
             {
                 "model": response.model,

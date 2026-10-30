@@ -102,32 +102,42 @@ def _inputs_from_paths(paths: Iterable[str], argument: str) -> frozenset[MetricI
 class MetricInputs:
     """The :class:`EvalCase` fields a metric reads.
 
-    ``required`` fields conservatively determine scope eligibility;
-    ``optional`` fields are read when present. Adapters materialize both.
+    All ``required`` fields and at least one all-of group in ``any_of`` must
+    be available for scope eligibility. An empty ``any_of`` adds no constraint.
+    ``optional`` fields are read when present. Adapters materialize every field,
+    including all alternatives, not just the first satisfiable group.
     These declarations describe field dependencies, not value-level validation:
     eligibility does not guarantee a particular case contains usable data.
-
-    This model cannot express alternatives exactly. When any one of several
-    fields suffices, declare the primary one as required and the others as
-    optional. Eligibility can therefore be stricter than the metric's actual
-    scoring contract; metrics retain their own missing-data behavior.
     """
 
     required: frozenset[MetricInput]
     optional: frozenset[MetricInput]
+    any_of: tuple[frozenset[MetricInput], ...]
 
     def __init__(
         self,
         required: Iterable[MetricInput | str] = (),
         optional: Iterable[MetricInput | str] = (),
+        *,
+        any_of: Iterable[Iterable[MetricInput | str]] = (),
     ) -> None:
         required_inputs = _coerce_inputs(required, "required")
         optional_inputs = _coerce_inputs(optional, "optional")
         if overlap := required_inputs & optional_inputs:
             names = ", ".join(sorted(field.value for field in overlap))
             raise ValueError(f"inputs cannot be both required and optional: {names}")
+        if isinstance(any_of, str):
+            raise TypeError("any_of must be an iterable of field groups, not a string")
+        groups = {_coerce_inputs(group, "any_of group") - required_inputs for group in any_of}
+        if frozenset() in groups:
+            # An empty alternative is always satisfiable. Keep the other
+            # alternatives materialized even though they impose no constraint.
+            optional_inputs |= frozenset().union(*groups) - required_inputs
+            groups = set()
+        normalized = tuple(sorted(groups, key=lambda group: tuple(sorted(field.value for field in group))))
         object.__setattr__(self, "required", required_inputs)
         object.__setattr__(self, "optional", optional_inputs)
+        object.__setattr__(self, "any_of", normalized)
 
     @classmethod
     def unknown(cls) -> MetricInputs:
@@ -135,7 +145,13 @@ class MetricInputs:
         return cls(required=MetricInput)
 
     @classmethod
-    def from_paths(cls, required: Iterable[str] = (), optional: Iterable[str] = ()) -> MetricInputs:
+    def from_paths(
+        cls,
+        required: Iterable[str] = (),
+        optional: Iterable[str] = (),
+        *,
+        any_of: Iterable[Iterable[str]] = (),
+    ) -> MetricInputs:
         """Declare inputs from ``EvalCase.to_dict()`` paths.
 
         Any path that does not resolve to a single field makes every field
@@ -143,21 +159,32 @@ class MetricInputs:
         """
         required_inputs = _inputs_from_paths(required, "required")
         optional_inputs = _inputs_from_paths(optional, "optional")
-        if required_inputs is None or optional_inputs is None:
+        if isinstance(any_of, str):
+            raise TypeError("any_of must be an iterable of path groups, not a string")
+        groups = [_inputs_from_paths(group, "any_of group") for group in any_of]
+        if required_inputs is None or optional_inputs is None or any(group is None for group in groups):
             return cls.unknown()
-        return cls(required=required_inputs, optional=optional_inputs - required_inputs)
+        return cls(
+            required=required_inputs,
+            optional=optional_inputs - required_inputs,
+            any_of=(group for group in groups if group is not None),
+        )
 
     @classmethod
     def union(cls, *declarations: MetricInputs) -> MetricInputs:
-        """Combine declarations; a field required by any declaration stays required."""
+        """Require every declaration, distributing their alternatives with a Cartesian product."""
         required = frozenset().union(*(declaration.required for declaration in declarations))
         optional = frozenset().union(*(declaration.optional for declaration in declarations))
-        return cls(required=required, optional=optional - required)
+        alternatives: set[frozenset[MetricInput]] = {frozenset()}
+        for declaration in declarations:
+            if declaration.any_of:
+                alternatives = {left | right for left in alternatives for right in declaration.any_of}
+        return cls(required=required, optional=optional - required, any_of=alternatives)
 
     @property
     def fields(self) -> frozenset[MetricInput]:
         """Every field the metric may read."""
-        return self.required | self.optional
+        return self.required | self.optional | frozenset().union(*self.any_of)
 
 
 class EvaluationMode(str, Enum):

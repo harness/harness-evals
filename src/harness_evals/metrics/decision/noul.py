@@ -8,7 +8,14 @@ from harness_evals.core.metric import BaseMetric, Dimension, MetricInput, Metric
 from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import NoulQuestion
-from harness_evals.metrics.decision._common import _MISSING, decision_inputs, resolve_mode, resolve_state, score_noul
+from harness_evals.metrics.decision._common import (
+    _MISSING,
+    decision_inputs,
+    resolve_mode,
+    resolve_state,
+    score_noul,
+    validate_expected,
+)
 
 
 class NoulMetric(BaseMetric):
@@ -22,7 +29,7 @@ class NoulMetric(BaseMetric):
     not a pass/fail judgment.
     """
 
-    eval_inputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
+    eval_inputs: MetricInputs = MetricInputs(required={MetricInput.OUTPUT}, optional={MetricInput.EXPECTED})
 
     def __init__(
         self,
@@ -61,6 +68,7 @@ class NoulMetric(BaseMetric):
 
         effective_mode = resolve_mode(self.mode, eval_case.expected)
         question = NoulQuestion(instructions=self.instructions, criteria=self.criteria)
+        validate_expected(question, effective_mode, eval_case.expected)
         response = await self.provider.a_ask(state, {self.name: question})
         answer = response.answers[self.name]
 

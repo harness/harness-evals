@@ -68,7 +68,8 @@ def _field_exists_operator(eval_case_dict: dict[str, Any], config: dict[str, Any
 
 
 def _equals_operator(eval_case_dict: dict[str, Any], config: dict[str, Any]) -> float:
-    res = _resolve_paths(eval_case_dict, config, ["field", "expected_field"])
+    keys = ["field"] if "value" in config else ["field", "expected_field"]
+    res = _resolve_paths(eval_case_dict, config, keys)
     actual = res.get("field")
 
     expected = config["value"] if "value" in config else res.get("expected_field")

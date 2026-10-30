@@ -16,7 +16,24 @@ from harness_evals.utils.path import extract_path
 
 logger = logging.getLogger(__name__)
 
-_CHECK_PATH_KEYS = ("field", "output_field", "expected_field")
+# Only these operators reject absent operands. The remaining operators score
+# absence directly, so their operands must still be projected but are optional.
+_REQUIRED_OPERATOR_PATHS: dict[str, tuple[str, ...]] = {
+    "deep_diff": ("output_field", "expected_field"),
+    "json_schema": ("field",),
+    "list_field_match": ("field", "expected_field"),
+    "unique_ratio": ("field",),
+}
+_OPTIONAL_OPERATOR_PATHS: dict[str, tuple[str, ...]] = {
+    "field_exists": ("field",),
+    "equals": ("field", "expected_field"),
+    "contains": ("field",),
+    "contains_all": ("field",),
+    "count_match": ("field", "expected_field"),
+    "regex_match": ("field",),
+    "range": ("field",),
+    "length": ("field",),
+}
 
 
 def _sub_score_inputs(sub_scores: list[dict[str, Any]]) -> MetricInputs:
@@ -25,10 +42,23 @@ def _sub_score_inputs(sub_scores: list[dict[str, Any]]) -> MetricInputs:
     optional = ["expected"]
     for sub in sub_scores:
         check = sub["check"]
-        for key in _CHECK_PATH_KEYS:
+        operator = check["type"]
+        if operator not in _REQUIRED_OPERATOR_PATHS and operator not in _OPTIONAL_OPERATOR_PATHS:
+            return MetricInputs.unknown()
+        for key in _REQUIRED_OPERATOR_PATHS.get(operator, ()):
             if path := check.get(key):
                 skippable = key == "field" and sub.get("skip_when_missing", False)
                 (optional if skippable else required).append(path)
+        for key in _OPTIONAL_OPERATOR_PATHS.get(operator, ()):
+            if operator == "equals" and key == "expected_field" and "value" in check:
+                continue
+            if path := check.get(key):
+                optional.append(path)
+            elif operator == "field_exists":
+                # Its empty path reads the entire case, not a single field.
+                return MetricInputs.unknown()
+        if sub.get("skip_when_missing") and (path := check.get("field")):
+            optional.append(path)
     return MetricInputs.from_paths(required=required, optional=optional)
 
 
@@ -36,7 +66,7 @@ class CompositeMetric(BaseMetric):
     """Declarative composite metric supporting weighted sub-checks."""
 
     # Every instance derives its inputs from its sub-checks' paths.
-    eval_inputs = MetricInputs.unknown()
+    eval_inputs: MetricInputs = MetricInputs.unknown()
     catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT}))
 
     def __init__(

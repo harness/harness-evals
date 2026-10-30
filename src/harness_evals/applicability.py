@@ -1,11 +1,11 @@
 """Conservative scope eligibility, derived from declared field dependencies.
 
 Every metric can run offline against authored eval cases. A metric is eligible
-for an online scope when its adapter can supply all declared required fields.
+for an online scope when its adapter can supply all declared required fields
+and at least one declared all-of alternative (if alternatives are present).
 This is a source capability check, not proof that a particular trace contains
 usable values or authored metadata keys. Metrics retain their own missing-data
-behavior. Alternative input sources can make declarations conservative; see
-``MetricInputs``. The Group adapter assembles message-scoped evidence, but
+behavior. The Group adapter assembles message-scoped evidence, but
 Group metric compatibility and actual-input sufficiency require a separate
 reviewed gate. Group is deliberately not advertised by this capability table.
 """
@@ -47,7 +47,11 @@ ONLINE_SCOPE_INPUTS: Mapping[OnlineScope, frozenset[MetricInput]] = MappingProxy
 
 def applicability_for_inputs(inputs: MetricInputs) -> MetricApplicability:
     """Return scope eligibility from adapter capabilities, without inspecting case values."""
-    scopes = frozenset(scope for scope, supplied in ONLINE_SCOPE_INPUTS.items() if inputs.required <= supplied)
+    scopes = frozenset(
+        scope
+        for scope, supplied in ONLINE_SCOPE_INPUTS.items()
+        if inputs.required <= supplied and (not inputs.any_of or any(group <= supplied for group in inputs.any_of))
+    )
     if not scopes:
         return MetricApplicability()
     return MetricApplicability(

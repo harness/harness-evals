@@ -58,6 +58,8 @@ class GroupIssue(str, Enum):
     INVALID_TELEMETRY = "invalid_telemetry"
     UNSUPPORTED_EVIDENCE = "unsupported_evidence"
     AMBIGUOUS_TOOL_LINK = "ambiguous_tool_link"
+    # Stable presentation order is not proof of execution order.
+    AMBIGUOUS_TOOL_ORDER = "ambiguous_tool_order"
     UNMATCHED_TOOL_RESULT = "unmatched_tool_result"
     AMBIGUOUS_USAGE = "ambiguous_usage"
 

@@ -5,6 +5,37 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0]
+
+### Added
+
+- Versioned JSON configured-metric contracts, catalog JSON discovery, and pure
+  resolution/admission APIs separating possible configurations from selected
+  metric requirements and actual evidence readiness.
+- Shared mode, scope, execution, alternative/nested evidence, and known-empty
+  validation with structured payload-safe rejection and warning reasons. No
+  provider construction, external code loading, or scorer execution is needed.
+- Explicit initial Group admission for reviewed tool comparisons and per-turn
+  telemetry, subject to capture, ownership, ordering, and usable-evidence checks.
+  Other Group configurations remain excluded; existing runners are not changed
+  to enforce the opt-in gate automatically.
+
+### Fixed
+
+- Configuration-specific declarations for hallucination reference alternatives,
+  structural path fallback, and composite literal/absence semantics.
+- Decision correctness configuration and expected-value validation now fail
+  before provider calls, sharing pure validators with scoring.
+- Composite declarations preserve alternative requirements across child metrics
+  instead of flattening them into an inaccurate field requirement.
+- Admission distinguishes unknown tool arguments from observed empty objects,
+  rejects malformed turn telemetry and unusable composite weights, and blocks
+  order-sensitive comparisons when execution order is not established.
+- Identified span-derived tool results preserve their execution association
+  without introducing false source-message identity ambiguity.
+- Regex scoring and input projection follow current mutable configuration
+  rather than stale constructor state.
+
 ## [0.27.0]
 
 ### Added

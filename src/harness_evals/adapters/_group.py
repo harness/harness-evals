@@ -149,7 +149,7 @@ class _Builder:
         self.spans: list[_Span] = []
         self.by_identity: dict[tuple[tuple[str, str], str], int] = {}
         self.nodes: list[_Node] = []
-        self.message_ids: dict[tuple[tuple[str, str], str], tuple[dict[str, Any], int]] = {}
+        self.message_ids: dict[tuple[Any, ...], tuple[dict[str, Any], int]] = {}
         self.intents: list[_Call] = []
         self.executions: list[_Call] = []
         self.results: list[_Result] = []
@@ -297,10 +297,18 @@ class _Builder:
             "output": None,
         }
 
-    def message(self, span_index: int, raw: dict[str, Any], phase: int, position: int) -> int:
+    def message(
+        self, span_index: int, raw: dict[str, Any], phase: int, position: int, *, derived_result: bool = False
+    ) -> int:
         span = self.spans[span_index]
         message_id = _id(_first(raw, ("message_id", "id")))
         identity = (span.scope, message_id) if message_id is not None else None
+        if derived_result and span.identity is not None:
+            # A single span result is an identified observation, not an
+            # unidentified source message. Keep its namespace disjoint from
+            # caller-supplied message IDs, even if one mimics the rendered ID.
+            identity = (span.scope, span.sid, "tool_result")
+            message_id = json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
         if identity in self.message_ids:
             previous, node = self.message_ids[identity]
             _require_same(previous, raw)
@@ -337,6 +345,8 @@ class _Builder:
         metadata = dict(raw["metadata"]) if isinstance(raw.get("metadata"), dict) else {}
         if message_id is not None:
             metadata["message_id"] = message_id
+            if derived_result:
+                metadata["source_span_id"] = span.sid
         if any(call_id is not None for call_id in call_ids):
             metadata["tool_call_ids"] = call_ids
         result_id = _id(_first(raw, ("tool_call_id", "tool_use_id", "call_id")))
@@ -458,7 +468,7 @@ class _Builder:
             raw_result = {"role": "tool", "content": content}
             if call_id is not None:
                 raw_result["tool_call_id"] = call_id
-            result_node = self.message(span_index, raw_result, 1, len(span.outputs))
+            result_node = self.message(span_index, raw_result, 1, len(span.outputs), derived_result=True)
             # The source payload is retained in ToolCall, not its rendered text.
             self.results[-1].value = output
             span.outputs.append(result_node)
@@ -690,6 +700,41 @@ class _Builder:
                     heapq.heappush(ready, (self.nodes[after].key, after))
         return ordered
 
+    def check_tool_order(self, ordered: list[int]) -> None:
+        """Diagnose a presentation sequence that is not an established order.
+
+        Consecutive executions suffice: a total order requires each adjacent
+        pair to be ordered. Propagate the latest execution ancestor through
+        the evidence graph in linear time instead of searching every pair.
+        Independent overlapping intervals (including tied starts) do not
+        establish an order; parent/intent/result dependencies still can.
+        """
+        if len(self.executions) < 2:
+            return
+        execution_spans = {execution.node: self.spans[execution.span] for execution in self.executions}
+        latest_ancestor = [-1] * len(self.nodes)
+        previous: _Span | None = None
+        rank = -1
+        for index in ordered:
+            latest = latest_ancestor[index]
+            current = execution_spans.get(index)
+            if current is not None:
+                if previous is not None and latest != rank:
+                    separated = (
+                        previous.start is not None
+                        and previous.end is not None
+                        and current.start is not None
+                        and previous.start < current.start
+                        and previous.end <= current.start
+                    )
+                    if not separated:
+                        self.issue(GroupIssue.AMBIGUOUS_TOOL_ORDER)
+                rank += 1
+                latest = rank
+                previous = current
+            for after in self.nodes[index].edges:
+                latest_ancestor[after] = max(latest_ancestor[after], latest)
+
     def ancestors(self, index: int) -> set[int] | None:
         ancestors = set()
         current = index
@@ -783,6 +828,7 @@ def assemble(members: Sequence[GroupTrace]) -> _Evidence:
     builder.build_nodes()
     builder.link_tools()
     ordered = builder.ordered()
+    builder.check_tool_order(ordered)
     usage, coverage = builder.usage()
     messages = [builder.nodes[node].message for node in ordered if builder.nodes[node].message is not None]
     executions = [builder.nodes[node].execution for node in ordered if builder.nodes[node].execution is not None]

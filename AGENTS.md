@@ -23,7 +23,7 @@ pip install -e ".[langfuse]"      # + Langfuse source/sink
 pip install -e ".[harness]"       # + Harness AI Service LLM provider
 pip install -e ".[benchmarks]"    # + Academic benchmarks (MMLU, GSM8K, HumanEval, etc.)
 pip install -e ".[all]"           # Everything
-pip install -e ".[all,dev]"       # Everything + dev tools
+poetry install --all-extras --with dev  # Everything + the Poetry dev group
 ```
 
 **Build tool**: Poetry via `pyproject.toml` (backend: `poetry-core`)
@@ -44,6 +44,24 @@ pytest tests/ --cov=harness_evals --cov-report=html  # With coverage
 - Test data: `tests/data/`
 
 **ALWAYS run `pytest tests/ -v` before committing.**
+
+### Workflow parity
+
+Both `.github/workflows/ci.yml` and the publish workflow's test job use Python
+**3.10, 3.11, and 3.12**. Test each version in a separate environment with the
+checked-in lockfile and all extras; a newer interpreter or core-only install is
+not a substitute. The `dev` dependencies are a Poetry group, not a pip extra.
+
+```bash
+poetry install --all-extras --with dev
+poetry run ruff check src/ tests/
+poetry run ruff format --check src/ tests/
+poetry run pytest tests/ -v --ignore=tests/sinks/test_sinks.py
+```
+
+The sink exclusion matches the workflows; also retain the full local suite.
+Do not weaken tests or workflow checks to obtain a passing result. Run checks
+without live provider credentials and report any skipped integration tests.
 
 ## Linting & Formatting
 
@@ -72,7 +90,13 @@ poetry version patch  # or minor/major, according to semver
 
 Follow semver: patch for fixes, minor for new metrics/features, major for breaking changes.
 Every release version bump must include a matching `CHANGELOG.md` entry that
-summarizes the user-visible changes.
+summarizes the user-visible changes. Before release, run `poetry check` and
+`poetry run python -m build` with build isolation, as in the publish job; do not
+rely only on `--no-isolation` builds. Inspect wheel/source contents and smoke-test
+public imports and metadata outside the checkout. Verify the workflow's version
+guard for the intended tag without creating it. Local checks cannot verify PyPI
+permissions or trusted-publisher configuration; never claim publishing succeeded
+without an actual successful publish job.
 
 ## Git Workflow
 
@@ -89,6 +113,7 @@ summarizes the user-visible changes.
 - Write a test file for every new metric
 - Use async/await for I/O (LLM calls, HTTP) — override `a_measure()` for async metrics
 - Run `ruff check` and `pytest` before committing
+- Update README.md for user-facing documentation and AGENTS.md for agent guidance; do not add files under `docs/`.
 
 ## DON'Ts
 
@@ -138,6 +163,11 @@ harness-evals/
 │   │   ├── trace.py                 # spans_to_eval_case() (+ span-scope variant)
 │   │   ├── group.py                 # Bounded Group API and typed safe diagnostics
 │   │   └── _group.py                # Private canonical Group evidence assembly
+│   │
+│   ├── validation/                  # Opt-in configured metric admission
+│   │   ├── types.py                 # Versioned JSON contracts, context, safe reasons
+│   │   ├── contracts.py             # Reviewed configuration resolution
+│   │   └── evidence.py              # Eligibility and actual-evidence checks
 │   │
 │   ├── metrics/
 │   │   ├── factory.py               # build_metric()/build_llm_provider() — shared
@@ -360,8 +390,9 @@ def test_my_metric_failure():
   fields, while an empty iterable requests none.
 - Applicability is a source-capability check, not proof of usable case values.
   Do not reject all metrics because output is empty. Group assembly exists,
-  but Group metric compatibility and actual-input checks are a separate gate;
-  never infer Group eligibility from field availability or empty placeholders.
+  and Group metric compatibility and actual-input checks live in the opt-in
+  `validation` gate. Never infer Group eligibility from field availability or
+  empty placeholders; legacy `applicability` remains only a capability hint.
 - Normalize malformed/non-object attributes without mutating the source row.
   Validate token dimensions independently before conversion: do not truncate
   fractions, accept booleans/non-finite values, or replace unknown usage with
@@ -418,9 +449,44 @@ def test_my_metric_failure():
 - Cover bounds, capture identity, repeated messages, nested/concurrent tools,
   cycles, partial trees, usage overlap/coverage, projection/score parity, and
   concurrent shared-metric calls. Preserve all existing Trace/Span regressions.
-- Group assembly does not authorize Group scoring. Keep `OnlineScope.GROUP`
-  out of the capability table until a separately reviewed compatibility and
-  actual-input gate exists.
+- Group assembly does not authorize Group scoring. Use the reviewed configured
+  contract and actual-evidence validation in `validation`; keep the legacy
+  field-capability table separate from Group compatibility decisions.
+
+## Configured Metric Admission Contracts
+
+- Keep discovery, projection, admission, and scoring distinct. `CatalogEntry`
+  describes possibilities; `ConfiguredMetricContract` describes selected options.
+  Backend services should own enforcement and expose SDK decisions to clients;
+  do not add independent frontend or backend metric/scope matrices.
+- `MetricInputs.any_of` is OR over all-of groups in addition to required fields.
+  Project every alternative. Union preserves AND across child declarations.
+- Resolve using exact reviewed built-ins with inert resource sentinels. Never
+  construct network providers, run scorers, invoke targets, or load user code
+  during contract resolution or evidence validation. Unknown configurations and
+  custom/subclass behavior fail closed in the new gate.
+- Describe current configuration, not stale constructor-cached declarations.
+  Match alternative, nested, fallback, literal precedence and missing-data rules
+  to actual scorer reads. Presence is not sufficient for nested evidence.
+- Preserve unknown versus observed empty/zero. Missing fields can be a legitimate
+  scored observation for some operators; validate operator-specific prerequisites
+  without computing quality. A composite with no usable children is not ready.
+- Validate decision configuration and expected values before provider calls;
+  share pure validators with scoring. Reject invalid/non-finite structural values
+  and schemas without resolving external references.
+- `validate_metric` context-only success is not readiness. Check mode, scope,
+  execution/resources first; then actual typed evidence and associated Group
+  diagnostics. Related traces are not repeated runs or labeled datasets.
+- Group compatibility is an exact reviewed allowlist, not inference from fields.
+  Tool comparisons require capture/identity/order checks; per-turn metrics need
+  genuine measurements. All other Group configurations remain excluded.
+- JSON contract versioning is independent of package versioning. Never serialize
+  providers, credentials, arbitrary instance state, source payloads or exception
+  strings. UI reasons use stable codes/static messages and safe coordinates.
+  Resolve contracts server-side; client JSON is not authorization.
+- Cover current-configuration parity, JSON round trips, no-I/O/scorer traps,
+  unknown/empty/invalid evidence, nested runtime types, all-skipped composites,
+  Group exclusions and concurrency. Retain Trace/Span/Group assembly regressions.
 
 ## Core Types Reference
 
@@ -554,10 +620,10 @@ class SafetyMetric(BaseMetric):
 ## Dependencies
 
 **Core**: `deepdiff>=7.0`, `jsonschema>=4.0`, `jsonpath-ng>=1.6`, `pyyaml>=6.0`
-**LLM**: `openai>=1.40`, `anthropic>=0.30` — optional `[llm]`
+**LLM**: `openai>=1.40`, `anthropic>=0.60` — optional `[llm]`
 **OTLP**: `opentelemetry-sdk>=1.20`, `opentelemetry-exporter-otlp-proto-grpc>=1.20`, `opentelemetry-exporter-otlp-proto-http>=1.20` — optional `[otlp]`
 **Similarity**: BLEU is dependency-free and included in the core install; `[similarity]` remains a compatibility no-op
 **Harness**: `httpx>=0.27`, `pyjwt>=2.14.0` — optional `[harness]`
 **Benchmarks**: `httpx>=0.27` — optional `[benchmarks]` (datasets fetched from HuggingFace Hub)
-**Langfuse**: `langfuse>=2.0` — optional `[langfuse]`
-**Dev**: `pytest>=8.0`, `ruff>=0.15`, `pytest-cov`, `pytest-asyncio`, `pre-commit`, `build`
+**Langfuse**: `langfuse>=2.0,<4` — optional `[langfuse]`
+**Dev (Poetry group)**: `pytest>=8.0`, `ruff==0.15.12`, `pytest-cov`, `pytest-asyncio`, `pre-commit`, `build`

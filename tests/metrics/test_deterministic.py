@@ -11,6 +11,7 @@ from harness_evals.metrics.deterministic import (
     NumericDiffMetric,
     RegexMetric,
 )
+from harness_evals.validation import describe_configured_metric, validate_metric
 
 
 @pytest.mark.unit
@@ -328,6 +329,130 @@ class TestRegex:
 
         assert not score.passed
         assert "expected is None" in score.reason
+
+    @pytest.mark.parametrize(
+        "initial, mutations, output, expected, value",
+        [
+            ({"negate": True, "forbidden": "old"}, {"forbidden": "blocked"}, "blocked", None, 0.0),
+            ({"negate": True, "forbidden": "old"}, {"forbidden": "blocked"}, "old", None, 1.0),
+            ({"negate": True, "forbidden": r"^old$"}, {"forbidden": r"^blocked\d+$"}, "blocked42", None, 0.0),
+            ({"negate": True, "forbidden": "blocked"}, {"forbidden": "(?i)blocked"}, "BLOCKED", None, 0.0),
+            ({"negate": True, "forbidden": "(?i)blocked"}, {"forbidden": "blocked"}, "BLOCKED", None, 1.0),
+            ({}, {"forbidden": "blocked", "negate": True}, "blocked", None, 0.0),
+            ({}, {"forbidden": "blocked", "negate": True}, "allowed", None, 1.0),
+            ({"negate": True, "forbidden": "blocked"}, {"negate": False, "forbidden": None}, "blocked", "blocked", 1.0),
+            (
+                {"negate": True, "forbidden": "blocked"},
+                {"negate": False, "forbidden": None},
+                "BLOCKED",
+                "(?i)blocked",
+                1.0,
+            ),
+        ],
+        ids=[
+            "new_forbidden_matches",
+            "old_forbidden_no_longer_matches",
+            "changed_pattern",
+            "inline_flags_enabled",
+            "inline_flags_disabled",
+            "positive_to_negative_match",
+            "positive_to_negative_no_match",
+            "negative_to_positive",
+            "negative_to_positive_inline_flags",
+        ],
+    )
+    def test_mutated_regex_admission_and_score_parity(
+        self,
+        initial: dict[str, object],
+        mutations: dict[str, object],
+        output: str,
+        expected: str | None,
+        value: float,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        metric = RegexMetric(**initial)
+        for option, selected in mutations.items():
+            setattr(metric, option, selected)
+        rebuilt = RegexMetric(negate=metric.negate, forbidden=metric.forbidden, threshold=metric.threshold)
+        assert metric.eval_inputs == rebuilt.eval_inputs
+        case = EvalCase(input="q", output=output, expected=expected)
+
+        def unexpected_measure(*args: object, **kwargs: object) -> None:
+            pytest.fail("Admission must not score the metric")
+
+        with monkeypatch.context() as admission:
+            admission.setattr(RegexMetric, "measure", unexpected_measure)
+            contract = describe_configured_metric(metric)
+            assert contract.reviewed
+            assert contract.to_dict() == describe_configured_metric(rebuilt).to_dict()
+            assert contract.inputs == rebuilt.eval_inputs
+            assert validate_metric(contract, case).ready
+
+        score = metric.measure(case)
+        rebuilt_score = rebuilt.measure(case)
+        assert score.value == rebuilt_score.value == value
+        assert score.passed == rebuilt_score.passed == (value == 1.0)
+        assert score.threshold == rebuilt_score.threshold
+        assert score.reason == rebuilt_score.reason
+
+    def test_mutated_positive_regex_requires_expected_again(self) -> None:
+        metric = RegexMetric(negate=True, forbidden="blocked")
+        metric.negate = False
+        metric.forbidden = None
+        case = EvalCase(input="q", output="allowed", expected=None)
+        contract = describe_configured_metric(metric)
+
+        assert contract.reviewed
+        assert not validate_metric(contract, case).ready
+        score = metric.measure(case)
+        assert score.value == 0.0
+        assert "expected is None" in score.reason
+
+    @pytest.mark.parametrize(
+        "initial, mutations",
+        [
+            ({"negate": True, "forbidden": "old"}, {"forbidden": None}),
+            ({"negate": True, "forbidden": "old"}, {"forbidden": ""}),
+            ({"negate": True, "forbidden": "old"}, {"forbidden": 404}),
+            ({"negate": True, "forbidden": "old"}, {"forbidden": "[invalid"}),
+            ({"negate": True, "forbidden": "old"}, {"forbidden": "(?z)blocked"}),
+            ({"negate": True, "forbidden": "old"}, {"negate": "false"}),
+            ({"negate": True, "forbidden": "old"}, {"negate": False}),
+            ({}, {"negate": True}),
+            ({}, {"forbidden": "blocked"}),
+        ],
+        ids=[
+            "missing_forbidden",
+            "empty_forbidden",
+            "non_string_forbidden",
+            "invalid_pattern",
+            "invalid_inline_flags",
+            "non_boolean_mode",
+            "positive_with_forbidden",
+            "negative_without_forbidden",
+            "forbidden_without_negative",
+        ],
+    )
+    def test_invalid_regex_mutation_rejects_admission_and_scoring(
+        self, initial: dict[str, object], mutations: dict[str, object]
+    ) -> None:
+        metric = RegexMetric(**initial)
+        for option, selected in mutations.items():
+            setattr(metric, option, selected)
+        case = EvalCase(input="q", output="blocked", expected="blocked")
+        contract = describe_configured_metric(metric)
+
+        assert not contract.reviewed
+        assert not validate_metric(contract, case).ready
+        with pytest.raises(ValueError):
+            metric.measure(case)
+
+        # A rejected intermediate state must not poison subsequent valid configuration.
+        metric.negate = True
+        metric.forbidden = "blocked"
+        assert describe_configured_metric(metric).reviewed
+        assert validate_metric(describe_configured_metric(metric), case).ready
+        assert metric.measure(case).value == 0.0
 
 
 @pytest.mark.unit

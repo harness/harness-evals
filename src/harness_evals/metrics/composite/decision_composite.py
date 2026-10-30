@@ -12,12 +12,19 @@ from harness_evals.core.score import Score
 from harness_evals.decision.base import BaseDecisionProvider
 from harness_evals.decision.types import ChoiceQuestion, NoulQuestion, Question, ScoreQuestion
 from harness_evals.metrics.composite._combine import fold_sub_scores
-from harness_evals.metrics.decision._common import resolve_mode, score_choice, score_noul, score_rubric
+from harness_evals.metrics.decision._common import (
+    Mode,
+    resolve_mode,
+    score_choice,
+    score_noul,
+    score_rubric,
+    validate_expected,
+)
 from harness_evals.utils.path import extract_path
 
 
 def _score_answer(
-    question: Question, answer: Any, mode: str, expected: Any, invert: bool
+    question: Question, answer: Any, mode: Mode, expected: Any, invert: bool
 ) -> tuple[float, dict[str, Any]]:
     """Score one batched sub-check's answer, dispatching by question type.
 
@@ -26,7 +33,7 @@ def _score_answer(
     semantics only needs to land in one place.
     """
     if isinstance(question, ChoiceQuestion):
-        return score_choice(answer, mode, expected)
+        return score_choice(answer, mode, expected, question.criteria)
     if isinstance(question, ScoreQuestion):
         return score_rubric(answer, mode, expected, len(question.criteria))
     if isinstance(question, NoulQuestion):
@@ -51,13 +58,15 @@ class DecisionCompositeMetric(BaseMetric):
     Each entry in ``sub_scores`` needs ``name``, ``weight``, ``state_field``,
     and a ``question`` (a ``ChoiceQuestion``/``ScoreQuestion``/``NoulQuestion``).
     Optional keys: ``expected_field`` (a path into the eval case used for
-    correctness-mode comparison), ``mode`` (explicit override, else inferred
-    from whether ``expected_field`` resolves to a value), ``invert`` (Noul
+    correctness-mode comparison; required when ``mode="correctness"``),
+    ``mode`` (explicit override, else inferred from whether ``expected_field``
+    resolves to a value), ``invert`` (Noul
     confidence-mode only), ``skip_when_missing``.
 
     Sub-checks whose ``state_field`` resolves to ``None`` are skipped (if
     ``skip_when_missing``) or marked ``status="error"`` before any network
-    call. Remaining sub-checks are grouped by ``state_field`` and answered
+    call. Invalid modes or expected values are also marked as errors before
+    provider calls. Remaining sub-checks are grouped by ``state_field`` and answered
     with one ``provider.a_ask()`` call per group. Unlike the standalone
     ``ChoiceMetric``/``ScoreMetric``/``NoulMetric``, a provider failure marks
     only that group's sub-checks ``status="error"`` (excluded from the
@@ -67,7 +76,7 @@ class DecisionCompositeMetric(BaseMetric):
     """
 
     # Every instance derives its inputs from its sub-checks' paths.
-    eval_inputs = MetricInputs.unknown()
+    eval_inputs: MetricInputs = MetricInputs.unknown()
     catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT}))
 
     def __init__(
@@ -87,6 +96,8 @@ class DecisionCompositeMetric(BaseMetric):
                 raise ValueError(f"sub_scores[{i}] ({sub['name']}) missing required 'question' key")
             if "state_field" not in sub:
                 raise ValueError(f"sub_scores[{i}] ({sub['name']}) missing required 'state_field' key")
+            if sub.get("mode") == "correctness" and not sub.get("expected_field"):
+                raise ValueError(f"sub_scores[{i}] ({sub['name']}) mode='correctness' requires an expected_field")
         self.provider = provider
         self.sub_scores = sub_scores
         self._configure_inputs(DecisionCompositeMetric, _sub_score_inputs(sub_scores))
@@ -120,7 +131,16 @@ class DecisionCompositeMetric(BaseMetric):
                     }
                 continue
 
-            groups.setdefault(state_field, []).append({**sub, "_state": state})
+            expected_field = sub.get("expected_field")
+            expected = extract_path(eval_case_dict, expected_field) if expected_field else None
+            try:
+                mode = resolve_mode(sub.get("mode"), expected)
+                validate_expected(sub["question"], mode, expected)
+            except (TypeError, ValueError) as e:
+                results[sub_name] = {"value": 0.0, "status": "error", "reason": str(e)}
+                continue
+
+            groups.setdefault(state_field, []).append({**sub, "_state": state, "_mode": mode, "_expected": expected})
 
         for subs in groups.values():
             state = subs[0]["_state"]
@@ -136,12 +156,10 @@ class DecisionCompositeMetric(BaseMetric):
                 sub_name = sub["name"]
                 question = sub["question"]
                 answer = response.answers[sub_name]
-                expected_field = sub.get("expected_field")
-                expected = extract_path(eval_case_dict, expected_field) if expected_field else None
-
                 try:
-                    mode = resolve_mode(sub.get("mode"), expected)
-                    value, metadata = _score_answer(question, answer, mode, expected, sub.get("invert", False))
+                    value, metadata = _score_answer(
+                        question, answer, sub["_mode"], sub["_expected"], sub.get("invert", False)
+                    )
                 except ValueError as e:
                     results[sub_name] = {"value": 0.0, "status": "error", "reason": str(e)}
                     continue

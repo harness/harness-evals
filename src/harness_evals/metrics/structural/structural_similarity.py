@@ -33,7 +33,7 @@ class StructuralSimilarityMetric(BaseMetric):
     and schema validation via JSON Schema or entry point validators.
     """
 
-    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
+    eval_inputs: MetricInputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.EXPECTED})
     catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.INPUT, MetricInput.OUTPUT}))
 
     def __init__(
@@ -60,14 +60,13 @@ class StructuralSimilarityMetric(BaseMetric):
         self.schema_validator = schema_validator
         self.expected_field = expected_field
         self.output_field = output_field
-        if output_field or expected_field:
-            self._configure_inputs(
-                StructuralSimilarityMetric,
-                MetricInputs.from_paths(
-                    required=[output_field or "output", expected_field or "expected"],
-                    optional=["output", "expected"],
-                ),
-            )
+        operands = [
+            MetricInputs.from_paths(any_of=((path,), (default,)))
+            if path
+            else MetricInputs.from_paths(required=[default])
+            for path, default in ((output_field, "output"), (expected_field, "expected"))
+        ]
+        self._configure_inputs(StructuralSimilarityMetric, MetricInputs.union(*operands))
 
     def _parse(self, value: Any) -> Any:
         if not isinstance(value, str):

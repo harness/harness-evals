@@ -24,14 +24,16 @@ from harness_evals.adapters import (
 )
 from harness_evals.catalog import catalog
 from harness_evals.core.eval_case import EvalCase
-from harness_evals.core.metric import BaseMetric, Dimension, MetricInputs, OnlineScope
+from harness_evals.core.metric import BaseMetric, Dimension, EvaluationMode, MetricInputs, OnlineScope
 from harness_evals.core.score import Score
 from harness_evals.core.types import Message, ToolCall
+from harness_evals.metrics.agent.tool_correctness import ToolCorrectnessMetric
 from harness_evals.metrics.conversation.tool_use import ToolUseMetric
 from harness_evals.metrics.operational.latency import LatencyMetric
 from harness_evals.metrics.operational.token_cost import TokenCostMetric
 from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
+from harness_evals.validation import ReasonCode, ValidationContext, resolve_metric_contract, validate_metric
 from tests.conftest import MockLLM
 
 pytestmark = pytest.mark.unit
@@ -210,6 +212,187 @@ def test_conflicting_identical_identity_fails_closed(identity: str) -> None:
     with pytest.raises(GroupInputError) as error:
         traces_to_group_eval_case(members(first, second))
     assert error.value.code is GroupErrorCode.CONFLICTING_IDENTITY
+
+
+@pytest.mark.parametrize("mode", ["exact", "subsequence", "subset"])
+@pytest.mark.parametrize("layout", ["span_ids", "trace_ids", "overlap", "zero_duration"])
+@pytest.mark.parametrize("projection", ["full", "selective", "mixed"])
+def test_unestablished_execution_order_is_not_safe_for_ordered_scoring(mode: str, layout: str, projection: str) -> None:
+    metric = ToolCorrectnessMetric(mode=mode)
+    requested = {"full": None, "selective": [metric], "mixed": [metric, TokenCostMetric()]}[projection]
+    contract = resolve_metric_contract("tool_correctness", {"mode": mode})
+    raw_scores = []
+    for reverse_ids in (False, True):
+        identifiers = ["a", "z"] if not reverse_ids else ["z", "a"]
+        first = tool(identifiers[0], "first-call", 1, 4 if layout == "overlap" else 2, "first result")
+        second = tool(identifiers[1], "second-call", 2 if layout == "overlap" else 1, 3, "second result")
+        if layout != "overlap":
+            second["end_timestamp"] = first["end_timestamp"]
+        if layout == "zero_duration":
+            first["end_timestamp"] = second["end_timestamp"] = 1
+        first["attributes"]["gen_ai.tool.name"] = "first"
+        second["attributes"]["gen_ai.tool.name"] = "second"
+        if layout == "trace_ids":
+            first["span_id"] = second["span_id"] = "execution"
+            selected = [GroupTrace([first], identifiers[0], True), GroupTrace([second], identifiers[1], True)]
+        else:
+            selected = members(first, second, complete=True)
+        assembly = traces_to_group_eval_case(
+            selected, authored=GroupAuthoredData(expected_tools=["first", "second"]), metrics=requested
+        )
+        assert issues(assembly) == {GroupIssue.AMBIGUOUS_TOOL_ORDER}
+        assert assembly.diagnostics.complete_member_count == 2
+        # Diagnose canonical evidence even when no tool/message fields are projected.
+        assert traces_to_group_eval_case(selected, metrics=[]).diagnostics == assembly.diagnostics
+        decision = validate_metric(
+            contract,
+            assembly.case,
+            context=ValidationContext(
+                mode=EvaluationMode.ONLINE, scope=OnlineScope.GROUP, group_diagnostics=assembly.diagnostics
+            ),
+        )
+        admitted_score = metric.measure(assembly.case) if decision.ready else None
+        if mode == "subset":
+            assert admitted_score is not None and admitted_score.value == 1.0
+        else:
+            assert admitted_score is None
+            assert {reason.code for reason in decision.reasons} == {ReasonCode.AMBIGUOUS_ORDER}
+        # Demonstrate why directly scoring the deterministic presentation is unsafe.
+        raw_scores.append(metric.measure(assembly.case).value)
+    if layout in ("span_ids", "trace_ids", "zero_duration") and mode != "subset":
+        assert raw_scores[0] == 1.0 and raw_scores[1] < 1.0
+
+
+@pytest.mark.parametrize("mode", ["exact", "subsequence", "subset"])
+@pytest.mark.parametrize("ordering", ["separated", "touching", "parent", "result_history"])
+@pytest.mark.parametrize("selective", [False, True])
+def test_established_execution_order_allows_real_gate_and_scorer(mode: str, ordering: str, selective: bool) -> None:
+    first = tool("z-first", "first-call", 1, 2, "first result")
+    second = tool("a-second", "second-call", 1, 2, "second result")
+    if ordering == "separated":
+        second.update(start_timestamp=3, end_timestamp=4)
+    elif ordering == "touching":
+        second.update(start_timestamp=2, end_timestamp=3)
+    elif ordering == "parent":
+        second["parent_span_id"] = first["span_id"]
+    else:
+        result = message("tool", "first result", id="result-event", tool_call_id="first-call")
+        first["attributes"]["gen_ai.output.messages"] = [result]
+        second["attributes"]["gen_ai.input.messages"] = [deepcopy(result)]
+    first["attributes"]["gen_ai.tool.name"] = "first"
+    second["attributes"]["gen_ai.tool.name"] = "second"
+    metric = ToolCorrectnessMetric(mode=mode)
+    assembly = traces_to_group_eval_case(
+        members(second, first, complete=True),
+        authored=GroupAuthoredData(expected_tools=["first", "second"]),
+        metrics=[metric] if selective else None,
+    )
+    assert issues(assembly) == ({GroupIssue.DUPLICATE_CAPTURE} if ordering == "result_history" else set())
+    decision = validate_metric(
+        resolve_metric_contract("tool_correctness", {"mode": mode}),
+        assembly.case,
+        context=ValidationContext(
+            mode=EvaluationMode.ONLINE, scope=OnlineScope.GROUP, group_diagnostics=assembly.diagnostics
+        ),
+    )
+    assert decision.ready
+    assert metric.measure(assembly.case).value == 1.0
+
+
+@pytest.mark.parametrize("call_id", [None, "call"])
+@pytest.mark.parametrize("output", ["observed", "", {}])
+@pytest.mark.parametrize("selective", [False, True])
+def test_identified_execution_results_have_derived_identity_and_are_admitted(
+    call_id: str | None, output: Any, selective: bool
+) -> None:
+    selected = [
+        GroupTrace([tool("same-span", call_id, 1, 2, output)], "one", True),
+        GroupTrace([tool("same-span", call_id, 3, 4, output)], "two", True),
+    ]
+    metric = ToolCorrectnessMetric()
+    assembly = traces_to_group_eval_case(
+        selected,
+        authored=GroupAuthoredData(expected_tools=["lookup", "lookup"]),
+        metrics=[metric, DeclaredMetric(("messages",))] if selective else None,
+    )
+    assert issues(assembly) == set()
+    identities = [msg.metadata["message_id"] for msg in assembly.case.messages]
+    assert len(set(identities)) == 2  # Equal span/call IDs are trace-scoped.
+    assert all(msg.metadata["source_span_id"] == "same-span" for msg in assembly.case.messages)
+    assert identities == [
+        msg.metadata["message_id"] for msg in traces_to_group_eval_case(list(reversed(selected))).case.messages
+    ]
+    decision = validate_metric(
+        resolve_metric_contract("tool_correctness"),
+        assembly.case,
+        context=ValidationContext(
+            mode=EvaluationMode.ONLINE, scope=OnlineScope.GROUP, group_diagnostics=assembly.diagnostics
+        ),
+    )
+    assert decision.ready
+    assert metric.measure(assembly.case).value == 1.0
+
+
+@pytest.mark.parametrize("unidentified", ["source_result", "source_history", "execution_span"])
+def test_derived_results_do_not_hide_genuinely_missing_source_identity(unidentified: str) -> None:
+    row = tool("execution", "call", 1, 2, "observed")
+    if unidentified == "execution_span":
+        row["span_id"] = None
+    elif unidentified == "source_result":
+        row["attributes"]["gen_ai.output.messages"] = [message("tool", "observed", tool_call_id="call")]
+    else:
+        row["attributes"]["gen_ai.input.messages"] = [message("user", "unidentified history")]
+    metric = ToolCorrectnessMetric(mode="subset")
+    for requested in (None, [metric]):
+        assembly = traces_to_group_eval_case(
+            members(row, complete=True), authored=GroupAuthoredData(expected_tools=["lookup"]), metrics=requested
+        )
+        assert GroupIssue.AMBIGUOUS_MESSAGE_IDENTITY in issues(assembly)
+        decision = validate_metric(
+            resolve_metric_contract("tool_correctness", {"mode": "subset"}),
+            assembly.case,
+            context=ValidationContext(
+                mode=EvaluationMode.ONLINE, scope=OnlineScope.GROUP, group_diagnostics=assembly.diagnostics
+            ),
+        )
+        assert not decision.ready
+        assert ReasonCode.AMBIGUOUS_TOOLS in {reason.code for reason in decision.reasons}
+
+
+def test_derived_identity_does_not_resolve_ambiguous_result_ownership() -> None:
+    rows = [tool("first", "shared", 1, 2, "first"), tool("second", "shared", 3, 4, "second")]
+    metric = ToolCorrectnessMetric(mode="subset")
+    for requested in (None, [metric, DeclaredMetric(("messages",))]):
+        assembly = traces_to_group_eval_case(
+            members(*rows, complete=True),
+            authored=GroupAuthoredData(expected_tools=["lookup", "lookup"]),
+            metrics=requested,
+        )
+        assert issues(assembly) == {GroupIssue.AMBIGUOUS_TOOL_LINK}
+        assert len({msg.metadata["message_id"] for msg in assembly.case.messages}) == 2
+        decision = validate_metric(
+            resolve_metric_contract("tool_correctness", {"mode": "subset"}),
+            assembly.case,
+            context=ValidationContext(
+                mode=EvaluationMode.ONLINE, scope=OnlineScope.GROUP, group_diagnostics=assembly.diagnostics
+            ),
+        )
+        assert not decision.ready
+        assert {reason.code for reason in decision.reasons} == {ReasonCode.AMBIGUOUS_TOOLS}
+
+
+def test_derived_result_identity_cannot_collide_with_source_message_identity() -> None:
+    row = tool("execution", "call", 1, 2, "observed")
+    baseline = traces_to_group_eval_case(members(row))
+    derived_id = baseline.case.messages[0].metadata["message_id"]
+    source = span("source", start=3, end=4, inputs=[message("user", "distinct event", id=derived_id)])
+    result = traces_to_group_eval_case(members(row, source))
+    assert [(msg.role, msg.content) for msg in result.case.messages] == [
+        ("tool", "observed"),
+        ("user", "distinct event"),
+    ]
+    assert GroupIssue.AMBIGUOUS_MESSAGE_IDENTITY not in issues(result)
+    assert result.diagnostics.message_count == 2
 
 
 def test_tied_timestamps_use_ids_not_capture_order() -> None:
@@ -1104,7 +1287,10 @@ def test_incompatible_historical_intent_cannot_supply_execution_identity_or_argu
         ToolCall("lookup", {"new": True} if contradiction == "arguments" else None, "new")
     ]
     tool_result = next(msg for msg in result.case.messages if msg.role == "tool")
-    assert tool_result.metadata is None  # No call identity inferred from incompatible history.
+    # The result has its execution-derived message identity, but no call
+    # identity may be inferred from incompatible history.
+    assert "tool_call_id" not in tool_result.metadata
+    assert tool_result.metadata["source_span_id"] == "execution"
     assert GroupIssue.AMBIGUOUS_TOOL_LINK in issues(result)
 
 

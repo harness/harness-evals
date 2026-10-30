@@ -670,8 +670,100 @@ assert [message.content for message in case.messages] == ["First answer", "Secon
   `expected_tool_calls`, `metadata`, and `tags`; these are copied, never inferred
   from actual calls. Do not place raw grouping values or sensitive data in labels.
 - Assembly is **not metric admission**: do not run single-response metrics against
-  the empty placeholders. Group compatibility and actual-input sufficiency need
-  a separate gate; this release does not advertise any metric as Group-capable.
+  the empty placeholders. Use the opt-in configured admission gate below for
+  explicitly reviewed Group configurations and actual-input sufficiency.
+
+#### Resolve configured contracts before admitting metrics
+
+Catalog discovery describes **possibilities**, not permission to run a selected
+configuration. Use `entry.to_dict()` for JSON catalog metadata and
+`entry.configured_contract(options)` (or `resolve_metric_contract(kind, options)`)
+for a versioned, JSON-serializable configured contract:
+
+```python
+from harness_evals import EvalCase
+from harness_evals.validation import resolve_metric_contract, validate_metric
+
+contract = resolve_metric_contract("latency", {"max_ms": 2000})
+case = EvalCase(input="", output="", latency_ms=0)
+decision = validate_metric(contract, case)
+assert decision.ready
+```
+
+Resolution accepts **constructor-style metric options**, not factory envelopes or
+provider metadata. Merge per-entry overrides and apply SDK option normalization
+first. To describe an existing metric, use `describe_configured_metric(metric)`.
+Neither API constructs network providers, loads custom code, or runs scorers.
+Unknown/custom or unreviewed configurations fail closed in this new API.
+
+- Contracts distinguish required/optional fields and alternative input groups
+  from nested, configuration-specific evidence requirements. Use `to_dict()` /
+  `ConfiguredMetricContract.from_dict()` for JSON snapshots (`schema_version=1`).
+- `ValidationContext` selects offline/online mode, online scope, and case,
+  dataset, or repeated-run execution. Dataset metrics require labeled cases;
+  related Group members are not repeated runs. Resource availability can be
+  asserted explicitly; omitted resource checks produce a warning, not a claim
+  that credentials or network access were verified.
+- `validate_metric(contract, context=...)` checks eligibility only and never
+  reports `ready=True`. Supply actual evidence for readiness. Missing values,
+  malformed values, and known-empty values are different: `tool_calls=[]` can
+  be valid evidence; `tool_calls=None` cannot establish that no calls occurred.
+- Alternatives, structural fallback paths, enabled reference sources,
+  decision labels, composite operators, and assistant-turn evidence are checked
+  without invoking a provider or computing a quality score.
+- Decisions expose stable reason codes, severity, static messages, and safe
+  requirement coordinates through `decision.to_dict()`. Payloads, source IDs,
+  configured paths, and exception strings are not echoed in reasons.
+- Initial Group admission is explicitly reviewed for tool correctness, tool
+  selection, tool argument matching without missing-data skips, MCP trace
+  completeness, turn latency, and turn token cost. Tool comparisons require
+  complete, unambiguous capture; order-sensitive comparisons require reliable
+  ordering, not identifier-based tie-breaking. Tool argument matching requires
+  explicit argument objects on both observed and authored calls: use `{}` for
+  known-empty arguments; `None` means unknown. Greedy subset argument pairing
+  also requires established ordering. Turn telemetry may admit missing
+  measurements with warnings, but malformed consumed values are rejected.
+- Weighted composites require finite positive configured and remaining active
+  weight. A legitimate zero quality score remains usable evidence; zero total
+  weight does not.
+
+For Group, pass the diagnostics associated with the actual assembly:
+
+```python
+from harness_evals.validation import ValidationContext
+
+contract = resolve_metric_contract("tool_correctness", {"mode": "exact"})
+context = ValidationContext(mode="online", scope="group", group_diagnostics=assembly.diagnostics)
+decision = validate_metric(contract, assembly.case, context=context)
+```
+
+The tool comparison also needs explicit authored expectations, for example via
+`GroupAuthoredData(expected_tools=[])`; the actual observed empty list remains
+valid only with sufficient capture assertions. Other Group metrics stay excluded;
+empty Group `input`/`output` do not unlock single-answer metrics.
+
+**Integration ownership:** backend services should resolve contracts server-side,
+validate again immediately before scoring, and return the SDK decisions/reasons.
+Frontends should display those results rather than maintain another metric matrix.
+Existing runners do not automatically enforce this opt-in API. Do not trust a
+client-supplied contract as authorization, and re-resolve stored contracts when
+the configuration or SDK version changes. The legacy `applicability` property is
+still a source-capability hint, not the actual-evidence gate.
+
+Admission checks the selected contract, mode/scope/execution and explicit resource
+assertions before reading evidence. Group diagnostics are checked before nested
+rules, and projected messages/calls must match their diagnostic counts. The result
+flags describe the checks actually performed:
+
+| Result | `eligible` | `evidence_checked` | `ready` |
+| --- | --- | --- | --- |
+| Contract/context rejected | false | false | false |
+| Context admitted, no evidence supplied | true | false | false |
+| Evidence checked and rejected | false | true | false |
+| Evidence admitted, with or without warnings | true | true | true |
+
+Use `ready` immediately before scoring. A context-only success is not permission
+to score an unchecked case; warnings do not turn usable evidence into a rejection.
 
 Time-window listing and session merge are generic (`lookback_days`,
 `group_by=session_id`). Pass any `TraceCatalog` to list traces; Langfuse is one
@@ -1035,12 +1127,28 @@ Registered metrics appear in `catalog()` and are referenceable by `kind:` in YAM
 ```bash
 git clone git@github.com:harness/harness-evals.git
 cd harness-evals
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[all,dev]"
-ruff check src/ tests/          # lint
-ruff format --check src/ tests/ # format
-pytest tests/ -v                # test
+pip install poetry
+poetry install --all-extras --with dev
+poetry run ruff check src/ tests/
+poetry run ruff format --check src/ tests/
+poetry run pytest tests/ -v
 ```
+
+The developer dependencies are a Poetry group, not a pip extra. Both
+`.github/workflows/ci.yml` and the test job in `.github/workflows/publish.yml`
+run on **Python 3.10, 3.11, and 3.12** with all optional extras installed. To match
+the workflow test command, run
+`poetry run pytest tests/ -v --ignore=tests/sinks/test_sinks.py` for each version;
+keep the full-suite command above as an additional local check.
+
+Before a release, run `poetry check` and `poetry run python -m build`. The latter
+uses an isolated build environment, like the publish workflow. Verify the built
+wheel's public imports and metadata without importing the source checkout.
+Publishing is triggered only by a `v*.*.*` tag whose version matches
+`pyproject.toml`; a version bump or merge does not publish. Every release version
+also needs a matching `CHANGELOG.md` entry. Do not create a release tag or publish
+as part of ordinary local validation; local checks do not verify PyPI publishing
+permissions or trusted-publisher configuration.
 
 ## References
 

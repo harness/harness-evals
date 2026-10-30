@@ -68,7 +68,9 @@ class HallucinationMetric(SafetyMetric):
     gate: any significant hallucination should fail the check.
     """
 
-    eval_inputs = MetricInputs(required={MetricInput.OUTPUT, MetricInput.CONTEXT}, optional={MetricInput.EXPECTED})
+    eval_inputs: MetricInputs = MetricInputs(
+        required={MetricInput.OUTPUT}, any_of=({MetricInput.CONTEXT}, {MetricInput.EXPECTED})
+    )
     catalog_applicability = applicability_for_inputs(MetricInputs(required={MetricInput.OUTPUT, MetricInput.MESSAGES}))
 
     def __init__(
@@ -92,7 +94,7 @@ class HallucinationMetric(SafetyMetric):
         self.include_sse_events_as_reference = include_sse_events_as_reference
         self.sse_reference_events = tuple(sse_reference_events or ())
 
-        references = []
+        references: list[MetricInput] = [MetricInput.CONTEXT, MetricInput.EXPECTED]
         if (
             include_messages_as_reference
             or include_assistant_tool_inputs_as_reference
@@ -101,15 +103,10 @@ class HallucinationMetric(SafetyMetric):
             references.append(MetricInput.MESSAGES)
         if include_scenario_metadata_as_reference or include_sse_events_as_reference:
             references.append(MetricInput.METADATA)
-        if references:
-            primary, *alternatives = references
-            self._configure_inputs(
-                HallucinationMetric,
-                MetricInputs(
-                    required={MetricInput.OUTPUT, primary},
-                    optional={MetricInput.CONTEXT, MetricInput.EXPECTED, *alternatives},
-                ),
-            )
+        self._configure_inputs(
+            HallucinationMetric,
+            MetricInputs(required={MetricInput.OUTPUT}, any_of=({reference} for reference in references)),
+        )
 
     def measure(self, eval_case: EvalCase) -> Score:
         return _run_async(self.a_measure(eval_case))

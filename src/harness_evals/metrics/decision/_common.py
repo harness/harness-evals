@@ -7,11 +7,12 @@ types across multiple sub-checks).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from harness_evals.core.eval_case import EvalCase
 from harness_evals.core.metric import MetricInputs
-from harness_evals.decision.types import Answer
+from harness_evals.decision.types import Answer, ChoiceQuestion, NoulQuestion, Question, ScoreQuestion
 from harness_evals.utils.path import extract_path
 
 _MISSING = object()
@@ -31,17 +32,50 @@ def resolve_state(eval_case: EvalCase, state_field: str) -> Any:
     return _MISSING if value is None else value
 
 
-def resolve_mode(mode: Mode | None, expected: Any) -> Mode:
+def resolve_mode(mode: str | None, expected: Any) -> Mode:
     """Resolve the effective mode: explicit ``mode`` wins, else infer from ``expected``.
 
     ``mode="correctness"`` with no ``expected`` is a hard error — an author who
     forces correctness mode intends every case in the run to carry ``expected``.
     """
+    if mode not in (None, "correctness", "confidence"):
+        raise ValueError("mode must be 'correctness', 'confidence', or None")
     if mode == "correctness" and expected is None:
         raise ValueError("mode='correctness' requires an expected value to be set")
     if mode is not None:
         return mode
     return "correctness" if expected is not None else "confidence"
+
+
+def validate_choice_expected(mode: Mode, expected: Any, criteria: Iterable[str]) -> None:
+    """Reject correctness labels outside the question's named choices before asking."""
+    if mode == "correctness" and (not isinstance(expected, str) or expected not in criteria):
+        raise ValueError("Choice expected must name one of the question's criteria")
+
+
+def validate_rubric_expected(mode: Mode, expected: Any, num_levels: int) -> None:
+    """Validate the numeric (possibly fractional) rubric level used by scoring."""
+    if mode != "correctness":
+        return
+    if not isinstance(expected, int | float) or isinstance(expected, bool):
+        raise ValueError(f"expected must be a numeric rubric level (0-indexed), got {expected!r}")
+    if not (0 <= expected <= num_levels - 1):
+        raise ValueError(
+            f"expected level {expected} is out of range for {num_levels} criteria (valid range: 0-{num_levels - 1})"
+        )
+
+
+def validate_expected(question: Question, mode: Mode, expected: Any) -> None:
+    """Pure pre-provider validation, using the same validators as answer scoring."""
+    if isinstance(question, ChoiceQuestion):
+        validate_choice_expected(mode, expected, question.criteria)
+    elif isinstance(question, ScoreQuestion):
+        validate_rubric_expected(mode, expected, len(question.criteria))
+    elif isinstance(question, NoulQuestion):
+        if mode == "correctness":
+            parse_bool_expected(expected)
+    else:
+        raise TypeError(f"Unknown question type: {type(question)!r}")
 
 
 def _clamp(value: float) -> float:
@@ -54,15 +88,16 @@ def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def score_choice(answer: Answer, mode: Mode, expected: Any) -> tuple[float, dict[str, Any]]:
+def score_choice(answer: Answer, mode: Mode, expected: Any, criteria: Iterable[str]) -> tuple[float, dict[str, Any]]:
     """Score a ``ChoiceQuestion`` answer. Shared by ``ChoiceMetric`` and ``DecisionCompositeMetric``."""
+    validate_choice_expected(mode, expected, criteria)
     metadata: dict[str, Any] = {
         "choice": answer.choice,
         "confidence": answer.confidence,
         "probabilities": answer.probabilities,
         "mode": mode,
     }
-    value = 1.0 if answer.choice == expected else 0.0 if mode == "correctness" else _clamp(answer.confidence)
+    value = float(answer.choice == expected) if mode == "correctness" else _clamp(answer.confidence)
     return value, metadata
 
 
@@ -75,13 +110,8 @@ def score_rubric(answer: Answer, mode: Mode, expected: Any, num_levels: int) -> 
         "probabilities": answer.probabilities,
         "mode": mode,
     }
+    validate_rubric_expected(mode, expected, num_levels)
     if mode == "correctness":
-        if not isinstance(expected, int | float) or isinstance(expected, bool):
-            raise ValueError(f"expected must be a numeric rubric level (0-indexed), got {expected!r}")
-        if not (0 <= expected <= num_levels - 1):
-            raise ValueError(
-                f"expected level {expected} is out of range for {num_levels} criteria (valid range: 0-{num_levels - 1})"
-            )
         value = 1.0 - abs(level_norm(answer.score, num_levels) - level_norm(expected, num_levels))
     else:
         value = answer.confidence

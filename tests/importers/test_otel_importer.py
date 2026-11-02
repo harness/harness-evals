@@ -454,6 +454,239 @@ class TestOTELSemconvFormat:
         tool_roles = [m for m in (ec.messages or []) if m.role == "tool"]
         assert any("hello_build_deploy" in (m.content or "") for m in tool_roles)
 
+    def test_hydrates_union_across_llm_turns_prefers_rich_over_stub(self):
+        """Later longer llm_turns often stub earlier tool bodies — keep the rich one."""
+        agent_body = (
+            '{"id":"caHelloWorldAgent","yaml":"max_input_tokens: \\"1\\"\\nbacked: foo\\ndocker_connector: test\\n"}'
+        )
+        early_history = [
+            {"role": "user", "content": "inspect the agent"},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_get",
+                        "name": "mcp__harness__harness_get",
+                        "input": {
+                            "resource_type": "agent",
+                            "resource_id": "caHelloWorldAgent",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_get",
+                        "content": agent_body,
+                    }
+                ],
+            },
+        ]
+        # Longer later history replaces the body with the capture stub (prod shape).
+        late_history = early_history + [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "checking connectors"}],
+            },
+            {"role": "user", "content": "also list pipelines"},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_list",
+                        "name": "harness_list",
+                        "input": {"resource_type": "pipeline"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_list",
+                        "content": '{"items":[]}',
+                    },
+                    {
+                        # Same tool_use id, but body replaced by capture stub.
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_get",
+                        "content": (
+                            "capture tool-output is off by default, turn on using "
+                            "the flag: HARNESS_AGENT_TRACE_CAPTURE_BODIES"
+                        ),
+                    },
+                ],
+            },
+        ]
+        spans = [
+            {
+                "name": "harness_agent_run",
+                "span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "agent",
+                    "langfuse.observation.input": {"prompt": "inspect the agent"},
+                },
+                "parent_span_id": None,
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 20,
+            },
+            # Stub type=tool observation (what Langfuse often stores).
+            {
+                "name": "harness_get",
+                "span_id": "tool_stub",
+                "attributes": {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.name": "harness_get",
+                    "gen_ai.tool.call.arguments": json.dumps(
+                        {"resource_type": "agent", "resource_id": "caHelloWorldAgent"}
+                    ),
+                    "gen_ai.tool.call.result": (
+                        "capture tool-output is off by default, turn on using "
+                        "the flag: HARNESS_AGENT_TRACE_CAPTURE_BODIES"
+                    ),
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 2,
+                "end_time_unix_nano": 3,
+            },
+            {
+                "name": "llm_turn_1",
+                "span_id": "llm1",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.input_messages": early_history,
+                    "langfuse.observation.output": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "looking at settings"}],
+                    },
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 4,
+                "end_time_unix_nano": 5,
+            },
+            {
+                "name": "llm_turn_3",
+                "span_id": "llm3",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    # Longer history wins a naive "richest turn" pick — must not
+                    # discard the earlier rich harness_get body.
+                    "gen_ai.input_messages": late_history,
+                    "langfuse.observation.output": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": ('max_input_tokens is "1", backed: foo, docker_connector is test'),
+                            }
+                        ],
+                    },
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 6,
+                "end_time_unix_nano": 7,
+            },
+        ]
+
+        ec = OTELEvalCaseSource.from_span_json(spans)
+
+        assert ec.tool_calls is not None
+        get_calls = [tc for tc in ec.tool_calls if "harness_get" in tc.name]
+        assert get_calls, "expected harness_get tool call"
+        assert any("max_input_tokens" in str(tc.output) for tc in get_calls)
+        assert any("backed: foo" in str(tc.output) for tc in get_calls)
+        assert any("docker_connector: test" in str(tc.output) for tc in get_calls)
+        tool_blob = "\n".join(m.content or "" for m in (ec.messages or []) if m.role == "tool")
+        assert "max_input_tokens" in tool_blob
+
+    def test_mcp_tool_span_with_body_promoted_over_stub_tool(self):
+        """Langfuse SPAN harness_get carries the body; type=tool is often a stub."""
+        agent_yaml = 'max_input_tokens: "1"\nbacked: foo\ndocker_connector: test\n'
+        spans = [
+            {
+                "name": "harness_agent_run",
+                "span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "agent",
+                    "langfuse.observation.input": {"prompt": "check agent"},
+                },
+                "parent_span_id": None,
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 10,
+            },
+            {
+                "name": "harness_get",
+                "span_id": "span_body",
+                "attributes": {
+                    "langfuse.observation.type": "span",
+                    "langfuse.observation.input": {
+                        "resource_type": "agent",
+                        "resource_id": "caHelloWorldAgent",
+                    },
+                    "langfuse.observation.output": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps({"id": "caHelloWorldAgent", "yaml": agent_yaml}),
+                            }
+                        ]
+                    },
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 2,
+                "end_time_unix_nano": 3,
+            },
+            {
+                "name": "harness_get",
+                "span_id": "tool_stub",
+                "attributes": {
+                    "gen_ai.operation.name": "execute_tool",
+                    "gen_ai.tool.name": "harness_get",
+                    "gen_ai.tool.call.arguments": json.dumps(
+                        {"resource_type": "agent", "resource_id": "caHelloWorldAgent"}
+                    ),
+                    "gen_ai.tool.call.result": (
+                        "capture tool-output is off by default, turn on using "
+                        "the flag: HARNESS_AGENT_TRACE_CAPTURE_BODIES"
+                    ),
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 2,
+                "end_time_unix_nano": 3,
+            },
+            {
+                "name": "llm_turn_1",
+                "span_id": "llm1",
+                "attributes": {
+                    "langfuse.observation.type": "generation",
+                    "langfuse.observation.output": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "max_input_tokens is 1 and docker_connector is test",
+                            }
+                        ],
+                    },
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 4,
+                "end_time_unix_nano": 5,
+            },
+        ]
+
+        ec = OTELEvalCaseSource.from_span_json(spans)
+        assert ec.tool_calls is not None
+        outs = "\n".join(str(tc.output) for tc in ec.tool_calls if tc.output is not None)
+        assert "max_input_tokens" in outs
+        assert "docker_connector: test" in outs
+
     def test_langfuse_plain_text_and_query_fields(self):
         spans = [
             {

@@ -81,6 +81,7 @@ def classify_span(span: dict[str, Any]) -> SpanType:
 
     # Legacy heuristics
     name = (span.get("name") or span.get("span_name") or "").lower()
+    raw_name = span.get("name") or span.get("span_name") or ""
 
     if not span.get("parent_span_id"):
         # Root span: check if it looks like an LLM call (has messages/completion)
@@ -111,6 +112,12 @@ def classify_span(span: dict[str, Any]) -> SpanType:
     ):
         return SpanType.TOOL_CALL
 
+    # harness-agent-v3 records MCP/Skill as SPANs with full I/O while the
+    # sibling type=tool observation is often a capture stub. Promote the SPAN
+    # so judge grounding keeps the real body.
+    if _looks_like_tool_span(raw_name, attrs):
+        return SpanType.TOOL_CALL
+
     if (
         "gen_ai.request.model" in attrs
         or "gen_ai.system" in attrs
@@ -121,6 +128,45 @@ def classify_span(span: dict[str, Any]) -> SpanType:
         return SpanType.LLM_TURN
 
     return SpanType.OTHER
+
+
+_TOOL_SPAN_NAMES = frozenset(
+    {
+        "skill",
+        "read",
+        "write",
+        "bash",
+        "edit",
+        "glob",
+        "grep",
+        "task",
+        "todowrite",
+        "webfetch",
+        "websearch",
+    }
+)
+_TOOL_OUTPUT_STUB_MARKERS = ("capture tool-output is off by default",)
+
+
+def _looks_like_tool_span(name: str, attrs: dict[str, Any]) -> bool:
+    """True for MCP/Skill SPANs that carry tool I/O (not llm_turn / transport)."""
+    if attrs.get("langfuse.observation.type") not in (None, "span"):
+        return False
+    bare = (name or "").strip()
+    if not bare or bare.lower().startswith("llm_turn"):
+        return False
+    has_io = (
+        attrs.get("langfuse.observation.input") is not None
+        or attrs.get("langfuse.observation.output") is not None
+        or attrs.get("gen_ai.tool.call.arguments") is not None
+        or attrs.get("gen_ai.tool.call.result") is not None
+    )
+    if not has_io:
+        return False
+    lower = bare.lower()
+    if lower.startswith("mcp__") or lower.startswith("harness_"):
+        return True
+    return lower in _TOOL_SPAN_NAMES
 
 
 # ------------------------------------------------------------------
@@ -471,6 +517,11 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
                     )
                 )
 
+    # Collapse sibling TOOL spans (capture stub) + MCP SPANs (full body) that
+    # share name+input before content-block hydration runs.
+    if tool_calls:
+        tool_calls = _merge_tool_calls([], tool_calls)
+
     # Curation-style fallback: harness-agent-v3 records Skill/MCP as SPANs (not
     # type=tool), but the Anthropic message array on llm_turn input still has
     # tool_use + tool_result blocks. Pair those so the judge sees results.
@@ -747,9 +798,12 @@ def _recover_intermediate_user_messages(attrs: dict, messages: list[Message]) ->
             continue
         # Skip tool_result-only user turns — those are recovered as tool evidence.
         blocks = _content_blocks(msg.get("content"))
-        if blocks and any(b.get("type") in {"tool_result", "tool_call_response"} for b in blocks):
-            if not any(b.get("type") == "text" and (b.get("text") or b.get("content")) for b in blocks):
-                continue
+        if (
+            blocks
+            and any(b.get("type") in {"tool_result", "tool_call_response"} for b in blocks)
+            and not any(b.get("type") == "text" and (b.get("text") or b.get("content")) for b in blocks)
+        ):
+            continue
         text = _text_from_parts(msg.get("parts", [])) if isinstance(msg.get("parts"), list) else None
         if not text and "content" in msg and isinstance(msg["content"], str):
             text = msg["content"]
@@ -884,9 +938,14 @@ def _hydrate_tool_calls_from_messages(source_messages: list[dict[str, Any]]) -> 
 def _hydrate_tool_calls_from_llm_turns(
     classified: list[tuple[SpanType, dict[str, Any]]],
 ) -> list[ToolCall]:
-    """Build tool calls from the richest llm_turn message history in the trace."""
-    best_messages: list[dict[str, Any]] = []
-    best_count = -1
+    """Union tool_use/tool_result pairs across every llm_turn in the (session) trace.
+
+    Multi-turn sessions grow message counts on later turns while earlier
+    tool_result bodies are often stubbed or dropped from the active window.
+    Picking only the longest history loses those bodies — merge all turns and
+    keep the richest output per tool identity.
+    """
+    merged: list[ToolCall] = []
     for span_type, span in classified:
         if span_type != SpanType.LLM_TURN:
             continue
@@ -895,20 +954,59 @@ def _hydrate_tool_calls_from_llm_turns(
         out_msg = _output_assistant_message_from_attrs(attrs)
         if out_msg is not None:
             msgs.append(out_msg)
-        if len(msgs) >= best_count:
-            best_count = len(msgs)
-            best_messages = msgs
-    if not best_messages:
-        return []
-    return _hydrate_tool_calls_from_messages(best_messages)
+        if not msgs:
+            continue
+        merged = _merge_tool_calls(merged, _hydrate_tool_calls_from_messages(msgs))
+    return merged
+
+
+def _canonical_tool_name(name: str) -> str:
+    """Strip ``tool:`` / ``mcp__server__`` so stub TOOL and content-block names match."""
+    bare = (name or "").removeprefix("tool:")
+    if bare.startswith("mcp__"):
+        return bare.rsplit("__", 1)[-1]
+    return bare
+
+
+def _prefer_tool_name(current: str, candidate: str) -> str:
+    """Prefer a short / non-mcp-prefixed name when merging matched calls."""
+    if current.startswith("mcp__") and not candidate.startswith("mcp__"):
+        return candidate
+    if candidate.startswith("mcp__") and not current.startswith("mcp__"):
+        return current
+    return current or candidate
+
+
+def _tool_output_text(output: Any) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    try:
+        return json.dumps(output, ensure_ascii=False, default=str)
+    except TypeError:
+        return str(output)
+
+
+def _tool_output_quality(output: Any) -> int:
+    """Rank tool outputs so stubs/empty lose to real bodies."""
+    if output is None:
+        return -1
+    text = _tool_output_text(output)
+    if not text.strip():
+        return 0
+    low = text.lower()
+    if any(marker in low for marker in _TOOL_OUTPUT_STUB_MARKERS):
+        return 0
+    return len(text)
 
 
 def _same_tool_call(left: ToolCall, right: ToolCall) -> bool:
-    return left.name == right.name and left.input == right.input
+    return _canonical_tool_name(left.name) == _canonical_tool_name(right.name) and left.input == right.input
 
 
 def _merge_tool_calls(existing: list[ToolCall], hydrated: list[ToolCall]) -> list[ToolCall]:
-    """Merge hydrated tools into execute_tool spans, preferring entries with output."""
+    """Merge tool calls, preferring richer outputs and shorter tool names."""
     merged = list(existing)
     for candidate in hydrated:
         matched = False
@@ -916,8 +1014,17 @@ def _merge_tool_calls(existing: list[ToolCall], hydrated: list[ToolCall]) -> lis
             if not _same_tool_call(current, candidate):
                 continue
             matched = True
-            if current.output is None and candidate.output is not None:
-                merged[idx] = ToolCall(name=current.name, input=current.input, output=candidate.output)
+            cand_q = _tool_output_quality(candidate.output)
+            cur_q = _tool_output_quality(current.output)
+            name = _prefer_tool_name(current.name, candidate.name)
+            if cand_q > cur_q:
+                merged[idx] = ToolCall(
+                    name=name,
+                    input=current.input if current.input is not None else candidate.input,
+                    output=candidate.output,
+                )
+            elif name != current.name:
+                merged[idx] = ToolCall(name=name, input=current.input, output=current.output)
             break
         if not matched:
             merged.append(candidate)
@@ -925,9 +1032,7 @@ def _merge_tool_calls(existing: list[ToolCall], hydrated: list[ToolCall]) -> lis
 
 
 def _tool_result_content(tool_call: ToolCall) -> str:
-    if isinstance(tool_call.output, (dict, list)):
-        return json.dumps(tool_call.output, ensure_ascii=False)
-    return str(tool_call.output)
+    return _tool_output_text(tool_call.output)
 
 
 def _apply_hydrated_tool_calls(messages: list[Message], hydrated: list[ToolCall]) -> list[Message]:
@@ -939,7 +1044,9 @@ def _apply_hydrated_tool_calls(messages: list[Message], hydrated: list[ToolCall]
     seen_results: set[tuple[str, str]] = set()
 
     for message in messages:
-        if message.role == "tool" and message.content:
+        # Keep stub tool-role rows out of the "already present" set so a
+        # richer hydrated body can still be appended for the judge.
+        if message.role == "tool" and message.content and _tool_output_quality(message.content) > 0:
             seen_results.add((message.content, ""))
         if message.role != "assistant" or not message.tool_calls:
             updated.append(message)
@@ -948,18 +1055,19 @@ def _apply_hydrated_tool_calls(messages: list[Message], hydrated: list[ToolCall]
         patched: list[ToolCall] = []
         for tool_call in message.tool_calls:
             replacement = tool_call
-            if tool_call.output is None:
-                for candidate in hydrated:
-                    if _same_tool_call(tool_call, candidate) and candidate.output is not None:
-                        replacement = ToolCall(
-                            name=tool_call.name,
-                            input=tool_call.input,
-                            output=candidate.output,
-                        )
-                        break
+            for candidate in hydrated:
+                if not _same_tool_call(tool_call, candidate):
+                    continue
+                if _tool_output_quality(candidate.output) > _tool_output_quality(tool_call.output):
+                    replacement = ToolCall(
+                        name=_prefer_tool_name(tool_call.name, candidate.name),
+                        input=tool_call.input if tool_call.input is not None else candidate.input,
+                        output=candidate.output,
+                    )
+                break
             patched.append(replacement)
-            if replacement.output is not None:
-                seen_results.add((_tool_result_content(replacement), replacement.name or ""))
+            if _tool_output_quality(replacement.output) > 0:
+                seen_results.add((_tool_result_content(replacement), _canonical_tool_name(replacement.name)))
         updated.append(
             Message(
                 role=message.role,
@@ -969,10 +1077,11 @@ def _apply_hydrated_tool_calls(messages: list[Message], hydrated: list[ToolCall]
         )
 
     for tool_call in hydrated:
-        if tool_call.output is None:
+        if _tool_output_quality(tool_call.output) <= 0:
             continue
         content = _tool_result_content(tool_call)
-        key = (content, tool_call.name or "")
+        canon = _canonical_tool_name(tool_call.name)
+        key = (content, canon)
         if key in seen_results or any(content == existing for existing, _ in seen_results):
             continue
         updated.append(
@@ -1178,7 +1287,10 @@ def _extract_tool_from_span(span: dict[str, Any]) -> ToolCall:
             if isinstance(parsed, dict):
                 content = parsed.get("content")
                 if content is not None:
-                    tool_output = content if isinstance(content, str) else json.dumps(content)
+                    # MCP SPANs wrap bodies as content blocks; flatten like tool_result.
+                    tool_output = _normalize_tool_result_content(content)
+                    if isinstance(tool_output, (dict, list)):
+                        tool_output = json.dumps(tool_output, ensure_ascii=False)
                 else:
                     # Full observation payload (list/get responses often omit nested content).
                     tool_output = parsed

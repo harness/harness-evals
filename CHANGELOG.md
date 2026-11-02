@@ -5,6 +5,18 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.3]
+
+### Fixed
+
+- **Online tool hydration keeps earlier tool bodies across session turns**:
+  content-block hydration now unions `tool_use` / `tool_result` pairs from
+  every `llm_turn` (not only the longest history). Later turns that stub or
+  drop bodies no longer erase earlier evidence. Merge also prefers richer
+  outputs over Langfuse capture stubs, matches `mcp__server__tool` names to
+  short tool names, and promotes MCP/Skill SPANs that carry real I/O so the
+  hallucination judge can ground claims like agent YAML settings.
+
 ## [0.28.2]
 
 ### Fixed

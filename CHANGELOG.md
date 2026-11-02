@@ -5,6 +5,17 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.2]
+
+### Fixed
+
+- **Online UA tool hydration from Anthropic content blocks**: when Langfuse
+  records Skill/MCP as generic SPANs (not `type=tool`), the OTEL conversation
+  builder now pairs `tool_use` / `tool_result` blocks from `llm_turn_*` message
+  history — same approach as golden curation — so `EvalCase.tool_calls` and
+  tool-role messages include results the hallucination judge can ground on.
+  `llm_turn_*` SPAN mapping also exposes `gen_ai.input_messages` for that path.
+
 ## [0.28.1]
 
 ### Fixed

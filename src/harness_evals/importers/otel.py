@@ -471,6 +471,14 @@ def _build_conversation_eval_case(spans: list[dict[str, Any]]) -> EvalCase:
                     )
                 )
 
+    # Curation-style fallback: harness-agent-v3 records Skill/MCP as SPANs (not
+    # type=tool), but the Anthropic message array on llm_turn input still has
+    # tool_use + tool_result blocks. Pair those so the judge sees results.
+    hydrated = _hydrate_tool_calls_from_llm_turns(classified)
+    if hydrated:
+        tool_calls = _merge_tool_calls(tool_calls, hydrated)
+        messages = _apply_hydrated_tool_calls(messages, hydrated)
+
     # If we found a user input, prepend it as the first message
     if user_input and (not messages or messages[0].role != "user"):
         messages.insert(0, Message(role="user", content=user_input))
@@ -728,26 +736,255 @@ def _recover_intermediate_user_messages(attrs: dict, messages: list[Message]) ->
     history including new user messages. We detect new user messages by checking the
     tail of input_messages for user content not already present in the trajectory.
     """
+    parsed = _input_messages_from_attrs(attrs)
+    if not parsed:
+        return
+
+    existing_user_texts = {m.content for m in messages if m.role == "user" and m.content}
+
+    for msg in parsed:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        # Skip tool_result-only user turns — those are recovered as tool evidence.
+        blocks = _content_blocks(msg.get("content"))
+        if blocks and any(b.get("type") in {"tool_result", "tool_call_response"} for b in blocks):
+            if not any(b.get("type") == "text" and (b.get("text") or b.get("content")) for b in blocks):
+                continue
+        text = _text_from_parts(msg.get("parts", [])) if isinstance(msg.get("parts"), list) else None
+        if not text and "content" in msg and isinstance(msg["content"], str):
+            text = msg["content"]
+        if text and text not in existing_user_texts and not _looks_like_injected_user_context(text):
+            messages.append(Message(role="user", content=text))
+            existing_user_texts.add(text)
+
+
+def _input_messages_from_attrs(attrs: dict) -> list[dict[str, Any]]:
+    """Return the Anthropic/GenAI message array from span attributes, if present."""
     for key in ("gen_ai.input_messages", "gen_ai.input.messages"):
         raw = attrs.get(key)
         if not raw:
             continue
         parsed = raw if isinstance(raw, list) else _try_json(raw)
-        if not isinstance(parsed, list):
+        if isinstance(parsed, list):
+            return [m for m in parsed if isinstance(m, dict)]
+        if isinstance(parsed, dict):
+            nested = parsed.get("messages")
+            if isinstance(nested, list):
+                return [m for m in nested if isinstance(m, dict)]
+
+    raw = attrs.get("langfuse.observation.input")
+    if not raw:
+        return []
+    parsed = raw if isinstance(raw, (dict, list)) else _try_json(raw)
+    if isinstance(parsed, list):
+        return [m for m in parsed if isinstance(m, dict)]
+    if isinstance(parsed, dict):
+        nested = parsed.get("messages")
+        if isinstance(nested, list):
+            return [m for m in nested if isinstance(m, dict)]
+    return []
+
+
+def _output_assistant_message_from_attrs(attrs: dict) -> dict[str, Any] | None:
+    """Return the assistant message produced by this LLM turn, if structured."""
+    for key in ("gen_ai.output_messages", "gen_ai.output.messages"):
+        raw = attrs.get(key)
+        if not raw:
+            continue
+        parsed = raw if isinstance(raw, list) else _try_json(raw)
+        if isinstance(parsed, list):
+            for msg in reversed(parsed):
+                if isinstance(msg, dict) and (msg.get("role") in (None, "", "assistant")):
+                    return msg
+        if isinstance(parsed, dict) and (parsed.get("role") in (None, "", "assistant")):
+            return parsed
+
+    raw = attrs.get("langfuse.observation.output")
+    if not raw:
+        return None
+    parsed = raw if isinstance(raw, dict) else _try_json(raw)
+    if isinstance(parsed, dict) and (parsed.get("role") in (None, "", "assistant") or "content" in parsed):
+        if "role" not in parsed:
+            return {"role": "assistant", "content": parsed.get("content")}
+        return parsed
+    return None
+
+
+def _content_blocks(content: Any) -> list[dict[str, Any]]:
+    """Return Anthropic-style content blocks from a message content value."""
+    if isinstance(content, list):
+        return [b for b in content if isinstance(b, dict)]
+    return []
+
+
+def _normalize_tool_result_content(value: Any) -> Any:
+    """Flatten tool_result content blocks to a string or keep structured payloads."""
+    if isinstance(value, list):
+        texts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    texts.append(text)
+                elif "content" in item:
+                    nested = _normalize_tool_result_content(item.get("content"))
+                    if nested is not None:
+                        texts.append(nested if isinstance(nested, str) else json.dumps(nested))
+            elif item is not None:
+                texts.append(str(item))
+        return "\n".join(texts) if texts else value
+    return value
+
+
+def _hydrate_tool_calls_from_messages(source_messages: list[dict[str, Any]]) -> list[ToolCall]:
+    """Pair tool_use with tool_result across a Claude message array (curation-style)."""
+    results_by_id: dict[str, Any] = {}
+    pending: list[tuple[str, str, Any]] = []
+
+    for msg in source_messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role") or ""
+        blocks = _content_blocks(msg.get("content"))
+        if not blocks and isinstance(msg.get("parts"), list):
+            blocks = [b for b in msg["parts"] if isinstance(b, dict)]
+
+        if role in ("assistant", ""):
+            for block in blocks:
+                btype = block.get("type")
+                if btype in {"tool_use", "tool_call"}:
+                    pending.append(
+                        (
+                            str(block.get("id") or block.get("tool_use_id") or ""),
+                            str(block.get("name") or ""),
+                            block.get("input", block.get("arguments")),
+                        )
+                    )
+
+        if role in ("user", "tool"):
+            for block in blocks:
+                btype = block.get("type")
+                if btype not in {"tool_result", "tool_call_response"}:
+                    continue
+                tid = str(block.get("tool_use_id") or block.get("id") or "")
+                content = block.get("content") if "content" in block else block.get("result")
+                if content is None:
+                    content = block.get("response")
+                results_by_id[tid] = _normalize_tool_result_content(content)
+
+    hydrated: list[ToolCall] = []
+    for tid, name, tool_input in pending:
+        if not name:
+            continue
+        output = results_by_id.get(tid)
+        hydrated.append(ToolCall(name=name, input=tool_input, output=output))
+    return hydrated
+
+
+def _hydrate_tool_calls_from_llm_turns(
+    classified: list[tuple[SpanType, dict[str, Any]]],
+) -> list[ToolCall]:
+    """Build tool calls from the richest llm_turn message history in the trace."""
+    best_messages: list[dict[str, Any]] = []
+    best_count = -1
+    for span_type, span in classified:
+        if span_type != SpanType.LLM_TURN:
+            continue
+        attrs = span.get("attributes") or {}
+        msgs = list(_input_messages_from_attrs(attrs))
+        out_msg = _output_assistant_message_from_attrs(attrs)
+        if out_msg is not None:
+            msgs.append(out_msg)
+        if len(msgs) >= best_count:
+            best_count = len(msgs)
+            best_messages = msgs
+    if not best_messages:
+        return []
+    return _hydrate_tool_calls_from_messages(best_messages)
+
+
+def _same_tool_call(left: ToolCall, right: ToolCall) -> bool:
+    return left.name == right.name and left.input == right.input
+
+
+def _merge_tool_calls(existing: list[ToolCall], hydrated: list[ToolCall]) -> list[ToolCall]:
+    """Merge hydrated tools into execute_tool spans, preferring entries with output."""
+    merged = list(existing)
+    for candidate in hydrated:
+        matched = False
+        for idx, current in enumerate(merged):
+            if not _same_tool_call(current, candidate):
+                continue
+            matched = True
+            if current.output is None and candidate.output is not None:
+                merged[idx] = ToolCall(name=current.name, input=current.input, output=candidate.output)
+            break
+        if not matched:
+            merged.append(candidate)
+    return merged
+
+
+def _tool_result_content(tool_call: ToolCall) -> str:
+    if isinstance(tool_call.output, (dict, list)):
+        return json.dumps(tool_call.output, ensure_ascii=False)
+    return str(tool_call.output)
+
+
+def _apply_hydrated_tool_calls(messages: list[Message], hydrated: list[ToolCall]) -> list[Message]:
+    """Attach hydrated outputs onto message tool_calls and ensure tool-role evidence exists."""
+    if not hydrated:
+        return messages
+
+    updated: list[Message] = []
+    seen_results: set[tuple[str, str]] = set()
+
+    for message in messages:
+        if message.role == "tool" and message.content:
+            seen_results.add((message.content, ""))
+        if message.role != "assistant" or not message.tool_calls:
+            updated.append(message)
             continue
 
-        existing_user_texts = {m.content for m in messages if m.role == "user" and m.content}
+        patched: list[ToolCall] = []
+        for tool_call in message.tool_calls:
+            replacement = tool_call
+            if tool_call.output is None:
+                for candidate in hydrated:
+                    if _same_tool_call(tool_call, candidate) and candidate.output is not None:
+                        replacement = ToolCall(
+                            name=tool_call.name,
+                            input=tool_call.input,
+                            output=candidate.output,
+                        )
+                        break
+            patched.append(replacement)
+            if replacement.output is not None:
+                seen_results.add((_tool_result_content(replacement), replacement.name or ""))
+        updated.append(
+            Message(
+                role=message.role,
+                content=message.content,
+                tool_calls=patched,
+            )
+        )
 
-        for msg in parsed:
-            if not isinstance(msg, dict) or msg.get("role") != "user":
-                continue
-            text = _text_from_parts(msg.get("parts", []))
-            if not text and "content" in msg and isinstance(msg["content"], str):
-                text = msg["content"]
-            if text and text not in existing_user_texts:
-                messages.append(Message(role="user", content=text))
-                existing_user_texts.add(text)
-        return
+    for tool_call in hydrated:
+        if tool_call.output is None:
+            continue
+        content = _tool_result_content(tool_call)
+        key = (content, tool_call.name or "")
+        if key in seen_results or any(content == existing for existing, _ in seen_results):
+            continue
+        updated.append(
+            Message(
+                role="tool",
+                content=content,
+                tool_calls=[ToolCall(name=tool_call.name, input=tool_call.input, output=tool_call.output)],
+            )
+        )
+        seen_results.add(key)
+
+    return updated
 
 
 def _stringify_content(value: Any) -> str | None:
@@ -990,28 +1227,31 @@ def _tool_calls_from_parts(parts: list) -> list[ToolCall]:
     """Extract tool calls from a parts array."""
     tool_calls = []
     for part in parts:
-        if not isinstance(part, dict) or part.get("type") != "tool_call":
+        if not isinstance(part, dict):
             continue
-        # Inline structured format
+        ptype = part.get("type")
+        if ptype not in {"tool_call", "tool_use"}:
+            continue
+        # Inline structured format (OpenAI tool_call or Anthropic tool_use)
         if "name" in part:
             tool_calls.append(
                 ToolCall(
                     name=part.get("name", ""),
-                    input=part.get("arguments"),
+                    input=part.get("arguments", part.get("input")),
                 )
             )
+            continue
         # Content-wrapped format (semconv style)
-        else:
-            tc_data = part.get("content", "")
-            if isinstance(tc_data, str):
-                tc_data = _try_json(tc_data)
-            if isinstance(tc_data, dict):
-                tool_calls.append(
-                    ToolCall(
-                        name=tc_data.get("name", ""),
-                        input=tc_data.get("arguments") or tc_data.get("input"),
-                    )
+        tc_data = part.get("content", "")
+        if isinstance(tc_data, str):
+            tc_data = _try_json(tc_data)
+        if isinstance(tc_data, dict):
+            tool_calls.append(
+                ToolCall(
+                    name=tc_data.get("name", ""),
+                    input=tc_data.get("arguments") or tc_data.get("input"),
                 )
+            )
     return tool_calls
 
 

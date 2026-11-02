@@ -362,6 +362,98 @@ class TestOTELSemconvFormat:
         assert ec.tool_calls[0].input == {"path": "app.py"}
         assert ec.tool_calls[0].output == "print('hello')"
 
+    def test_hydrates_skill_and_mcp_from_llm_turn_content_blocks(self):
+        """UA llm_turn history has tool_use/tool_result even when Langfuse omits type=tool."""
+        history = [
+            {"role": "user", "content": "list my pipelines"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Loading the list skill."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_skill",
+                        "name": "Skill",
+                        "input": {"skill": "create-pipeline"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_skill",
+                        "content": "Launching skill: create-pipeline",
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_list",
+                        "name": "harness_list",
+                        "input": {"resource_type": "pipeline"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_list",
+                        "content": '{"data":[{"identifier":"hello_build_deploy"}]}',
+                    }
+                ],
+            },
+        ]
+        spans = [
+            {
+                "name": "harness_agent_run",
+                "span_id": "root",
+                "attributes": {
+                    "langfuse.observation.type": "agent",
+                    "langfuse.observation.input": {"prompt": "list my pipelines"},
+                },
+                "parent_span_id": None,
+                "start_time_unix_nano": 1,
+                "end_time_unix_nano": 10,
+            },
+            {
+                "name": "llm_turn_2",
+                "span_id": "llm2",
+                "attributes": {
+                    # After Langfuse mapping, llm_turn SPANs look like generations
+                    # with the Anthropic message array on gen_ai.input_messages.
+                    "langfuse.observation.type": "generation",
+                    "gen_ai.input_messages": history,
+                    "langfuse.observation.output": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Found pipeline hello_build_deploy."},
+                        ],
+                    },
+                },
+                "parent_span_id": "root",
+                "start_time_unix_nano": 4,
+                "end_time_unix_nano": 5,
+            },
+        ]
+
+        ec = OTELEvalCaseSource.from_span_json(spans)
+
+        assert ec.output == "Found pipeline hello_build_deploy."
+        assert ec.tool_calls is not None
+        names = [tc.name for tc in ec.tool_calls]
+        assert names == ["Skill", "harness_list"]
+        assert ec.tool_calls[0].output == "Launching skill: create-pipeline"
+        assert "hello_build_deploy" in str(ec.tool_calls[1].output)
+        tool_roles = [m for m in (ec.messages or []) if m.role == "tool"]
+        assert any("hello_build_deploy" in (m.content or "") for m in tool_roles)
+
     def test_langfuse_plain_text_and_query_fields(self):
         spans = [
             {

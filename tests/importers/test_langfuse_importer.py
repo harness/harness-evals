@@ -527,6 +527,60 @@ class TestLangfuseTraceCatalog:
         assert cases[0].input == "Analyze the error"
         assert cases[0].output == "## Analysis"
 
+    def test_llm_turn_span_exposes_message_array_for_tool_hydration(self):
+        """llm_turn_* SPANs must surface Anthropic messages for content-block tool hydration."""
+        from harness_evals.importers.langfuse import LangfuseTraceCatalog
+
+        history = [
+            {"role": "user", "content": "list pipelines"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "create-pipeline"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "loaded"}],
+            },
+        ]
+        client = MagicMock()
+        client.api.trace.get.return_value = _FakeTrace(
+            session_id="sess-llm",
+            input={"prompt": "list pipelines"},
+            output={"text": "done"},
+        )
+        client.api.observations.get_many.return_value = _FakeObservationList(
+            data=[
+                _FakeObservation(
+                    type="SPAN",
+                    name="llm_turn_3",
+                    input={"messages": history, "message_count": 3},
+                    output={
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "done"}],
+                    },
+                    parent_observation_id="agent-1",
+                ),
+            ]
+        )
+        catalog = LangfuseTraceCatalog(client)
+        spans = catalog.load_spans("t-llm")
+        attrs = spans[0]["attributes"]
+        assert attrs.get("langfuse.observation.type") == "generation"
+        assert attrs.get("gen_ai.input_messages") == history
+
+        from harness_evals.importers.otel import OTELEvalCaseSource
+        from harness_evals.importers.trace_batch import SpanTrace
+
+        cases = OTELEvalCaseSource.from_span_traces(
+            [SpanTrace(spans=spans, trace_id="t-llm", session_id="sess-llm")]
+        )
+        assert len(cases) == 1
+        assert cases[0].tool_calls is not None
+        assert cases[0].tool_calls[0].name == "Skill"
+        assert cases[0].tool_calls[0].output == "loaded"
+
     def test_load_spans_falls_back_to_legacy_v1_on_cloud_only_v2(self):
         """SDK 4 v2 observations 404 on self-hosted → use legacy.observations_v1."""
         from harness_evals.importers.langfuse import LangfuseTraceCatalog

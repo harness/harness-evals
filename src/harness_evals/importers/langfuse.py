@@ -709,11 +709,32 @@ def _observation_to_span(obs: object, *, trace_id: str, session_id: str | None) 
         # Generic SPAN / unknown — preserve I/O without forcing tool classification.
         attrs["langfuse.observation.type"] = obs_type or "span"
         if isinstance(name, str) and name.lower().startswith("llm_turn"):
+            # harness-agent-v3 llm_turn_* SPANs carry the Anthropic message array.
+            # Promote them like generation observations so the OTEL builder can
+            # hydrate tool_use / tool_result pairs for the hallucination judge.
             attrs["langfuse.observation.type"] = "generation"
-        if obs_input is not None:
-            attrs["langfuse.observation.input"] = obs_input
-        if obs_output is not None:
-            attrs["langfuse.observation.output"] = obs_output
+            if obs_input is not None:
+                if isinstance(obs_input, list):
+                    attrs["gen_ai.input_messages"] = obs_input
+                elif isinstance(obs_input, dict) and isinstance(obs_input.get("messages"), list):
+                    attrs["gen_ai.input_messages"] = obs_input["messages"]
+                    attrs["langfuse.observation.input"] = obs_input
+                else:
+                    attrs["langfuse.observation.input"] = obs_input
+            if obs_output is not None:
+                if isinstance(obs_output, list):
+                    attrs["gen_ai.output_messages"] = obs_output
+                elif isinstance(obs_output, dict):
+                    attrs["gen_ai.output_messages"] = [obs_output]
+                    attrs["langfuse.observation.output"] = obs_output
+                else:
+                    attrs["gen_ai.output_messages"] = [{"role": "assistant", "content": obs_output}]
+                    attrs["langfuse.observation.output"] = obs_output
+        else:
+            if obs_input is not None:
+                attrs["langfuse.observation.input"] = obs_input
+            if obs_output is not None:
+                attrs["langfuse.observation.output"] = obs_output
 
     span: dict[str, object] = {
         "name": name,

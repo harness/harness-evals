@@ -4,14 +4,25 @@ import json
 
 import pytest
 
-from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
+from harness_evals.conversation import (
+    ConversationGolden,
+    ConversationMode,
+    ConversationSimulator,
+)
 from harness_evals.core.types import Message
 from harness_evals.errors import TargetInvocationError
-from harness_evals.targets.conversational_streaming_http import ConversationalStreamingHttpTarget
+from harness_evals.targets.conversational_streaming_http import (
+    ConversationalStreamingHttpTarget,
+)
 
 
 def _sse(events: list[tuple[str, dict]]) -> str:
-    return "\n\n".join(f"event: {name}\ndata: {json.dumps(payload)}" for name, payload in events) + "\n\n"
+    return (
+        "\n\n".join(
+            f"event: {name}\ndata: {json.dumps(payload)}" for name, payload in events
+        )
+        + "\n\n"
+    )
 
 
 def _harness_target(**overrides) -> ConversationalStreamingHttpTarget:
@@ -22,7 +33,10 @@ def _harness_target(**overrides) -> ConversationalStreamingHttpTarget:
         "capture_events": ["elicitation_form", "assistant_tool_request"],
         "human_input_events": ["elicitation_form"],
         "session_metadata_event": "stream_metadata",
-        "session_fields": {"conversation_id": "conversation_id", "session_id": "session_id"},
+        "session_fields": {
+            "conversation_id": "conversation_id",
+            "session_id": "session_id",
+        },
         "correlation_id_field": "review_id",
         "human_input_body_template": {
             "system_event": "{{human_input}}",
@@ -61,7 +75,9 @@ async def test_conversational_streaming_target_detects_pending_elicitation(monke
                                 "fields": [
                                     {
                                         "label": "Auth method",
-                                        "options": [{"label": "Inherit", "value": "Inherit"}],
+                                        "options": [
+                                            {"label": "Inherit", "value": "Inherit"}
+                                        ],
                                     }
                                 ]
                             },
@@ -76,7 +92,9 @@ async def test_conversational_streaming_target_detects_pending_elicitation(monke
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    msg = await target.agenerate([Message(role="user", content="Create a k8s connector")])
+    msg = await target.agenerate(
+        [Message(role="user", content="Create a k8s connector")]
+    )
 
     assert msg.role == "assistant"
     assert msg.latency_ms == 12.0
@@ -115,7 +133,10 @@ async def test_conversational_streaming_target_uses_latest_stream_metadata(monke
                             "interaction_id": "int-1",
                         },
                     ),
-                    ("elicitation_form", {"review_id": "ask-1", "content": {"fields": []}}),
+                    (
+                        "elicitation_form",
+                        {"review_id": "ask-1", "content": {"fields": []}},
+                    ),
                 ]
             ),
             "text/event-stream",
@@ -132,7 +153,9 @@ async def test_conversational_streaming_target_uses_latest_stream_metadata(monke
 
 
 @pytest.mark.unit
-async def test_conversational_streaming_target_sends_human_input_and_completes(monkeypatch):
+async def test_conversational_streaming_target_sends_human_input_and_completes(
+    monkeypatch,
+):
     target = _harness_target(capture_events=None)
     target.conversation_id = "conv-1"
     target.session_id = "sess-1"
@@ -153,7 +176,11 @@ async def test_conversational_streaming_target_sends_human_input_and_completes(m
                     ),
                     (
                         "entity_mutation",
-                        {"action": "create", "resource_type": "connector", "identifier": "testconnector"},
+                        {
+                            "action": "create",
+                            "resource_type": "connector",
+                            "identifier": "testconnector",
+                        },
                     ),
                     ("assistant_message", {"v": "Connector created."}),
                 ]
@@ -167,10 +194,17 @@ async def test_conversational_streaming_target_sends_human_input_and_completes(m
     human_input = {
         "event_type": "action_completed",
         "capability_id": "ask-1",
-        "result": {"success": True, "action_id": "respond", "free_text": "testconnector"},
+        "result": {
+            "success": True,
+            "action_id": "respond",
+            "free_text": "testconnector",
+        },
     }
 
-    msg = await target.agenerate([Message(role="user", content="Create a k8s connector")], human_input=human_input)
+    msg = await target.agenerate(
+        [Message(role="user", content="Create a k8s connector")],
+        human_input=human_input,
+    )
 
     assert captured["body"] == {
         "system_event": human_input,
@@ -181,11 +215,16 @@ async def test_conversational_streaming_target_sends_human_input_and_completes(m
     assert target.session_id == "conv-1"
     assert msg.content == "Connector created."
     assert msg.metadata["pending_human_input"] is None
-    assert msg.metadata["sse_events"]["entity_mutation"][0]["identifier"] == "testconnector"
+    assert (
+        msg.metadata["sse_events"]["entity_mutation"][0]["identifier"]
+        == "testconnector"
+    )
 
 
 @pytest.mark.unit
-async def test_conversational_streaming_target_supports_custom_human_input_events(monkeypatch):
+async def test_conversational_streaming_target_supports_custom_human_input_events(
+    monkeypatch,
+):
     target = ConversationalStreamingHttpTarget(
         url="http://example.test/stream",
         output_event="done",
@@ -316,7 +355,10 @@ async def test_conversational_streaming_target_merges_request_context_on_human_i
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    from harness_evals.conversation.context import reset_request_context, set_request_context
+    from harness_evals.conversation.context import (
+        reset_request_context,
+        set_request_context,
+    )
 
     target.conversation_id = "conv-1"
     target.session_id = "sess-1"
@@ -336,7 +378,9 @@ async def test_conversational_streaming_target_merges_request_context_on_human_i
 
 
 @pytest.mark.unit
-async def test_conversational_streaming_target_without_request_context_keeps_template(monkeypatch):
+async def test_conversational_streaming_target_without_request_context_keeps_template(
+    monkeypatch,
+):
     target = _harness_target(
         user_body_template={
             "prompt": "{{last_user_content}}",
@@ -369,7 +413,9 @@ async def test_conversational_streaming_target_without_request_context_keeps_tem
 
 
 @pytest.mark.unit
-async def test_conversational_streaming_target_request_context_overrides_template_keys(monkeypatch):
+async def test_conversational_streaming_target_request_context_overrides_template_keys(
+    monkeypatch,
+):
     target = _harness_target(
         user_body_template={
             "prompt": "{{last_user_content}}",
@@ -390,7 +436,10 @@ async def test_conversational_streaming_target_request_context_overrides_templat
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    from harness_evals.conversation.context import reset_request_context, set_request_context
+    from harness_evals.conversation.context import (
+        reset_request_context,
+        set_request_context,
+    )
 
     token = set_request_context({"mode": "custom", "resource_id": "r1"})
     try:
@@ -406,7 +455,9 @@ async def test_conversational_streaming_target_request_context_overrides_templat
 
 
 @pytest.mark.unit
-async def test_conversational_streaming_target_isolates_sessions_between_batch_tasks(monkeypatch):
+async def test_conversational_streaming_target_isolates_sessions_between_batch_tasks(
+    monkeypatch,
+):
     target = _harness_target()
     requests: list[dict] = []
 
@@ -469,7 +520,9 @@ async def test_conversational_streaming_target_isolates_sessions_between_batch_t
 
 
 @pytest.mark.unit
-async def test_conversational_streaming_target_stamps_cost_from_model_usage(monkeypatch):
+async def test_conversational_streaming_target_stamps_cost_from_model_usage(
+    monkeypatch,
+):
     target = _harness_target(capture_events=["model_usage", "assistant_message"])
 
     def fake_execute(body: bytes, headers: dict[str, str]):
@@ -512,7 +565,10 @@ async def test_conversational_streaming_target_raises_on_error_only_stream(monke
                 [
                     (
                         "error",
-                        {"message": "Something went wrong processing your request.", "response_code": 500},
+                        {
+                            "message": "Something went wrong processing your request.",
+                            "response_code": 500,
+                        },
                     ),
                     ("done", {}),
                 ]
@@ -524,5 +580,93 @@ async def test_conversational_streaming_target_raises_on_error_only_stream(monke
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    with pytest.raises(TargetInvocationError, match="Something went wrong processing your request"):
+    with pytest.raises(
+        TargetInvocationError, match="Something went wrong processing your request"
+    ):
         await target.agenerate([Message(role="user", content="Create a k8s connector")])
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_classifies_json_parse_failures(
+    monkeypatch,
+):
+    target = _harness_target(record_diagnostics=True)
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        return "not-json", "application/json", 3.0, None
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+
+    with pytest.raises(
+        TargetInvocationError, match="category=response_parse"
+    ) as exc_info:
+        await target.agenerate([Message(role="user", content="hello")])
+
+    assert exc_info.value.diagnostic.category == "response_parse"
+    assert exc_info.value.diagnostic.response_body == "not-json"
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_rejects_missing_selector_when_strict(
+    monkeypatch,
+):
+    target = _harness_target(strict_onboarding=True, record_diagnostics=True)
+
+    def fake_execute(body: bytes, headers: dict[str, str]):
+        return (
+            _sse([("assistant_message", {"other": "value"})]),
+            "text/event-stream",
+            4.0,
+            None,
+        )
+
+    monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
+
+    with pytest.raises(
+        TargetInvocationError, match="missing_response_path"
+    ) as exc_info:
+        await target.agenerate([Message(role="user", content="hello")])
+
+    assert exc_info.value.diagnostic.category == "missing_response_path"
+
+
+@pytest.mark.unit
+async def test_conversational_streaming_target_publishes_redacted_diagnostic_metadata(
+    monkeypatch,
+):
+    from harness_evals.targets import streaming_http as target_module
+
+    credential = "Bearer conversational-header-credential"
+    response = _sse(
+        [("assistant_message", {"v": "visible answer", "echo": credential})]
+    )
+
+    class FakeHTTPResponse:
+        headers = {"Content-Type": "text/event-stream"}
+        status = 200
+
+        def read(self) -> bytes:
+            return response.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    def fake_urlopen(*_: object, **__: object) -> FakeHTTPResponse:
+        return FakeHTTPResponse()
+
+    monkeypatch.setattr(target_module, "urlopen", fake_urlopen)
+    target = _harness_target(
+        headers={"Authorization": credential},
+        retries=0,
+        record_diagnostics=True,
+    )
+
+    message = await target.agenerate([Message(role="user", content="hello")])
+
+    diagnostic = message.metadata["http_diagnostic"]
+    assert credential not in json.dumps(diagnostic)
+    assert diagnostic["response_status"] == 200
+    assert diagnostic["extracted_value"] == "visible answer"

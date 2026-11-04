@@ -67,7 +67,9 @@ class CloseableLLM(StubLLM):
 
 
 class FakeHTTPResponse:
-    def __init__(self, body: str, content_type: str = "application/json", status: int = 200) -> None:
+    def __init__(
+        self, body: str, content_type: str = "application/json", status: int = 200
+    ) -> None:
         self._body = body.encode("utf-8")
         self.headers = {"Content-Type": content_type}
         self.status = status
@@ -138,7 +140,9 @@ async def test_prompt_target_dict_input_json_serialized() -> None:
 
 @pytest.mark.unit
 async def test_prompt_target_metadata_as_template_vars() -> None:
-    prompt = PromptTemplate(template="{{input}} in {{tone}} tone", input_variables=["input", "tone"])
+    prompt = PromptTemplate(
+        template="{{input}} in {{tone}} tone", input_variables=["input", "tone"]
+    )
     target = PromptTarget(prompt=prompt, model=StubLLM("friendly answer"))
 
     golden = Golden(input="greet me", metadata={"tone": "friendly"})
@@ -151,7 +155,9 @@ async def test_prompt_target_metadata_as_template_vars() -> None:
 async def test_prompt_target_passes_system_prompt_separately() -> None:
     prompt = PromptTemplate(template="{{input}}", input_variables=["input"])
     model = StubLLM("policy answer")
-    target = PromptTarget(prompt=prompt, model=model, system_prompt="You are a policy assistant.")
+    target = PromptTarget(
+        prompt=prompt, model=model, system_prompt="You are a policy assistant."
+    )
 
     result = await target.ainvoke(Golden(input="What is the return policy?"))
 
@@ -222,7 +228,9 @@ async def test_prompt_target_closes_model() -> None:
 class UsageStubLLM(StubLLM):
     """StubLLM that reports token usage to the active collector."""
 
-    def __init__(self, response: str = "out", in_tok: int = 42, out_tok: int = 7) -> None:
+    def __init__(
+        self, response: str = "out", in_tok: int = 42, out_tok: int = 7
+    ) -> None:
         super().__init__(response)
         self._in, self._out = in_tok, out_tok
 
@@ -236,7 +244,9 @@ class UsageStubLLM(StubLLM):
 @pytest.mark.unit
 async def test_prompt_target_captures_token_split() -> None:
     prompt = PromptTemplate(template="{{input}}", input_variables=["input"])
-    target = PromptTarget(prompt=prompt, model=UsageStubLLM(response="42", in_tok=42, out_tok=7))
+    target = PromptTarget(
+        prompt=prompt, model=UsageStubLLM(response="42", in_tok=42, out_tok=7)
+    )
 
     result = await target.ainvoke(Golden(input="q"))
 
@@ -266,7 +276,9 @@ async def test_http_target_successful_post(monkeypatch: pytest.MonkeyPatch) -> N
 
     captured_requests: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured_requests.append(request)
         return FakeHTTPResponse(json.dumps({"output": "agent response", "tokens": 50}))
 
@@ -294,14 +306,18 @@ async def test_http_target_successful_post(monkeypatch: pytest.MonkeyPatch) -> N
 async def test_http_target_with_body_template(monkeypatch: pytest.MonkeyPatch) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
 
     captured_requests: list[Request] = []
 
-    def fake_urlopen_capture(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen_capture(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured_requests.append(request)
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
@@ -322,7 +338,9 @@ async def test_http_target_with_body_template(monkeypatch: pytest.MonkeyPatch) -
 async def test_http_target_text_response(monkeypatch: pytest.MonkeyPatch) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse("plain text answer", content_type="text/plain")
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -339,7 +357,9 @@ async def test_http_target_retries_on_failure(monkeypatch: pytest.MonkeyPatch) -
 
     call_count = 0
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         nonlocal call_count
         call_count += 1
         if call_count < 3:
@@ -361,7 +381,9 @@ async def test_http_target_retries_on_failure(monkeypatch: pytest.MonkeyPatch) -
 async def test_http_target_transport_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         raise URLError("Connection refused")
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -375,12 +397,16 @@ async def test_http_target_transport_failure(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.unit
-async def test_http_target_failure_latency_uses_last_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_failure_latency_uses_last_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     times = iter([0.0, 0.01, 100.0, 100.02])
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         raise URLError("Connection refused")
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -396,7 +422,9 @@ async def test_http_target_failure_latency_uses_last_attempt(monkeypatch: pytest
 
 
 @pytest.mark.unit
-async def test_http_target_extracts_all_optional_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_extracts_all_optional_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     response_data = {
@@ -406,7 +434,9 @@ async def test_http_target_extracts_all_optional_fields(monkeypatch: pytest.Monk
         "context_docs": ["doc1", "doc2"],
     }
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps(response_data))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -427,10 +457,14 @@ async def test_http_target_extracts_all_optional_fields(monkeypatch: pytest.Monk
 
 
 @pytest.mark.unit
-async def test_http_target_extracts_token_split(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_extracts_token_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "ok", "in": 120, "out": 34}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -446,16 +480,24 @@ async def test_http_target_extracts_token_split(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.unit
-async def test_http_target_token_split_zero_survives(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_token_split_zero_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A genuine 0 must be preserved as 0, not collapsed to None.
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "ok", "in": 0, "out": 0}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
 
-    target = HttpTarget(url="http://localhost:8080/run", input_tokens_path="$.in", output_tokens_path="$.out")
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        input_tokens_path="$.in",
+        output_tokens_path="$.out",
+    )
     result = await target.ainvoke(Golden(input="hi"))
     assert result.input_tokens == 0
     assert result.output_tokens == 0
@@ -471,7 +513,9 @@ async def test_http_target_bad_token_value_dropped_with_warning(
     # (int(inf) raises OverflowError) — it is dropped with a visible warning.
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "ok", "in": bad_value}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -485,7 +529,9 @@ async def test_http_target_bad_token_value_dropped_with_warning(
 
 
 @pytest.mark.unit
-async def test_http_target_reported_messages_take_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_reported_messages_take_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     response_data = {
@@ -497,7 +543,9 @@ async def test_http_target_reported_messages_take_precedence(monkeypatch: pytest
         ],
     }
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps(response_data))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -523,7 +571,9 @@ async def test_http_target_malformed_reported_messages_not_synthesized_over(
     # NOT silently fall back to a fabricated [user, assistant] trace over it.
     response_data = {"output": "answer", "trace": ["not", "a", "trajectory"]}
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps(response_data))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -547,7 +597,9 @@ async def test_http_target_empty_reported_messages_is_not_treated_as_malformed(
     # valid "no turns" — it must stay [] with no coercion warning, not synthesize.
     response_data = {"output": "answer", "trace": []}
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps(response_data))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -561,10 +613,14 @@ async def test_http_target_empty_reported_messages_is_not_treated_as_malformed(
 
 
 @pytest.mark.unit
-async def test_http_target_synthesizes_trajectory_when_not_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_synthesizes_trajectory_when_not_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "agent response"}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -580,7 +636,9 @@ async def test_http_target_synthesizes_trajectory_when_not_reported(monkeypatch:
 
 
 @pytest.mark.unit
-async def test_http_target_synthesized_trajectory_includes_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_synthesized_trajectory_includes_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     response_data = {
@@ -588,7 +646,9 @@ async def test_http_target_synthesized_trajectory_includes_tool_calls(monkeypatc
         "tools": [{"name": "search", "input": {"q": "cats"}, "output": "found"}],
     }
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps(response_data))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -608,12 +668,16 @@ async def test_http_target_synthesized_trajectory_includes_tool_calls(monkeypatc
 
 
 @pytest.mark.unit
-async def test_http_target_default_body_wraps_input(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_default_body_wraps_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     captured: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured.append(request)
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
@@ -628,12 +692,16 @@ async def test_http_target_default_body_wraps_input(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.unit
-async def test_http_target_scatters_input_fields_via_templating(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_scatters_input_fields_via_templating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     captured: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured.append(request)
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
@@ -647,7 +715,9 @@ async def test_http_target_scatters_input_fields_via_templating(monkeypatch: pyt
             "greeting": "Hello {{metadata.user}}",
         },
     )
-    await target.ainvoke(Golden(input={"question": "cats?", "k": 5}, metadata={"user": "srikar"}))
+    await target.ainvoke(
+        Golden(input={"question": "cats?", "k": 5}, metadata={"user": "srikar"})
+    )
 
     sent = json.loads(captured[0].data.decode())
     # Whole-string placeholder preserves native type (int stays int); embedded
@@ -656,10 +726,14 @@ async def test_http_target_scatters_input_fields_via_templating(monkeypatch: pyt
 
 
 @pytest.mark.unit
-async def test_http_target_unresolved_placeholder_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_target_unresolved_placeholder_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -678,7 +752,9 @@ async def test_http_target_templates_headers(monkeypatch: pytest.MonkeyPatch) ->
 
     captured: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured.append(request)
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
@@ -686,7 +762,10 @@ async def test_http_target_templates_headers(monkeypatch: pytest.MonkeyPatch) ->
 
     target = HttpTarget(
         url="http://localhost:8080/run",
-        headers={"Authorization": "Bearer {{input.token}}", "X-Tenant": "{{metadata.tenant}}"},
+        headers={
+            "Authorization": "Bearer {{input.token}}",
+            "X-Tenant": "{{metadata.tenant}}",
+        },
     )
     await target.ainvoke(Golden(input={"token": "abc123"}, metadata={"tenant": "acme"}))
 
@@ -776,13 +855,17 @@ async def test_http_target_applies_bearer_auth(monkeypatch: pytest.MonkeyPatch) 
 
     captured_headers: dict[str, str] = {}
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured_headers.update(dict(request.headers))
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
 
-    target = HttpTarget(url="http://localhost:8080/run", auth=BearerAuth(token="tok123"))
+    target = HttpTarget(
+        url="http://localhost:8080/run", auth=BearerAuth(token="tok123")
+    )
     golden = Golden(input="q")
     await target.ainvoke(golden)
 
@@ -800,19 +883,27 @@ def test_targets_are_registered() -> None:
     assert plugins.target("http") is HttpTarget
 
 
-def _http_error(code: int, body: str, headers: dict[str, str] | None = None) -> HTTPError:
+def _http_error(
+    code: int, body: str, headers: dict[str, str] | None = None
+) -> HTTPError:
     message = EmailMessage()
     for key, value in (headers or {"Content-Type": "application/json"}).items():
         message[key] = value
-    return HTTPError("http://localhost:8080/run", code, "error", message, BytesIO(body.encode()))
+    return HTTPError(
+        "http://localhost:8080/run", code, "error", message, BytesIO(body.encode())
+    )
 
 
-def _patch_http_error(monkeypatch: pytest.MonkeyPatch, error: HTTPError) -> list[Request]:
+def _patch_http_error(
+    monkeypatch: pytest.MonkeyPatch, error: HTTPError
+) -> list[Request]:
     from harness_evals.targets import http as target_http
 
     captured: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured.append(request)
         raise error
 
@@ -846,18 +937,38 @@ def test_classify_status_uses_closed_sets() -> None:
 
 @pytest.mark.unit
 def test_classify_transport_does_not_guess() -> None:
-    assert classify_transport(socket.gaierror(8, "nodename nor servname provided, or not known")) is TransportCause.DNS
-    assert classify_transport(URLError("Name or service not known")) is TransportCause.DNS
-    assert classify_transport(ConnectionRefusedError()) is TransportCause.CONNECTION_REFUSED
-    assert classify_transport(URLError("Connection refused")) is TransportCause.CONNECTION_REFUSED
+    assert (
+        classify_transport(
+            socket.gaierror(8, "nodename nor servname provided, or not known")
+        )
+        is TransportCause.DNS
+    )
+    assert (
+        classify_transport(URLError("Name or service not known")) is TransportCause.DNS
+    )
+    assert (
+        classify_transport(ConnectionRefusedError())
+        is TransportCause.CONNECTION_REFUSED
+    )
+    assert (
+        classify_transport(URLError("Connection refused"))
+        is TransportCause.CONNECTION_REFUSED
+    )
     assert classify_transport(TimeoutError("timed out")) is TransportCause.TIMEOUT
-    assert classify_transport(ssl.SSLError("CERTIFICATE_VERIFY_FAILED")) is TransportCause.TLS
+    assert (
+        classify_transport(ssl.SSLError("CERTIFICATE_VERIFY_FAILED"))
+        is TransportCause.TLS
+    )
     assert classify_transport(OSError("boom-unclassified")) is None
 
 
 @pytest.mark.unit
-async def test_http_400_is_request_not_authentication(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _patch_http_error(monkeypatch, _http_error(400, '{"error":"missing field name"}'))
+async def test_http_400_is_request_not_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_http_error(
+        monkeypatch, _http_error(400, '{"error":"missing field name"}')
+    )
     # The same HTTPError cannot be re-read, so retries must not happen.
     target = HttpTarget(url="http://localhost:8080/run", retries=2, backoff_s=0.01)
 
@@ -874,7 +985,9 @@ async def test_http_400_is_request_not_authentication(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.unit
-async def test_http_401_is_authentication_and_keeps_body(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_401_is_authentication_and_keeps_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _patch_http_error(monkeypatch, _http_error(401, "denied"))
     target = HttpTarget(url="http://localhost:8080/run", retries=0)
 
@@ -906,9 +1019,13 @@ async def test_http_404_is_not_given_a_cause(monkeypatch: pytest.MonkeyPatch) ->
 async def test_http_500_keeps_last_body(monkeypatch: pytest.MonkeyPatch) -> None:
     from harness_evals.targets import http as target_http
 
-    errors = iter([_http_error(500, "first-body"), _http_error(500, "second-body-kept")])
+    errors = iter(
+        [_http_error(500, "first-body"), _http_error(500, "second-body-kept")]
+    )
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         raise next(errors)
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -924,12 +1041,16 @@ async def test_http_500_keeps_last_body(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.unit
-async def test_http_invalid_json_is_response_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_invalid_json_is_response_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     calls = 0
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         nonlocal calls
         calls += 1
         return FakeHTTPResponse("not-json", content_type="application/json")
@@ -945,10 +1066,14 @@ async def test_http_invalid_json_is_response_parse(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.unit
-async def test_http_missing_selector_stays_empty_unless_strict(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_missing_selector_stays_empty_unless_strict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"other": "value"}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -957,27 +1082,39 @@ async def test_http_missing_selector_stays_empty_unless_strict(monkeypatch: pyte
     assert result.output == ""
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
-    strict = HttpTarget(url="http://localhost:8080/run", output_path="$.missing", strict_onboarding=True)
-    with pytest.raises(TargetInvocationError, match="missing_response_path") as exc_info:
+    strict = HttpTarget(
+        url="http://localhost:8080/run", output_path="$.missing", strict_onboarding=True
+    )
+    with pytest.raises(
+        TargetInvocationError, match="missing_response_path"
+    ) as exc_info:
         await strict.ainvoke(Golden(input="q"))
     assert "selector: $.missing" in str(exc_info.value)
     assert "authentication" not in str(exc_info.value).lower()
 
 
 @pytest.mark.unit
-async def test_http_diagnostic_redacts_env_secret_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_http_diagnostic_redacts_env_secret_everywhere(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     secret = "super-secret-value"
     monkeypatch.setenv("API_TOKEN", secret)
     captured: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured.append(request)
         raise _http_error(
             400,
             json.dumps({"echo": secret}),
-            {"Content-Type": "application/json", "Set-Cookie": f"session={secret}", "X-Request-Id": "req-visible"},
+            {
+                "Content-Type": "application/json",
+                "Set-Cookie": f"session={secret}",
+                "X-Request-Id": "req-visible",
+            },
         )
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -1030,6 +1167,42 @@ async def test_http_diagnostic_redacts_env_secret_everywhere(monkeypatch: pytest
 
 
 @pytest.mark.unit
+async def test_http_diagnostic_redacts_literal_and_env_credential_headers_in_echoed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness_evals.targets import http as target_http
+
+    literal_credential = "Bearer literal-header-credential"
+    env_credential = "env-resolved-api-key"
+    monkeypatch.setenv("HEADER_API_KEY", env_credential)
+
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
+        raise _http_error(400, f"credentials: {literal_credential}; {env_credential}")
+
+    monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
+    target = HttpTarget(
+        url="http://localhost:8080/run",
+        headers={
+            "Authorization": literal_credential,
+            "X-API-Key": "{{env.HEADER_API_KEY}}",
+        },
+        retries=0,
+        record_diagnostics=True,
+    )
+
+    with pytest.raises(TargetInvocationError) as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    diagnostic_payload = json.dumps(exc_info.value.diagnostic.to_dict())
+    assert literal_credential not in str(exc_info.value)
+    assert env_credential not in str(exc_info.value)
+    assert literal_credential not in diagnostic_payload
+    assert env_credential not in diagnostic_payload
+
+
+@pytest.mark.unit
 async def test_http_diagnostic_redacts_auth_material_copied_into_body_and_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1038,7 +1211,9 @@ async def test_http_diagnostic_redacts_auth_material_copied_into_body_and_url(
     secret = "query-secret-value"
     captured: list[Request] = []
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         captured.append(request)
         return FakeHTTPResponse(json.dumps({"output": "ok"}))
 
@@ -1059,12 +1234,16 @@ async def test_http_diagnostic_redacts_auth_material_copied_into_body_and_url(
 
 
 @pytest.mark.unit
-async def test_short_env_secret_does_not_redact_unrelated_text(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_short_env_secret_does_not_redact_unrelated_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from harness_evals.targets import http as target_http
 
     monkeypatch.setenv("SHORT_SECRET", "ab")
 
-    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+    def fake_urlopen(
+        request: Request, timeout: float, context=None
+    ) -> FakeHTTPResponse:
         return FakeHTTPResponse(json.dumps({"output": "abbot"}))
 
     monkeypatch.setattr(target_http, "urlopen", fake_urlopen)
@@ -1085,7 +1264,9 @@ async def test_http_response_body_is_bounded(monkeypatch: pytest.MonkeyPatch) ->
     from harness_evals.targets.http_diagnostics import DISPLAY_LIMIT
 
     _patch_http_error(monkeypatch, _http_error(422, "y" * (DISPLAY_LIMIT + 80)))
-    target = HttpTarget(url="http://localhost:8080/run", retries=0, record_diagnostics=True)
+    target = HttpTarget(
+        url="http://localhost:8080/run", retries=0, record_diagnostics=True
+    )
 
     with pytest.raises(TargetInvocationError) as exc_info:
         await target.ainvoke(Golden(input="q"))

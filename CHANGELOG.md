@@ -5,7 +5,7 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.28.1]
+## [0.28.2]
 
 ### Added
 
@@ -23,6 +23,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `EvalCase.metadata["http_diagnostic"]`. Credential headers and
   environment-sourced values are redacted by provenance, including when the same
   value is repeated in a body field.
+
+## [0.28.1]
 
 ### Fixed
 

@@ -40,9 +40,7 @@ HTTP_DIAGNOSTIC_METADATA_KEY = "http_diagnostic"
 
 # Task-local so concurrent invokes do not mix header provenance, and so the
 # execute methods keep the (body, headers) shape existing tests patch.
-_REQUEST_TRACE: ContextVar[
-    tuple[dict[str, tuple[PlaceholderUse, ...]] | None, list[str] | None]
-] = ContextVar(
+_REQUEST_TRACE: ContextVar[tuple[dict[str, tuple[PlaceholderUse, ...]] | None, list[str] | None]] = ContextVar(
     "harness_evals_http_request_trace",
     default=(None, None),
 )
@@ -189,9 +187,7 @@ class HttpDiagnostic:
             "body": self.body,
             "headers": [header.to_dict() for header in self.headers],
             "response_status": self.response_status,
-            "response_headers": [
-                {"name": name, "value": value} for name, value in self.response_headers
-            ],
+            "response_headers": [{"name": name, "value": value} for name, value in self.response_headers],
             "response_body": self.response_body,
             "extracted_value": self.extracted_value,
             "category": self.category,
@@ -240,9 +236,7 @@ def request_trace(
         _REQUEST_TRACE.reset(token)
 
 
-def current_request_trace() -> (
-    tuple[dict[str, tuple[PlaceholderUse, ...]] | None, list[str] | None]
-):
+def current_request_trace() -> tuple[dict[str, tuple[PlaceholderUse, ...]] | None, list[str] | None]:
     return _REQUEST_TRACE.get()
 
 
@@ -326,9 +320,7 @@ def describe_failure(
         parts.append(f"category={category.value}")
     if transport_cause is not None:
         parts.append(f"transport={transport_cause.value}")
-    advice = (
-        _TRANSPORT_ADVICE.get(transport_cause) if transport_cause is not None else None
-    )
+    advice = _TRANSPORT_ADVICE.get(transport_cause) if transport_cause is not None else None
     if advice is None and category is not None:
         advice = _CATEGORY_ADVICE.get(category)
     if advice is not None:
@@ -383,9 +375,7 @@ def apply_transport_failure(exchange: HttpExchange, exc: BaseException) -> str:
     return message
 
 
-def apply_parse_failure(
-    exchange: HttpExchange, exc: BaseException, response_body: str
-) -> str:
+def apply_parse_failure(exchange: HttpExchange, exc: BaseException, response_body: str) -> str:
     """Record a 2xx body that was not the expected representation."""
     exchange.response_body_text = _capture(response_body)
     exchange.category = HttpFailureCategory.RESPONSE_PARSE
@@ -437,9 +427,7 @@ def build_exchange(
         placeholder_uses = uses.get(name)
         if placeholder_uses:
             provenance[name] = tuple(
-                HeaderProvenance(
-                    kind=use.kind, expression=use.expression, env_var=use.env_var
-                )
+                HeaderProvenance(kind=use.kind, expression=use.expression, env_var=use.env_var)
                 for use in placeholder_uses
             )
         else:
@@ -450,9 +438,7 @@ def build_exchange(
     auth_expression = _auth_expression(auth)
     for name, value in headers.items():
         if before.get(name) != value:
-            provenance[name] = (
-                HeaderProvenance(kind="auth", expression=auth_expression),
-            )
+            provenance[name] = (HeaderProvenance(kind="auth", expression=auth_expression),)
     header_rows = [
         HeaderDiagnostic(
             name=name,
@@ -464,12 +450,8 @@ def build_exchange(
     ]
     # A response can echo credentials supplied directly in headers, so retain
     # their final on-wire values as redaction secrets alongside templated/auth values.
-    credential_header_values = [
-        value for name, value in headers.items() if is_credential_header(name)
-    ]
-    secrets = _dedupe(
-        [*(env_secrets or []), *_auth_secret_values(auth), *credential_header_values]
-    )
+    credential_header_values = [value for name, value in headers.items() if is_credential_header(name)]
+    secrets = _dedupe([*(env_secrets or []), *_auth_secret_values(auth), *credential_header_values])
     return HttpExchange(
         method=method,
         url=_append_query(url, params),
@@ -482,12 +464,9 @@ def build_exchange(
 def build_http_diagnostic(exchange: HttpExchange, extracted: object) -> HttpDiagnostic:
     """Copy the exchange into a redacted public record."""
     secrets = exchange.secrets
-    headers = tuple(
-        _redact_request_header(header, secrets) for header in exchange.headers
-    )
+    headers = tuple(_redact_request_header(header, secrets) for header in exchange.headers)
     response_headers = tuple(
-        (name, _redact_header_value(name, value, secrets)[0])
-        for name, value in exchange.response_headers
+        (name, _redact_header_value(name, value, secrets)[0]) for name, value in exchange.response_headers
     )
     return HttpDiagnostic(
         method=exchange.method,
@@ -503,17 +482,11 @@ def build_http_diagnostic(exchange: HttpExchange, extracted: object) -> HttpDiag
         ),
         extracted_value=format_extracted(extracted, secrets),
         category=exchange.category.value if exchange.category is not None else None,
-        transport_cause=(
-            exchange.transport_cause.value
-            if exchange.transport_cause is not None
-            else None
-        ),
+        transport_cause=(exchange.transport_cause.value if exchange.transport_cause is not None else None),
     )
 
 
-def publish_diagnostic(
-    target: Any, exchange: HttpExchange, extracted: object
-) -> HttpDiagnostic | None:
+def publish_diagnostic(target: Any, exchange: HttpExchange, extracted: object) -> HttpDiagnostic | None:
     """Store the redacted record on the target when the caller opted in.
 
     ``last_diagnostic`` is last-write-wins if the same instance is invoked
@@ -536,9 +509,7 @@ def attach_case_diagnostic(eval_case: Any, diagnostic: HttpDiagnostic | None) ->
     eval_case.metadata[HTTP_DIAGNOSTIC_METADATA_KEY] = diagnostic.to_dict()
 
 
-def output_match(
-    body: object, output_path: str, content_type: str
-) -> tuple[object, bool]:
+def output_match(body: object, output_path: str, content_type: str) -> tuple[object, bool]:
     """Return ``(output, matched)`` using the legacy empty-string fallback.
 
     ``matched`` is false only when a selector was applied and resolved to
@@ -646,11 +617,7 @@ def format_extracted(value: object, secrets: list[str]) -> str | None:
     if value is None:
         return None
     redacted = _redact_json(value, secrets)
-    text = (
-        redacted
-        if isinstance(redacted, str)
-        else json.dumps(redacted, ensure_ascii=False)
-    )
+    text = redacted if isinstance(redacted, str) else json.dumps(redacted, ensure_ascii=False)
     return bound_text(redact_text(text, secrets))
 
 
@@ -670,16 +637,12 @@ def _redact_json(value: Any, secrets: list[str]) -> Any:
     return value
 
 
-def _redact_request_header(
-    header: HeaderDiagnostic, secrets: list[str]
-) -> HeaderDiagnostic:
+def _redact_request_header(header: HeaderDiagnostic, secrets: list[str]) -> HeaderDiagnostic:
     value, redacted = _redact_header_value(header.name, header.value, secrets)
     env_sourced = any(item.kind == "env" for item in header.provenance)
     if env_sourced and value != header.value:
         redacted = True
-    return HeaderDiagnostic(
-        name=header.name, value=value, provenance=header.provenance, redacted=redacted
-    )
+    return HeaderDiagnostic(name=header.name, value=value, provenance=header.provenance, redacted=redacted)
 
 
 def _redact_header_value(name: str, value: str, secrets: list[str]) -> tuple[str, bool]:
@@ -689,13 +652,9 @@ def _redact_header_value(name: str, value: str, secrets: list[str]) -> tuple[str
     return redacted_value, redacted_value != value
 
 
-def _quote_diagnostic(
-    text: str, safe: str, encoding: str | None, errors: str | None
-) -> str:
+def _quote_diagnostic(text: str, safe: str, encoding: str | None, errors: str | None) -> str:
     # Keep the redaction marker readable in diagnostic URLs.
-    return quote(
-        text, safe=f"{safe}[]", encoding=encoding or "utf-8", errors=errors or "strict"
-    )
+    return quote(text, safe=f"{safe}[]", encoding=encoding or "utf-8", errors=errors or "strict")
 
 
 def _append_query(url: str, params: dict[str, str]) -> str:

@@ -17,12 +17,7 @@ from harness_evals.targets.conversational_streaming_http import (
 
 
 def _sse(events: list[tuple[str, dict]]) -> str:
-    return (
-        "\n\n".join(
-            f"event: {name}\ndata: {json.dumps(payload)}" for name, payload in events
-        )
-        + "\n\n"
-    )
+    return "\n\n".join(f"event: {name}\ndata: {json.dumps(payload)}" for name, payload in events) + "\n\n"
 
 
 def _harness_target(**overrides) -> ConversationalStreamingHttpTarget:
@@ -75,9 +70,7 @@ async def test_conversational_streaming_target_detects_pending_elicitation(monke
                                 "fields": [
                                     {
                                         "label": "Auth method",
-                                        "options": [
-                                            {"label": "Inherit", "value": "Inherit"}
-                                        ],
+                                        "options": [{"label": "Inherit", "value": "Inherit"}],
                                     }
                                 ]
                             },
@@ -92,9 +85,7 @@ async def test_conversational_streaming_target_detects_pending_elicitation(monke
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    msg = await target.agenerate(
-        [Message(role="user", content="Create a k8s connector")]
-    )
+    msg = await target.agenerate([Message(role="user", content="Create a k8s connector")])
 
     assert msg.role == "assistant"
     assert msg.latency_ms == 12.0
@@ -215,10 +206,7 @@ async def test_conversational_streaming_target_sends_human_input_and_completes(
     assert target.session_id == "conv-1"
     assert msg.content == "Connector created."
     assert msg.metadata["pending_human_input"] is None
-    assert (
-        msg.metadata["sse_events"]["entity_mutation"][0]["identifier"]
-        == "testconnector"
-    )
+    assert msg.metadata["sse_events"]["entity_mutation"][0]["identifier"] == "testconnector"
 
 
 @pytest.mark.unit
@@ -580,9 +568,7 @@ async def test_conversational_streaming_target_raises_on_error_only_stream(monke
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    with pytest.raises(
-        TargetInvocationError, match="Something went wrong processing your request"
-    ):
+    with pytest.raises(TargetInvocationError, match="Something went wrong processing your request"):
         await target.agenerate([Message(role="user", content="Create a k8s connector")])
 
 
@@ -597,9 +583,7 @@ async def test_conversational_streaming_target_classifies_json_parse_failures(
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    with pytest.raises(
-        TargetInvocationError, match="category=response_parse"
-    ) as exc_info:
+    with pytest.raises(TargetInvocationError, match="category=response_parse") as exc_info:
         await target.agenerate([Message(role="user", content="hello")])
 
     assert exc_info.value.diagnostic.category == "response_parse"
@@ -622,9 +606,7 @@ async def test_conversational_streaming_target_rejects_missing_selector_when_str
 
     monkeypatch.setattr(target, "_execute_with_retries", fake_execute)
 
-    with pytest.raises(
-        TargetInvocationError, match="missing_response_path"
-    ) as exc_info:
+    with pytest.raises(TargetInvocationError, match="missing_response_path") as exc_info:
         await target.agenerate([Message(role="user", content="hello")])
 
     assert exc_info.value.diagnostic.category == "missing_response_path"
@@ -637,9 +619,7 @@ async def test_conversational_streaming_target_publishes_redacted_diagnostic_met
     from harness_evals.targets import streaming_http as target_module
 
     credential = "Bearer conversational-header-credential"
-    response = _sse(
-        [("assistant_message", {"v": "visible answer", "echo": credential})]
-    )
+    response = _sse([("assistant_message", {"v": "visible answer", "echo": credential})])
 
     class FakeHTTPResponse:
         headers = {"Content-Type": "text/event-stream"}

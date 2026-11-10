@@ -59,6 +59,12 @@ If your metric doesn't clearly fit one dimension, it may be compound — conside
 | `mcp/` | Tool selection, trace completeness | `BaseMetric` |
 | `decision/` | Typed, calibrated single-call decisions (pick-one, ordered-rubric-rate, calibrated yes/no) | `BaseMetric` (takes `provider` param — a `BaseDecisionProvider`) |
 
+### Online Trace Admission
+
+Online Trace and Span metrics need a reviewed contract and sufficient observed
+evidence. `ToolUseMetric` is eligible when the trace contains at least two
+valid messages and an observed top-level or message-level tool call.
+
 ### 3. Create the File
 
 ```

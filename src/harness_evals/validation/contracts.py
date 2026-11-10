@@ -89,6 +89,7 @@ _REVIEWED_KINDS = frozenset(
         "tool_correctness",
         "argument_correctness",
         "tool_argument_match",
+        "tool_use",
         "tool_selection",
         "mcp_trace_completeness",
         "outcome_consistency",
@@ -853,6 +854,8 @@ def _requirements(kind: str, metric: BaseMetric) -> EvidenceRequirement:
         return _field("tool_calls", predicate)
     if kind == "argument_correctness":
         return _all(_field("input"), _field("tool_calls", "tool_calls", min_items=1))
+    if kind == "tool_use":
+        return EvidenceRequirement("tool_use")
     if kind in {"faithfulness", "context_precision", "context_recall", "context_relevancy", "context_entity_recall"}:
         return _all(_declaration_rule(metric.eval_inputs), _field("context", "string_list", min_items=1))
     return _declaration_rule(metric.eval_inputs)

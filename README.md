@@ -708,6 +708,9 @@ Unknown/custom or unreviewed configurations fail closed in this new API.
   reports `ready=True`. Supply actual evidence for readiness. Missing values,
   malformed values, and known-empty values are different: `tool_calls=[]` can
   be valid evidence; `tool_calls=None` cannot establish that no calls occurred.
+- `tool_use` supports online Trace and Span scopes. It requires at least two
+  valid conversation messages and one observed top-level or message-level tool
+  call before scoring.
 - Alternatives, structural fallback paths, enabled reference sources,
   decision labels, composite operators, and assistant-turn evidence are checked
   without invoking a provider or computing a quality score. Hallucination

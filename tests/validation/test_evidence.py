@@ -28,6 +28,7 @@ from harness_evals.metrics.operational.turn_latency import TurnLatencyMetric
 from harness_evals.metrics.operational.turn_token_cost import TurnTokenCostMetric
 from harness_evals.metrics.safety.hallucination import HallucinationMetric
 from harness_evals.metrics.structural.structural_similarity import StructuralSimilarityMetric
+from harness_evals.validation.contracts import resolve_metric_contract
 from harness_evals.validation.evidence import validate_metric
 from harness_evals.validation.types import (
     ConfiguredMetricContract,
@@ -168,6 +169,119 @@ def test_online_scope_is_required_and_exact():
     for scope in (None, "invalid", OnlineScope.SPAN):
         assert not validate_metric(configured, case(), context=ValidationContext(mode="online", scope=scope)).ready
     assert validate_metric(configured, case(), context=ValidationContext(mode="online", scope="trace")).ready
+
+
+@pytest.mark.parametrize("scope", [OnlineScope.TRACE, OnlineScope.SPAN])
+def test_tool_use_contract_is_ready_with_online_trace_evidence(scope):
+    configured = resolve_metric_contract("tool_use")
+    eval_case = case(
+        messages=[
+            Message(role="user", content="Find the weather"),
+            Message(role="assistant", tool_calls=[ToolCall(name="weather", input={"city": "San Francisco"})]),
+        ]
+    )
+
+    result = validate_metric(
+        configured,
+        eval_case,
+        context=ValidationContext(mode=EvaluationMode.ONLINE, scope=scope, available_resources=frozenset({"llm"})),
+    )
+
+    assert result.ready
+
+
+@pytest.mark.parametrize("scope", [OnlineScope.TRACE, OnlineScope.SPAN])
+def test_tool_use_contract_accepts_top_level_tool_calls(scope):
+    configured = resolve_metric_contract("tool_use")
+    eval_case = case(
+        messages=[
+            Message(role="user", content="Find the weather"),
+            Message(role="assistant", content="I will check"),
+        ],
+        tool_calls=[ToolCall(name="weather", input={"city": "San Francisco"})],
+    )
+
+    result = validate_metric(
+        configured,
+        eval_case,
+        context=ValidationContext(mode=EvaluationMode.ONLINE, scope=scope, available_resources=frozenset({"llm"})),
+    )
+
+    assert result.ready
+
+
+@pytest.mark.parametrize(
+    ("eval_case", "reason"),
+    [
+        (
+            case(messages=None, tool_calls=[ToolCall(name="weather", input={"city": "San Francisco"})]),
+            ReasonCode.MISSING_EVIDENCE,
+        ),
+        (
+            case(
+                messages=[
+                    Message(role="user", content="Find the weather"),
+                    Message(role="assistant", content=42, tool_calls=[ToolCall(name="weather", input={})]),
+                ]
+            ),
+            ReasonCode.INVALID_EVIDENCE,
+        ),
+        (
+            case(
+                messages=[
+                    Message(role="user", content="Find the weather"),
+                    Message(role="assistant", tool_calls=[ToolCall(name="weather", input={})]),
+                ],
+                tool_calls=[{"name": "weather"}],
+            ),
+            ReasonCode.INVALID_EVIDENCE,
+        ),
+    ],
+)
+def test_tool_use_contract_rejects_missing_or_malformed_evidence(eval_case, reason):
+    configured = resolve_metric_contract("tool_use")
+
+    result = validate_metric(
+        configured,
+        eval_case,
+        context=ValidationContext(
+            mode=EvaluationMode.ONLINE,
+            scope=OnlineScope.TRACE,
+            available_resources=frozenset({"llm"}),
+        ),
+    )
+
+    assert not result.ready
+    assert codes(result) == {reason}
+
+
+@pytest.mark.parametrize(
+    "eval_case",
+    [
+        case(messages=[Message(role="user", content="Find the weather")]),
+        case(
+            messages=[
+                Message(role="user", content="Find the weather"),
+                Message(role="assistant", content="The weather is sunny"),
+            ]
+        ),
+    ],
+)
+def test_tool_use_contract_rejects_insufficient_conversation_evidence(eval_case):
+    configured = resolve_metric_contract("tool_use")
+
+    result = validate_metric(
+        configured,
+        eval_case,
+        context=ValidationContext(
+            mode=EvaluationMode.ONLINE,
+            scope=OnlineScope.TRACE,
+            available_resources=frozenset({"llm"}),
+        ),
+    )
+
+    assert not result.ready
+    assert codes(result) == {ReasonCode.INSUFFICIENT_EVIDENCE}
 
 
 @pytest.mark.parametrize(

@@ -123,6 +123,7 @@ def _roundtrip(contract):
         ("tool_correctness", {}),
         ("argument_correctness", {}),
         ("tool_argument_match", {"ignore_keys": ["timestamp"]}),
+        ("tool_use", {}),
         ("tool_selection", {}),
         ("mcp_trace_completeness", {"expected_trace": [{"name": "lookup", "input": {}}]}),
         ("outcome_consistency", {"k": 7}),
@@ -566,6 +567,17 @@ def test_describe_instance_does_not_serialize_or_touch_provider(no_execution):
     mcp = describe_configured_metric(MCPTraceCompletenessMetric([ToolCall("lookup", {"key": "value"})]))
     assert mcp.reviewed and mcp.group_compatible
     assert "lookup" not in json.dumps(mcp.to_dict())
+
+
+def test_tool_use_contract_supports_trace_and_span_online_scopes(no_execution):
+    contract = resolve_metric_contract("tool_use")
+
+    assert contract.reviewed
+    assert contract.inputs.required == {MetricInput.MESSAGES}
+    assert contract.inputs.optional == {MetricInput.TOOL_CALLS}
+    assert contract.resources == ("llm",)
+    assert contract.online_scopes == frozenset({OnlineScope.TRACE, OnlineScope.SPAN})
+    assert not contract.group_compatible
 
 
 def test_invalid_config_objects_never_invoke_copy_or_serialization_hooks(no_execution):

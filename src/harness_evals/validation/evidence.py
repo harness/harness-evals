@@ -254,6 +254,28 @@ def _turns(rule: EvidenceRequirement, data: dict[str, Any], coordinate: str) -> 
     return []
 
 
+def _tool_use(rule: EvidenceRequirement, data: dict[str, Any], coordinate: str) -> list[ValidationReason]:
+    """Validate the minimum conversation and tool evidence ToolUseMetric scores."""
+    if rule.path is not None or rule.predicate != "present" or rule.children or rule.parameters:
+        raise _ConfigurationError
+
+    messages = data.get("messages")
+    if messages is None:
+        return [_reason(ReasonCode.MISSING_EVIDENCE, coordinate)]
+    if not _messages(messages):
+        return [_reason(ReasonCode.INVALID_EVIDENCE, coordinate)]
+    if len(messages) < 2:
+        return [_reason(ReasonCode.INSUFFICIENT_EVIDENCE, coordinate)]
+
+    top_level_calls = data.get("tool_calls")
+    if top_level_calls is not None and not _tool_calls(top_level_calls):
+        return [_reason(ReasonCode.INVALID_EVIDENCE, coordinate)]
+    message_calls = [call for message in messages for call in message.get("tool_calls") or []]
+    if not (top_level_calls or message_calls):
+        return [_reason(ReasonCode.INSUFFICIENT_EVIDENCE, coordinate)]
+    return []
+
+
 def _references(rule: EvidenceRequirement, data: dict[str, Any], coordinate: str) -> list[ValidationReason]:
     parameters = rule.parameters
     flags = (
@@ -544,6 +566,8 @@ def _evaluate(
             return _field(rule, data, coordinate)
         if rule.op == "assistant_turns":
             return _turns(rule, data, coordinate)
+        if rule.op == "tool_use":
+            return _tool_use(rule, data, coordinate)
         if rule.op == "hallucination_references":
             return _references(rule, data, coordinate)
         if rule.op == "decision":
@@ -668,6 +692,10 @@ def _rule_roots(rule: EvidenceRequirement, depth: int = 0) -> set[str]:
             add(parameters.get("default_path"))
     elif rule.op == "assistant_turns":
         add(rule.path or "messages")
+    elif rule.op == "tool_use":
+        if rule.path is not None or rule.predicate != "present" or rule.parameters:
+            raise _ConfigurationError
+        roots.update({"messages", "tool_calls"})
     elif rule.op == "hallucination_references":
         roots.update({"context", "expected"})
         if any(

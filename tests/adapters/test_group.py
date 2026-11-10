@@ -1358,3 +1358,92 @@ def test_matching_local_result_and_explicit_span_result_remain_supported(output:
     assert result.case.tool_calls == [ToolCall("lookup", {"key": "same"}, output)]
     assert [msg.role for msg in result.case.messages] == ["tool"]
     assert GroupIssue.AMBIGUOUS_TOOL_LINK not in issues(result)
+
+
+def _llm_member_rows() -> list[dict[str, Any]]:
+    return [
+        span(
+            "llm",
+            start=1,
+            end=3,
+            inputs=[message("user", "find it")],
+            outputs=[intent("c1")],
+            input_tokens=11,
+            output_tokens=4,
+        ),
+        tool("t", "c1", 3, 4, "found"),
+    ]
+
+
+def test_happy_path_assembles_messages_tools_and_usage() -> None:
+    second = [
+        span(
+            "llm2",
+            start=5,
+            end=6,
+            inputs=[message("user", "thanks")],
+            outputs=[message("assistant", "welcome")],
+            input_tokens=6,
+            output_tokens=2,
+        )
+    ]
+    result = traces_to_group_eval_case([GroupTrace(_llm_member_rows(), "one", True), GroupTrace(second, "two", True)])
+    assert result.case.messages
+    assert result.case.tool_calls
+    assert result.case.tool_calls[0].name == "lookup"
+    assert result.case.input_tokens == 17
+    assert result.case.output_tokens == 6
+    assert result.diagnostics.member_count == 2
+
+
+def test_projection_omits_undeclared_fields() -> None:
+    result = traces_to_group_eval_case(
+        [GroupTrace(_llm_member_rows(), "one", True), GroupTrace([], "two", True)],
+        metrics=[DeclaredMetric()],
+    )
+    assert result.case.messages is None
+    assert result.case.tool_calls is None
+    assert result.case.input_tokens is None
+    assert result.case.output_tokens is None
+    assert result.diagnostics.member_count == 2
+
+
+def test_diagnostics_counts_spans_and_completeness() -> None:
+    result = traces_to_group_eval_case(
+        [
+            GroupTrace(_llm_member_rows(), "one", True),
+            GroupTrace([span("x", inputs=[message("user", "hi")])], "two", False),
+            GroupTrace([span("y")], "three", None),
+        ]
+    )
+    diagnostics = result.diagnostics
+    assert diagnostics.member_count == 3
+    assert diagnostics.span_count == 4
+    assert diagnostics.complete_member_count == 1
+    assert diagnostics.incomplete_member_count == 1
+    assert diagnostics.unknown_member_count == 1
+
+
+@pytest.mark.parametrize("count", [0, 1, 65])
+def test_member_count_error_code(count: int) -> None:
+    with pytest.raises(GroupInputError) as error:
+        traces_to_group_eval_case([GroupTrace([], f"t{i}") for i in range(count)])
+    assert error.value.code is GroupErrorCode.MEMBER_COUNT
+
+
+def test_repeated_trace_id_is_rejected() -> None:
+    with pytest.raises(GroupInputError) as error:
+        traces_to_group_eval_case([GroupTrace([], "same"), GroupTrace([], "same")])
+    assert error.value.code is GroupErrorCode.REPEATED_TRACE
+
+
+def test_nested_rollup_is_discarded_by_usage_frontier() -> None:
+    rows = [
+        span("parent", input_tokens=50, output_tokens=10),
+        span("child", parent="parent", input_tokens=20, output_tokens=4),
+        span("child2", parent="parent", input_tokens=30, output_tokens=6),
+    ]
+    result = traces_to_group_eval_case(members(*rows))
+    assert result.diagnostics.input_tokens.overlapping > 0
+    assert result.case.input_tokens == 50
+    assert result.case.output_tokens == 10

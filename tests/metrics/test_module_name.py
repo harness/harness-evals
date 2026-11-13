@@ -126,3 +126,10 @@ def test_module_name_prompt_disambiguates_neighbouring_modules() -> None:
     assert "Perspectives" in sent
     assert "container images" in sent
     assert "Rules:" not in sent
+
+
+@pytest.mark.unit
+def test_module_name_schema_requires_every_property() -> None:
+    from harness_evals.metrics.llm_judge.module_name import _RESPONSE_SCHEMA
+
+    assert set(_RESPONSE_SCHEMA["required"]) == set(_RESPONSE_SCHEMA["properties"])

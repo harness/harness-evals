@@ -119,7 +119,7 @@ Respond with JSON: {{"module": "<one code from the list>", "reason": "<one short
 """
 _RESPONSE_SCHEMA = {
     "type": "object",
-    "required": ["module"],
+    "required": ["module", "reason"],
     "properties": {
         "module": {"type": "string", "enum": list(MODULES)},
         "reason": {"type": "string"},

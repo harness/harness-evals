@@ -9,6 +9,7 @@ from harness_evals.metrics.llm_judge.dag import (
     VerdictNode,
 )
 from harness_evals.metrics.llm_judge.geval import GEvalMetric
+from harness_evals.metrics.llm_judge.module_name import ModuleNameMetric
 from harness_evals.metrics.llm_judge.pairwise import PairwiseMetric
 from harness_evals.metrics.llm_judge.prompt_alignment import PromptAlignmentMetric
 from harness_evals.metrics.llm_judge.rubric_judge import RubricJudgeMetric
@@ -20,6 +21,7 @@ __all__ = [
     "RubricJudgeMetric",
     "RubricLevel",
     "PairwiseMetric",
+    "ModuleNameMetric",
     "DAGMetric",
     "DeepAcyclicGraph",
     "TaskNode",

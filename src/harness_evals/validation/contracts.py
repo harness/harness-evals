@@ -53,6 +53,7 @@ _REVIEWED_KINDS = frozenset(
         "rouge",
         "embedding_similarity",
         "latency",
+        "module_name",
         "token_cost",
         "cost_efficiency",
         "retry_count",

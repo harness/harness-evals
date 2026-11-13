@@ -5,6 +5,21 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0]
+
+### Added
+
+- **`module_name` metric**: `ModuleNameMetric` labels the Harness module for a
+  session from the user prompt, using a judge LLM. It picks one code from the
+  Harness Platform module list (`code`, `cd`, `release`, `ci`, `idp`, `iacm`,
+  `dbops`, `artifact`, `fme`, `ff`, `chaos`, `aitest`, `aisre`, `aisec`,
+  `aasp`, `aarp`, `aast`, `sto`, `scs`, `sast`, `ccm`, `aidi`) or `other`.
+  UI context blocks such as `<current_context>` are stripped before judging.
+  The score reason is the module code; `value` is 1.0 for a named module and
+  0.0 for `other`. The default threshold is 0.0, so the label never fails a
+  session. Sessions with no user text, or a judge answer outside the list, are
+  skipped.
+
 ## [0.29.1]
 
 ### Changed

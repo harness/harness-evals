@@ -100,8 +100,7 @@ async def test_replay_harness_data_turns_complete_k8s_connector_flow(monkeypatch
         },
     )
 
-    from examples.harness_sse_elicitation_adapter import HarnessSseElicitationAdapter
-
+    from harness_evals.conversation.adapters.harness_sse import HarnessSseElicitationAdapter
     from harness_evals.conversation.human_input import HumanInputSimulator
 
     simulator = ConversationSimulator(

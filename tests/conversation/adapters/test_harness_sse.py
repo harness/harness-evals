@@ -3,9 +3,9 @@
 import logging
 
 import pytest
-from examples.harness_sse_elicitation_adapter import HarnessSseElicitationAdapter
 
 from harness_evals.conversation import ConversationGolden, ConversationSimulator
+from harness_evals.conversation.adapters.harness_sse import HarnessSseElicitationAdapter
 from harness_evals.conversation.human_input import HumanInputSimulator, PendingHumanInput
 from harness_evals.core.types import Message
 from harness_evals.llm.base import BaseLLM

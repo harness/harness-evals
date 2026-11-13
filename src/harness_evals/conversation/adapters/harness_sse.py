@@ -1,8 +1,8 @@
-"""Example elicitation adapter for Harness SSE agents.
+"""Harness SSE elicitation adapter for conversational evals.
 
-Loads when listed under ``plugins`` in an eval YAML. Registers
-``HarnessSseElicitationAdapter`` for ``conversation.elicitation_adapter:
-harness_sse``.
+Registers ``HarnessSseElicitationAdapter`` for ``conversation.elicitation_adapter:
+harness_sse``. Importing this module (directly, or via ``harness_evals.conversation``)
+registers the adapter as a side effect.
 
 When ``elicitation_hints`` are present on the golden, responses are resolved
 deterministically via intent matchers. Set ``elicitation_hints.llm_on_miss: true``
@@ -11,9 +11,6 @@ often ask different questions than prod skill flows). When hints are omitted ent
 the adapter always uses the simulator LLM.
 
 Config::
-
-    plugins:
-      - examples.harness_sse_elicitation_adapter
 
     conversation:
       elicitation_adapter: harness_sse

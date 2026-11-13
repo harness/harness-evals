@@ -384,12 +384,10 @@ message metadata, the simulator generates a continuation payload and calls the
 agent again until the turn completes or `max_elicitation_rounds` is reached.
 
 Configure the target explicitly for your agent's event names and request body
-shape. Load the adapter via ``plugins`` when using Harness SSE elicitation:
+shape. ``harness_sse`` is registered automatically on import of
+``harness_evals.conversation`` — no ``plugins`` entry is needed:
 
 ```yaml
-plugins:
-  - examples.harness_sse_elicitation_adapter
-
 conversation:
   elicitation_adapter: harness_sse
 ```
@@ -410,7 +408,7 @@ conversation:
   max_turns: 1
   max_elicitation_rounds: 6
   simulator_llm: {provider: openai, name: gpt-4o-mini}
-  # elicitation_adapter: harness_sse   # requires examples.harness_sse_elicitation_adapter plugin
+  # elicitation_adapter: harness_sse   # registered automatically; no plugin needed
 
 dataset: ./examples/harness-agent.goldens.jsonl
 

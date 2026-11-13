@@ -80,7 +80,7 @@ questions each run. Put expectations in natural language and let
 For Harness SSE agents, pair this golden with:
 
 - `conversation.simulator_llm` (for example `{provider: openai, name: gpt-4o-mini}`)
-- `conversation.elicitation_adapter: harness_sse` and `plugins: [examples.harness_sse_elicitation_adapter]`
+- `conversation.elicitation_adapter: harness_sse` (registered automatically, no `plugins` entry needed)
 
 See `examples/harness-agent.goldens.jsonl` and `examples/harness-agent-conversation.eval.yaml`.
 Set `HARNESS_ORG` and `HARNESS_PROJECT` before loading the example so the
@@ -141,7 +141,7 @@ like this:
 
 The eval YAML wires Harness-specific target fields:
 
-- `conversation.elicitation_adapter: harness_sse` with `plugins: [examples.harness_sse_elicitation_adapter]`
+- `conversation.elicitation_adapter: harness_sse` (registered automatically, no `plugins` entry needed)
 - `human_input_events`, `session_fields`, and `human_input_body_template` on `conversational_streaming_http`
 
 Deterministic golden with full `elicitation_hints` for that flow:

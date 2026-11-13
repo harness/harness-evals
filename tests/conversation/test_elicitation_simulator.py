@@ -3,9 +3,9 @@
 import json
 
 import pytest
-from examples.harness_sse_elicitation_adapter import ElicitationSimulator
 
 from harness_evals.conversation import ConversationGolden, ConversationMode, ConversationSimulator
+from harness_evals.conversation.adapters.harness_sse import ElicitationSimulator
 from harness_evals.conversation.human_input import PendingHumanInput
 from harness_evals.conversation.simulator import _human_input_preview
 from harness_evals.core.types import Message

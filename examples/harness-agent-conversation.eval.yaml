@@ -29,7 +29,6 @@ name: harness-agent-conversation
 
 plugins:
   - examples.sse_events_match_metric
-  - examples.harness_sse_elicitation_adapter
 
 conversation:
   mode: simulate

@@ -5,6 +5,25 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.2]
+
+### Changed
+
+- `HarnessSseElicitationAdapter` and `ElicitationSimulator` move from the
+  unshipped `examples/` directory into the installable package, at
+  `harness_evals.conversation.adapters.harness_sse` (also re-exported from
+  `harness_evals.conversation`). The adapter previously only reached
+  downstream consumers that vendored or imported `examples/` directly, which
+  the published wheel never includes (`pyproject.toml`'s `packages` config
+  ships only `src/harness_evals`). **Breaking:** `examples/harness_sse_elicitation_adapter.py`
+  no longer exists — eval YAMLs using
+  `plugins: [examples.harness_sse_elicitation_adapter]` must drop that
+  `plugins` entry; `harness_sse` is now registered automatically on import
+  of `harness_evals.conversation`, so no `plugins` entry is needed for it at
+  all. Downstream consumers still referencing the old plugin path (at least
+  the `ai-evals` `qpe-evals-library` local-run templates) need updating
+  separately.
+
 ## [0.29.1]
 
 ### Changed

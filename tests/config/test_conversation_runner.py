@@ -109,7 +109,6 @@ def test_config_runner_replays_k8s_connector_flow_through_conversation_target(tm
 name: conversation-runner-test
 concurrency: 1
 plugins:
-  - examples.harness_sse_elicitation_adapter
   - examples.sse_events_match_metric
 conversation:
   mode: simulate

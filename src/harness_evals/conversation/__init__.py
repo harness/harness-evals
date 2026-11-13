@@ -1,5 +1,6 @@
 """Multi-turn conversation evaluation: goldens, simulation, and runners."""
 
+from harness_evals.conversation.adapters.harness_sse import HarnessSseElicitationAdapter
 from harness_evals.conversation.golden import ConversationGolden, ConversationMode
 from harness_evals.conversation.graph import (
     BranchNode,
@@ -27,6 +28,7 @@ __all__ = [
     "ConversationMode",
     "ConversationSimulator",
     "ElicitationAdapter",
+    "HarnessSseElicitationAdapter",
     "HumanInputSimulator",
     "PendingHumanInput",
     "Edge",

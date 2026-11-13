@@ -37,8 +37,7 @@ MODULE_DESCRIPTIONS: dict[str, str] = {
     "iacm": (
         "Infrastructure as Code Management: IaCM workspaces for OpenTofu, Terraform, Terragrunt and Ansible, "
         "state, plan/apply runs, drift detection, IaC pull request automation, and cost estimates of IaC "
-        "changes. Only when the request is about managing IaC workspaces, state or drift; merely writing a "
-        "Terraform file or pipeline to create resources is a pipeline request"
+        "changes"
     ),
     "dbops": "Database DevOps: database schema changes, migrations, rollbacks and database instances",
     "artifact": (
@@ -112,16 +111,6 @@ _PROMPT = """Classify the user request into the one Harness module the user is w
 
 Modules:
 {modules}
-
-Rules:
-- Pick the module that owns the main thing the user wants to do or learn, not tools mentioned in passing
-  (a Terraform file, a connector, or a cloud account are inputs, not the module).
-- Creating, editing or debugging a pipeline is ci when it builds, tests or publishes, and cd when it
-  deploys or provisions.
-- Vulnerabilities in container images or scan results are sto. Vulnerabilities in source code or
-  dependencies of a repository are sast.
-- Cost, spend, Perspectives, budgets and savings are ccm.
-- Use other only when no listed module fits.
 
 User request:
 {prompt}

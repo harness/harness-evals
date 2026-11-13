@@ -125,5 +125,4 @@ def test_module_name_prompt_disambiguates_neighbouring_modules() -> None:
     sent = judge.prompts[0]
     assert "Perspectives" in sent
     assert "container images" in sent
-    assert "merely writing a Terraform file" in sent
-    assert "cd when it\n  deploys or provisions" in sent
+    assert "Rules:" not in sent

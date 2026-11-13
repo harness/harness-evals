@@ -12,18 +12,22 @@ from harness_evals.validation.contracts import resolve_metric_contract
 
 
 class _Judge:
-    def __init__(self, module: str) -> None:
+    def __init__(self, module: str, reason: str | None = None) -> None:
         self.module = module
+        self.reason = reason
         self.prompts: list[str] = []
 
     async def generate_json(self, prompt: str, schema: dict) -> dict[str, str]:
         self.prompts.append(prompt)
-        return {"module": self.module}
+        result = {"module": self.module}
+        if self.reason is not None:
+            result["reason"] = self.reason
+        return result
 
 
 @pytest.mark.unit
 def test_module_name_uses_the_user_prompt() -> None:
-    judge = _Judge("ccm")
+    judge = _Judge("ccm", "Asks why cloud spend jumped.")
     case = EvalCase(
         input="ignored when messages exist",
         output="done",
@@ -42,9 +46,9 @@ def test_module_name_uses_the_user_prompt() -> None:
     score = ModuleNameMetric(judge).measure(case)
 
     assert score is not None
-    assert score.reason == "ccm"
+    assert score.reason == "ccm: Asks why cloud spend jumped."
     assert score.value == 1.0
-    assert score.metadata == {"module": "ccm"}
+    assert score.metadata == {"module": "ccm", "reason": "Asks why cloud spend jumped."}
     assert score.passed
     assert len(judge.prompts) == 1
     sent = judge.prompts[0]
@@ -97,3 +101,29 @@ def test_module_name_is_reviewed_for_online_traces() -> None:
     assert OnlineScope.TRACE in contract.online_scopes
     assert OnlineScope.SPAN in contract.online_scopes
     assert OnlineScope.GROUP not in contract.online_scopes
+
+
+@pytest.mark.unit
+def test_module_name_reason_is_optional() -> None:
+    score = ModuleNameMetric(_Judge("cd", "  Deploys\n a service.  ")).measure(
+        EvalCase(input="Deploy checkout to prod.", output="")
+    )
+    assert score is not None
+    assert score.reason == "cd: Deploys a service."
+    assert score.metadata == {"module": "cd", "reason": "Deploys a service."}
+
+    bare = ModuleNameMetric(_Judge("cd")).measure(EvalCase(input="Deploy checkout to prod.", output=""))
+    assert bare is not None
+    assert bare.reason == "cd"
+    assert bare.metadata == {"module": "cd"}
+
+
+@pytest.mark.unit
+def test_module_name_prompt_disambiguates_neighbouring_modules() -> None:
+    judge = _Judge("sto")
+    ModuleNameMetric(judge).measure(EvalCase(input="Which images have CVSS above 8?", output=""))
+    sent = judge.prompts[0]
+    assert "Perspectives" in sent
+    assert "container images" in sent
+    assert "merely writing a Terraform file" in sent
+    assert "cd when it\n  deploys or provisions" in sent

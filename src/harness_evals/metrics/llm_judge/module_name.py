@@ -31,8 +31,13 @@ MODULE_DESCRIPTIONS: dict[str, str] = {
         "intelligence, build infrastructure, and CI pipelines"
     ),
     "idp": (
-        "Internal Developer Portal: software catalog entities, scorecards, self-service workflows, "
-        "Backstage plugins, and developer onboarding"
+        "Internal Developer Portal: software catalog entities, scorecards, and self-service workflows such "
+        "as golden paths and software templates that scaffold new services, repos and environments, plus "
+        "Backstage plugins and developer onboarding"
+    ),
+    "worker_agents": (
+        "Worker agents: creating, updating, or deleting custom worker agents, including their uid, "
+        "LLM connector, MCP connector, and task prompt"
     ),
     "iacm": (
         "Infrastructure as Code Management: IaCM workspaces for OpenTofu, Terraform, Terragrunt and Ansible, "
@@ -99,8 +104,8 @@ MODULE_DESCRIPTIONS: dict[str, str] = {
         "lead time, and engineering bottlenecks"
     ),
     "other": (
-        "None of the above, such as delegates, secrets, connectors, templates, users and RBAC, policy as "
-        "code, audit trails, and general questions about Harness. Pipeline requests belong to ci or cd"
+        "Last resort when no module above fits, such as delegates, secrets, connectors, users and RBAC, "
+        "policy as code, audit trails, and general questions about Harness. Pipeline requests belong to ci or cd"
     ),
 }
 MODULES = tuple(MODULE_DESCRIPTIONS)

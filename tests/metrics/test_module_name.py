@@ -133,3 +133,14 @@ def test_module_name_schema_requires_every_property() -> None:
     from harness_evals.metrics.llm_judge.module_name import _RESPONSE_SCHEMA
 
     assert set(_RESPONSE_SCHEMA["required"]) == set(_RESPONSE_SCHEMA["properties"])
+
+
+@pytest.mark.unit
+def test_module_name_lists_worker_agents_and_idp_golden_paths() -> None:
+    judge = _Judge("worker_agents", "Creates a worker agent.")
+    score = ModuleNameMetric(judge).measure(EvalCase(input="Create a worker agent named x.", output=""))
+    assert score is not None
+    assert score.metadata == {"module": "worker_agents", "reason": "Creates a worker agent."}
+    sent = judge.prompts[0]
+    assert "worker_agents: Worker agents" in sent
+    assert "golden paths" in sent

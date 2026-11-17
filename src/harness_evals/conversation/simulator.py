@@ -295,7 +295,7 @@ class ConversationSimulator:
 
             history.append(Message(role="user", content=user_text))
             assistant_msg = await self._call_agent(agent_fn, history)
-            await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
+            assistant_msg = await self._resolve_elicitations(golden, agent_fn, history, assistant_msg)
             await self._post_elicitation_settle(history)
             turns_used += 1
 

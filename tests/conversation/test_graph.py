@@ -13,6 +13,7 @@ from harness_evals.conversation import (
     SimulationGraph,
     StopNode,
 )
+from harness_evals.conversation.adapters.harness_sse import ElicitationSimulator
 from harness_evals.core.types import Message
 from tests.conftest import MockLLM
 
@@ -732,6 +733,62 @@ class TestGraphSimulation:
         assert len(result.messages) == 4
         assert result.messages[0].content == "What's the status of my order?"
         assert result.messages[2].content == "Order #12345"
+
+    async def test_graph_routes_on_post_elicitation_reply_not_pending_tool_call(self):
+        """Regression: resolve_next must see the post-elicitation reply, not the
+        pre-approval message (which carries no text), or the scripted turn repeats
+        instead of advancing to the next node."""
+        graph = SimulationGraph(
+            nodes={
+                "start": ScriptedNode(message="Create a pipeline named foo"),
+                "done": StopNode(),
+            },
+            edges=[Edge(source="start", target="done", condition={"type": "regex", "value": ".+"})],
+            predicates={},
+            start="start",
+        )
+
+        calls = 0
+
+        async def agent_fn(messages: list[Message], human_input: dict | None = None) -> Message:
+            nonlocal calls
+            calls += 1
+            if human_input is None:
+                return Message(
+                    role="assistant",
+                    metadata={
+                        "pending_elicitation": {
+                            "type": "elicitation_free_text",
+                            "payload": {
+                                "review_id": "rev-create",
+                                "content": {"question": "What pipeline name should I use?"},
+                            },
+                        }
+                    },
+                )
+            return Message(role="assistant", content="Pipeline `foo` created.")
+
+        golden = ConversationGolden(
+            scenario="Create a pipeline",
+            expected_outcome="Pipeline created",
+            max_turns=3,
+            graph_config=graph.to_dict(),
+            elicitation_hints={
+                "intents": {"pipeline_name": "foo"},
+                "matchers": [{"intent": "pipeline_name", "question_contains": ["pipeline", "name"]}],
+            },
+        )
+
+        simulator = ConversationSimulator(
+            simulator_llm=MockLLM(), graph=graph, elicitation_simulator=ElicitationSimulator()
+        )
+        result = await simulator.simulate(golden, agent_fn)
+
+        assert calls == 2
+        assert result.messages is not None
+        scripted_turns = [m for m in result.messages if m.role == "user" and not (m.metadata or {}).get("simulated")]
+        assert scripted_turns == [Message(role="user", content="Create a pipeline named foo")]
+        assert result.messages[-1].content == "Pipeline `foo` created."
 
 
 @pytest.mark.unit

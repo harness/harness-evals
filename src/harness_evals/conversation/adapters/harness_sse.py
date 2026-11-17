@@ -8,7 +8,9 @@ When ``elicitation_hints`` are present on the golden, responses are resolved
 deterministically via intent matchers. Set ``elicitation_hints.llm_on_miss: true``
 to fall back to ``conversation.simulator_llm`` when no matcher resolves (QA wizards
 often ask different questions than prod skill flows). When hints are omitted entirely,
-the adapter always uses the simulator LLM.
+the adapter always uses the simulator LLM. Without ``llm_on_miss``, any hint miss
+(including a free-text question or plain-text form field with no matching intent)
+raises rather than answering with an empty string.
 
 Config::
 
@@ -283,22 +285,13 @@ Always set success=true."""
                             desired=desired,
                         )
                     form_values[label] = selected
-            elif options and field_type in {"select", "multi_select"}:
+            else:
                 self._raise_unresolved(
                     golden=golden,
                     pending_type="elicitation_form",
                     question=label,
                     intent=intent,
                     desired=desired,
-                )
-            else:
-                self._record_field_miss(
-                    golden=golden,
-                    pending_type="elicitation_form",
-                    question=label,
-                    intent=intent,
-                    desired=desired,
-                    fallback="empty",
                 )
         return {
             "event_type": "action_completed",
@@ -314,13 +307,12 @@ Always set success=true."""
         intent = resolve_intent(question, golden)
         free_text = intents(golden).get(intent or "", "")
         if not free_text:
-            self._record_field_miss(
+            self._raise_unresolved(
                 golden=golden,
                 pending_type="elicitation_free_text",
                 question=question,
                 intent=intent,
                 desired=free_text,
-                fallback="empty",
             )
         return {
             "event_type": "action_completed",

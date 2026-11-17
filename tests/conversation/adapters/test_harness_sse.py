@@ -791,7 +791,7 @@ async def test_form_field_intent_miss_raises_unresolved(caplog):
 
 
 @pytest.mark.unit
-async def test_free_text_intent_miss_records_no_intent_match(caplog):
+async def test_free_text_intent_miss_raises_unresolved(caplog):
     caplog.set_level(logging.WARNING, logger=_INTENT_MISS_LOGGER)
     adapter = HarnessSseElicitationAdapter()
     pending = PendingHumanInput.from_metadata(
@@ -804,12 +804,12 @@ async def test_free_text_intent_miss_records_no_intent_match(caplog):
         }
     )
 
-    result = await adapter.respond(pending, _golden(), [])
+    with pytest.raises(ValueError, match="Unresolved elicitation_free_text"):
+        await adapter.respond(pending, _golden(), [])
 
-    assert result["result"]["free_text"] == ""
     assert len(adapter.intent_misses) == 1
     assert adapter.intent_misses[0].reason == "no_intent_match"
-    assert adapter.intent_misses[0].fallback == "empty"
+    assert adapter.intent_misses[0].fallback == "unresolved"
     assert "no_intent_match" in caplog.text
 
 

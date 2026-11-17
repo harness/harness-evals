@@ -202,7 +202,7 @@ async def test_form_select_field_raises_when_desired_value_unmatched():
 
 
 @pytest.mark.unit
-async def test_form_field_without_options_records_empty_miss():
+async def test_form_field_without_options_raises_unresolved():
     golden = _golden(intents={})
     pending = PendingHumanInput.from_metadata(
         {
@@ -211,9 +211,9 @@ async def test_form_field_without_options_records_empty_miss():
         }
     )
     adapter = HarnessSseElicitationAdapter()
-    result = await adapter.respond(pending, golden, [])
-    assert result["result"]["form_values"] == {}
-    assert adapter.intent_misses[0].fallback == "empty"
+    with pytest.raises(ValueError, match="Unresolved elicitation_form"):
+        await adapter.respond(pending, golden, [])
+    assert adapter.intent_misses[0].fallback == "unresolved"
 
 
 # -- _select_response / _multi_select_response edge branches ------------------

@@ -5,6 +5,18 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.3]
+
+### Fixed
+
+- `_graph_simulate` now routes `graph.resolve_next()` on the post-elicitation
+  reply instead of the stale pre-approval `assistant_msg`. For mutating tool
+  calls (e.g. `harness_create`/`harness_update`) the pre-approval message
+  carries no text — only `tool_calls` — so a `.+` edge never matched,
+  `resolve_next` returned `None`, and the scripted node re-sent its user
+  message instead of advancing, producing duplicate scripted turns in
+  production conversation runs.
+
 ## [0.29.2]
 
 ### Changed

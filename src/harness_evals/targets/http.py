@@ -9,7 +9,6 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 try:
@@ -23,7 +22,30 @@ from harness_evals.errors import TargetInvocationError
 from harness_evals.plugins import register_target
 from harness_evals.targets.auth import AuthConfig, NoAuth
 from harness_evals.targets.base import BaseTarget
-from harness_evals.targets.templating import render_headers, render_request_body
+from harness_evals.targets.http_diagnostics import (
+    CAPTURE_LIMIT,
+    HttpCall,
+    HttpDiagnostic,
+    HttpExchange,
+    apply_missing_selector,
+    apply_parse_failure,
+    apply_status_failure,
+    apply_transport_failure,
+    attach_case_diagnostic,
+    build_exchange,
+    current_request_trace,
+    header_items,
+    output_match,
+    publish_diagnostic,
+    read_urllib_error_body,
+    request_trace,
+    status_code_of,
+)
+from harness_evals.targets.templating import (
+    render_headers_with_provenance,
+    render_request_body,
+    render_request_body_with_provenance,
+)
 from harness_evals.targets.trajectory import normalize_trajectory_fields, synthesize_messages
 from harness_evals.utils.path import extract_path
 
@@ -64,7 +86,15 @@ class HttpTarget(BaseTarget):
     confidence_path: str | None = None
     latency_ms_path: str | None = None
 
+    # strict_onboarding turns a selector that matches nothing into an error.
+    # The default keeps the legacy empty-string output. record_diagnostics
+    # retains a redacted HttpDiagnostic on the target, the exception, and
+    # EvalCase.metadata["http_diagnostic"].
+    strict_onboarding: bool = False
+    record_diagnostics: bool = False
+
     _async_client: object | None = field(default=None, init=False, repr=False)
+    last_diagnostic: HttpDiagnostic | None = field(default=None, init=False, repr=False)
 
     async def __aenter__(self) -> HttpTarget:
         if httpx is None:
@@ -91,25 +121,29 @@ class HttpTarget(BaseTarget):
             self._async_client = None
 
     async def ainvoke(self, golden: Golden) -> EvalCase:
-        body = self._build_request_body(golden)
-        headers = render_headers(self.headers, golden)
+        if not self.record_diagnostics:
+            self.last_diagnostic = None
+        body_payload, body_secrets = render_request_body_with_provenance(self.body_template, golden)
+        body = json.dumps(body_payload, ensure_ascii=False).encode("utf-8")
+        headers, header_uses, header_secrets = render_headers_with_provenance(self.headers, golden)
+        secrets = [*body_secrets, *header_secrets]
 
-        if self._async_client is not None:
-            response_body, content_type, latency_ms, error = await self._execute_async(body, headers)
-        else:
-            logger.debug("HttpTarget used without context manager — falling back to sync thread pool")
-            response_body, content_type, latency_ms, error = await asyncio.to_thread(
-                self._execute_with_retries, body, headers
-            )
+        with request_trace(header_uses, secrets):
+            if self._async_client is not None:
+                call = await self._execute_async(body, headers)
+            else:
+                logger.debug("HttpTarget used without context manager — falling back to sync thread pool")
+                call = await asyncio.to_thread(self._execute_with_retries, body, headers)
 
-        if error is not None:
-            raise TargetInvocationError(
-                f"HttpTarget invocation failed: {error}",
-                latency_ms=latency_ms,
-            )
+        if call.error is not None:
+            raise self._failure(call, None)
 
-        output = self._extract_output(response_body, content_type)
-        kwargs = self._extract_optional_fields(response_body)
+        output, matched = output_match(call.body, self.output_path, call.content_type)
+        if self.strict_onboarding and not matched:
+            call.error = apply_missing_selector(call.exchange, self.output_path)
+            raise self._failure(call, None)
+
+        kwargs = self._extract_optional_fields(call.body)
         extracted_context = kwargs.pop("context", None)
         # A reported trajectory (messages_path) is authoritative; otherwise
         # assemble a best-effort trace from the input, any captured tool calls,
@@ -117,30 +151,56 @@ class HttpTarget(BaseTarget):
         if kwargs.get("messages") is None:
             kwargs["messages"] = synthesize_messages(golden.input, output, kwargs.get("tool_calls"))
         if self.latency_ms_path is None:
-            kwargs["latency_ms"] = latency_ms
+            kwargs["latency_ms"] = call.latency_ms
         else:
-            extracted_latency = extract_path(response_body, self.latency_ms_path)
-            kwargs["latency_ms"] = float(extracted_latency) if extracted_latency is not None else latency_ms
+            extracted_latency = extract_path(call.body, self.latency_ms_path)
+            kwargs["latency_ms"] = float(extracted_latency) if extracted_latency is not None else call.latency_ms
 
         eval_case = EvalCase.from_golden(golden, output=output, **kwargs)
         if extracted_context is not None:
             eval_case.context = extracted_context
+        attach_case_diagnostic(eval_case, publish_diagnostic(self, call.exchange, output))
         return eval_case
 
-    async def _execute_async(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
+    def _failure(self, call: HttpCall, extracted: object) -> TargetInvocationError:
+        diagnostic = publish_diagnostic(self, call.exchange, extracted)
+        return TargetInvocationError(
+            f"HttpTarget invocation failed: {call.error}",
+            latency_ms=call.latency_ms,
+            diagnostic=diagnostic,
+        )
+
+    def _open_exchange(
+        self,
+        body: bytes,
+        user_headers: dict[str, str],
+        header_uses: dict | None,
+        env_secrets: list[str] | None,
+        *,
+        accept: str,
+    ) -> tuple[object, dict[str, str]]:
+        exchange = build_exchange(
+            method=self.method,
+            url=self.url,
+            accept=accept,
+            user_headers=user_headers,
+            header_uses=header_uses,
+            body_text=body.decode("utf-8"),
+            auth=self.auth,
+            env_secrets=env_secrets,
+        )
+        # Final header map, including auth. Values stay intact on the wire;
+        # redaction happens only when a diagnostic record is built.
+        request_headers = {header.name: header.value for header in exchange.headers}
+        return exchange, request_headers
+
+    async def _execute_async(self, body: bytes, user_headers: dict[str, str]) -> HttpCall:
         """Async HTTP call using httpx with connection pooling and retries."""
         client = self._async_client
         assert client is not None
 
-        headers = {"Content-Type": "application/json", "Accept": "application/json", **user_headers}
-        params: dict[str, str] = {}
-        self.auth.apply(headers, params)
-
-        url = self.url
-        if params:
-            sep = "&" if "?" in url else "?"
-            url = url + sep + urlencode(params)
-
+        header_uses, env_secrets = current_request_trace()
+        exchange, headers = self._open_exchange(body, user_headers, header_uses, env_secrets, accept="application/json")
         last_error: str | None = None
         last_latency_ms = 0.0
         attempts = 1 + self.retries
@@ -152,49 +212,63 @@ class HttpTarget(BaseTarget):
             t0 = time.perf_counter()
             try:
                 response = await client.request(  # type: ignore[union-attr]
-                    self.method,
-                    url,
+                    exchange.method,
+                    exchange.url,
                     content=body,
                     headers=headers,
                 )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                status = status_code_of(response)
+                # Read the status before raise_for_status so a non-2xx body is kept
+                # even when the client only exposes it on the response object.
+                if status is not None and status >= 400:
+                    text = _response_text(response)
+                    message = apply_status_failure(exchange, status, text, header_items(response.headers))
+                    last_latency_ms = elapsed_ms
+                    last_error = message
+                    if 400 <= status < 500:
+                        logger.warning("HttpTarget got non-retryable %d: %s", status, message)
+                        return HttpCall(None, "", elapsed_ms, message, exchange)
+                    logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
+                    continue
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
-                parsed = _parse_response(response.text, content_type)
-                return parsed, content_type, elapsed_ms, None
+                raw = _response_text(response)
+                _note_success(exchange, response, raw)
+                parsed, error = _parse_success(exchange, raw, content_type)
+                if error is not None:
+                    return HttpCall(None, content_type, elapsed_ms, error, exchange)
+                return HttpCall(parsed, content_type, elapsed_ms, None, exchange)
             except httpx.HTTPStatusError as exc:  # type: ignore[union-attr]
                 elapsed_ms = (time.perf_counter() - t0) * 1000
-                last_latency_ms = elapsed_ms
-                last_error = f"{type(exc).__name__}: {exc}"
                 status = exc.response.status_code
+                text = _response_text(exc.response)
+                message = apply_status_failure(exchange, status, text, header_items(exc.response.headers), exc)
+                last_latency_ms = elapsed_ms
+                last_error = message
                 # 4xx responses are client errors — retrying can never succeed,
                 # so fail fast instead of hammering the endpoint with backoff.
                 if 400 <= status < 500:
-                    logger.warning("HttpTarget got non-retryable %d: %s", status, last_error)
-                    return None, "", last_latency_ms, last_error
-                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+                    logger.warning("HttpTarget got non-retryable %d: %s", status, message)
+                    return HttpCall(None, "", elapsed_ms, message, exchange)
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
             except Exception as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                message = apply_transport_failure(exchange, exc)
                 last_latency_ms = elapsed_ms
-                last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+                last_error = message
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
 
-        return None, "", last_latency_ms, last_error
+        return HttpCall(None, "", last_latency_ms, last_error, exchange)
 
     def _build_request_body(self, golden: Golden) -> bytes:
         payload = render_request_body(self.body_template, golden)
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    def _execute_with_retries(self, body: bytes, user_headers: dict[str, str]) -> tuple[object, str, float, str | None]:
-        """Synchronous HTTP call with retry logic. Returns (parsed_body, content_type, latency_ms, error)."""
-        headers = {"Content-Type": "application/json", "Accept": "application/json", **user_headers}
-        params: dict[str, str] = {}
-        self.auth.apply(headers, params)
-
-        url = self.url
-        if params:
-            sep = "&" if "?" in url else "?"
-            url = url + sep + urlencode(params)
+    def _execute_with_retries(self, body: bytes, user_headers: dict[str, str]) -> HttpCall:
+        """Synchronous HTTP call with retry logic."""
+        header_uses, env_secrets = current_request_trace()
+        exchange, headers = self._open_exchange(body, user_headers, header_uses, env_secrets, accept="application/json")
 
         ssl_ctx: ssl.SSLContext | None = None
         if not self.verify_tls:
@@ -211,31 +285,42 @@ class HttpTarget(BaseTarget):
             if attempt > 0:
                 time.sleep(self.backoff_s * (2 ** (attempt - 1)))
 
-            request = Request(url, data=body, headers=headers, method=self.method)
+            request = Request(exchange.url, data=body, headers=headers, method=exchange.method)
             t0 = time.perf_counter()
             try:
                 with urlopen(request, timeout=self.timeout_s, context=ssl_ctx) as response:
                     elapsed_ms = (time.perf_counter() - t0) * 1000
                     raw = response.read().decode("utf-8")
                     content_type = _get_content_type(response)
-                    parsed = _parse_response(raw, content_type)
-                    return parsed, content_type, elapsed_ms, None
+                    _note_success(exchange, response, raw)
+                    parsed, error = _parse_success(exchange, raw, content_type)
+                    if error is not None:
+                        return HttpCall(None, content_type, elapsed_ms, error, exchange)
+                    return HttpCall(parsed, content_type, elapsed_ms, None, exchange)
             except HTTPError as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                message = apply_status_failure(
+                    exchange,
+                    exc.code,
+                    read_urllib_error_body(exc),
+                    header_items(getattr(exc, "headers", None)),
+                    exc,
+                )
                 last_attempt_latency_ms = elapsed_ms
-                last_error = f"{type(exc).__name__}: {exc}"
+                last_error = message
                 # 4xx responses are client errors — retrying can never succeed.
                 if 400 <= exc.code < 500:
-                    logger.warning("HttpTarget got non-retryable %d: %s", exc.code, last_error)
-                    return None, "", last_attempt_latency_ms, last_error
-                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+                    logger.warning("HttpTarget got non-retryable %d: %s", exc.code, message)
+                    return HttpCall(None, "", elapsed_ms, message, exchange)
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
             except (URLError, TimeoutError, OSError) as exc:
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                message = apply_transport_failure(exchange, exc)
                 last_attempt_latency_ms = elapsed_ms
-                last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, last_error)
+                last_error = message
+                logger.warning("HttpTarget attempt %d/%d failed: %s", attempt + 1, attempts, message)
 
-        return None, "", last_attempt_latency_ms, last_error
+        return HttpCall(None, "", last_attempt_latency_ms, last_error, exchange)
 
     def _extract_output(self, response_body: object, content_type: str) -> str | dict | list:
         if self.output_path == "$" and "text/" in content_type:
@@ -264,6 +349,34 @@ class HttpTarget(BaseTarget):
 
         normalize_trajectory_fields(kwargs, self.messages_path)
         return kwargs
+
+
+def _note_success(exchange: HttpExchange, response: object, raw: str) -> None:
+    """A later success must not keep the previous attempt's failure category."""
+    status = status_code_of(response)
+    if status is not None:
+        exchange.status = status
+    exchange.response_headers = header_items(getattr(response, "headers", None))
+    exchange.response_body_text = raw[:CAPTURE_LIMIT]
+    exchange.category = None
+    exchange.transport_cause = None
+    exchange.error_message = None
+
+
+def _response_text(response: object) -> str:
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text
+    return ""
+
+
+def _parse_success(exchange: HttpExchange, raw: str, content_type: str) -> tuple[object, str | None]:
+    """Parse a 2xx body. Invalid JSON with a JSON content type is a parse failure, not a retry."""
+    exchange.response_body_text = raw[:CAPTURE_LIMIT]
+    try:
+        return _parse_response(raw, content_type), None
+    except json.JSONDecodeError as exc:
+        return None, apply_parse_failure(exchange, exc, raw)
 
 
 def _get_content_type(response: object) -> str:

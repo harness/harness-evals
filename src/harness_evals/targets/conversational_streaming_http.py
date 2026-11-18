@@ -15,8 +15,16 @@ from harness_evals.errors import TargetInvocationError
 from harness_evals.logging_config import compact_json
 from harness_evals.plugins import register_target
 from harness_evals.targets.base import ConversationTarget
+from harness_evals.targets.http_diagnostics import (
+    HTTP_DIAGNOSTIC_METADATA_KEY,
+    apply_missing_selector,
+    apply_parse_failure,
+    coerce_http_call,
+    publish_diagnostic,
+    request_trace,
+)
 from harness_evals.targets.streaming_http import StreamingHttpTarget, _decode, _detect_stream_error, _parse_sse
-from harness_evals.targets.templating import render_headers
+from harness_evals.targets.templating import render_headers_with_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -104,34 +112,53 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
             input=self._last_user_content(messages),
             metadata=self._template_context(continuation, session=session),
         )
-        headers = render_headers(self.headers, header_golden)
+        headers, header_uses, header_secrets = render_headers_with_provenance(self.headers, header_golden)
 
-        if self._async_client is not None:
-            raw_body, content_type, latency_ms, error = await self._execute_async(body, headers)
-        else:
-            raw_body, content_type, latency_ms, error = await asyncio.to_thread(
-                self._execute_with_retries, body, headers
-            )
+        # Keep the (body, headers) call shape. Tests replace these methods and
+        # still return the legacy (raw, content_type, latency, error) tuple.
+        with request_trace(header_uses, header_secrets):
+            if self._async_client is not None:
+                result = await self._execute_async(body, headers)
+            else:
+                result = await asyncio.to_thread(self._execute_with_retries, body, headers)
+        call = coerce_http_call(result)
 
-        if error is not None:
+        if call.error is not None:
             raise TargetInvocationError(
-                f"ConversationalStreamingHttpTarget invocation failed: {error}",
-                latency_ms=latency_ms,
+                f"ConversationalStreamingHttpTarget invocation failed: {call.error}",
+                latency_ms=call.latency_ms,
+                diagnostic=publish_diagnostic(self, call.exchange, None),
             )
 
-        output, kwargs, metadata_extra, _extract_source = self._process_response(
-            raw_body,
-            content_type,
-            self._last_user_content(messages),
-        )
+        try:
+            output, kwargs, metadata_extra, _extract_source, matched = self._process_response(
+                call.body,
+                call.content_type,
+                self._last_user_content(messages),
+            )
+        except json.JSONDecodeError as exc:
+            message = apply_parse_failure(call.exchange, exc, str(call.body or ""))
+            raise TargetInvocationError(
+                f"ConversationalStreamingHttpTarget invocation failed: {message}",
+                latency_ms=call.latency_ms,
+                diagnostic=publish_diagnostic(self, call.exchange, None),
+            ) from exc
         if not output:
             stream_error = _detect_stream_error(metadata_extra.get("sse_events") if metadata_extra else None)
             if stream_error is not None:
                 raise TargetInvocationError(
                     f"streaming target returned an error event: {stream_error}",
-                    latency_ms=latency_ms,
+                    latency_ms=call.latency_ms,
+                    diagnostic=publish_diagnostic(self, call.exchange, None),
                 )
-        decoded = self._decode_stream(raw_body, content_type)
+        if self.strict_onboarding and not matched:
+            message = apply_missing_selector(call.exchange, self._output_selector())
+            raise TargetInvocationError(
+                f"ConversationalStreamingHttpTarget invocation failed: {message}",
+                latency_ms=call.latency_ms,
+                diagnostic=publish_diagnostic(self, call.exchange, None),
+            )
+        decoded = self._decode_stream(call.body, call.content_type)
         self._update_session(decoded, session=session)
         pending = self._pending_human_input(decoded)
         interaction_id = self._last_metadata_value(decoded, "interaction_id")
@@ -166,15 +193,18 @@ class ConversationalStreamingHttpTarget(StreamingHttpTarget, ConversationTarget)
             "conversation_id": session.conversation_id,
             "session_id": session.session_id,
             "interaction_id": interaction_id,
-            "latency_ms": latency_ms,
+            "latency_ms": call.latency_ms,
             "pending_human_input": pending,
             "pending_elicitation": pending,
         }
+        diagnostic = publish_diagnostic(self, call.exchange, output)
+        if diagnostic is not None:
+            metadata[HTTP_DIAGNOSTIC_METADATA_KEY] = diagnostic.to_dict()
 
         return Message(
             role="assistant",
             content=self._message_content(output),
-            latency_ms=latency_ms,
+            latency_ms=call.latency_ms,
             token_count=token_count,
             cost_usd=cost_usd,
             metadata=metadata,

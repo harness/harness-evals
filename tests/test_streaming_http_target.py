@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 import pytest
@@ -872,3 +873,124 @@ async def test_sse_real_content_with_trailing_error_frame_does_not_raise(monkeyp
 @pytest.mark.unit
 def test_target_is_registered() -> None:
     assert plugins.target("streaming_http") is StreamingHttpTarget
+
+
+def _http_error(code: int, body: str) -> HTTPError:
+    from email.message import EmailMessage
+    from io import BytesIO
+
+    message = EmailMessage()
+    message["Content-Type"] = "application/json"
+    return HTTPError("http://localhost:8080/run", code, "error", message, BytesIO(body.encode()))
+
+
+@pytest.mark.unit
+async def test_streaming_400_keeps_body_and_is_not_authentication(monkeypatch: pytest.MonkeyPatch) -> None:
+    from harness_evals.targets import streaming_http as target_mod
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        raise _http_error(400, '{"error":"unknown field"}')
+
+    monkeypatch.setattr(target_mod, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    target = StreamingHttpTarget(url="http://localhost:8080/run", retries=0)
+
+    with pytest.raises(TargetInvocationError, match="unknown field") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    message = str(exc_info.value).lower()
+    assert "http 400" in message
+    assert "category=request" in message
+    assert "authentication" not in message
+
+
+@pytest.mark.unit
+async def test_streaming_transport_names_dns_timeout_and_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ssl
+    from urllib.error import URLError
+
+    from harness_evals.targets import streaming_http as target_mod
+
+    seen: list[BaseException] = []
+
+    def fake_urlopen(request: Request, timeout: float, context=None) -> FakeHTTPResponse:
+        raise seen[0]
+
+    monkeypatch.setattr(target_mod, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    async def _raise(exc: BaseException, expected: str) -> None:
+        seen.clear()
+        seen.append(exc)
+        target = StreamingHttpTarget(url="http://localhost:8080/run", retries=0)
+        with pytest.raises(TargetInvocationError, match=expected):
+            await target.ainvoke(Golden(input="q"))
+
+    await _raise(URLError("Name or service not known"), "transport=dns")
+    await _raise(TimeoutError("timed out"), "transport=timeout")
+    await _raise(ssl.SSLError("CERTIFICATE_VERIFY_FAILED"), "transport=tls")
+
+
+@pytest.mark.unit
+async def test_streaming_strict_onboarding_rejects_unmatched_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = _sse(
+        'event: model_usage\ndata: {"input_tokens": 17}',
+        "event: done\ndata: {}",
+    )
+    _patch_response(monkeypatch, body)
+    target = StreamingHttpTarget(url="http://localhost:8080/run", strict_onboarding=True)
+
+    with pytest.raises(TargetInvocationError, match="missing_response_path") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    assert "selector:" in str(exc_info.value)
+    assert "authentication" not in str(exc_info.value).lower()
+
+
+@pytest.mark.unit
+async def test_streaming_invalid_json_is_response_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_response(monkeypatch, "not-json", content_type="application/json")
+    target = StreamingHttpTarget(url="http://localhost:8080/run", retries=2)
+
+    with pytest.raises(TargetInvocationError, match="not-json") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    assert "category=response_parse" in str(exc_info.value)
+
+
+@pytest.mark.unit
+async def test_streaming_diagnostic_redacts_env_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "stream-secret-value"
+    monkeypatch.setenv("STREAM_TOKEN", secret)
+    _patch_response(monkeypatch, _sse('event: message\ndata: {"output": "visible-answer"}'))
+    target = StreamingHttpTarget(
+        url="http://localhost:8080/run",
+        headers={"Authorization": "Bearer {{env.STREAM_TOKEN}}", "X-Trace": "keep-me"},
+        body_template={"token": "{{env.STREAM_TOKEN}}", "q": "{{input}}"},
+        record_diagnostics=True,
+    )
+
+    result = await target.ainvoke(Golden(input="hello"))
+    payload = json.dumps(result.metadata["http_diagnostic"])
+    assert secret not in payload
+    assert "keep-me" in payload
+    assert "visible-answer" in payload
+    assert result.metadata["http_diagnostic"]["response_status"] == 200
+
+
+@pytest.mark.unit
+async def test_async_streaming_400_preserves_body() -> None:
+    client = _FakeAsyncClient(
+        [_FakeStreamResponse('{"error":"bad body"}', content_type="application/json", status_code=400)]
+    )
+    target = StreamingHttpTarget(url="http://localhost:8080/run", retries=0)
+    target._async_client = client
+
+    with pytest.raises(TargetInvocationError, match="bad body") as exc_info:
+        await target.ainvoke(Golden(input="q"))
+
+    message = str(exc_info.value).lower()
+    assert "http 400" in message
+    assert "category=request" in message
+    assert "authentication" not in message
+    assert len(client.calls) == 1

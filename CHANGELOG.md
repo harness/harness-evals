@@ -5,6 +5,17 @@ All notable changes to harness-evals will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.5]
+
+### Added
+
+- Scores produced when a metric raises an exception now carry
+  `metadata["metric_error"] = True` (in `evaluate`, `a_evaluate` and
+  `evaluate_batch_metrics`), so consumers can tell an execution failure from a
+  genuinely low score without parsing the `Metric raised: ...` reason text.
+  Score values and reasons are unchanged; custom sinks that forward score
+  metadata will see the new key.
+
 ## [0.29.4]
 
 ### Fixed

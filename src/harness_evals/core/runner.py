@@ -95,6 +95,7 @@ def evaluate(
                     value=0.0,
                     threshold=metric.threshold,
                     reason=f"Metric raised: {e}",
+                    metadata={"metric_error": True},
                 )
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         if score is not None:
@@ -152,6 +153,7 @@ async def a_evaluate(
                 value=0.0,
                 threshold=metric.threshold,
                 reason=f"Metric raised: {result}",
+                metadata={"metric_error": True},
             )
         else:
             score = result
@@ -241,6 +243,7 @@ def evaluate_batch_metrics(
                 value=0.0,
                 threshold=metric.threshold,
                 reason=f"Metric raised: {e}",
+                metadata={"metric_error": True},
             )
         scores.append(score)
     return scores
